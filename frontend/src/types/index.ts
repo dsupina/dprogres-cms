@@ -55,6 +55,8 @@ export interface Page {
   title: string;
   slug: string;
   content?: string;
+  excerpt?: string;
+  featured_image?: string;
   template?: string;
   meta_title?: string;
   meta_description?: string;
@@ -62,6 +64,9 @@ export interface Page {
   published: boolean;
   created_at: string;
   updated_at: string;
+  first_name?: string;
+  last_name?: string;
+  author_email?: string;
 }
 
 export interface MediaFile {
@@ -190,6 +195,7 @@ export interface ApiResponse<T> {
   user?: User;
   token?: string;
   pagination?: PaginationMeta;
+  total?: number;
 }
 
 export interface LoginData {

@@ -47,7 +47,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     if (featured !== undefined) {
       whereClause += ` AND p.featured = $${++paramCount}`;
-      params.push(featured === 'true');
+      params.push(String(featured) === 'true');
     }
 
     const postsQuery = `

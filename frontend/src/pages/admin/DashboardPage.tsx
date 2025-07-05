@@ -3,29 +3,17 @@ import { Link } from 'react-router-dom';
 import { 
   FileText, 
   Folder, 
-  Users, 
   Eye, 
-  TrendingUp, 
   Calendar,
   Plus,
-  ArrowRight,
-  BarChart3
+  ArrowRight
 } from 'lucide-react';
-import { postsService } from '@/services/posts';
-import { categoriesService } from '@/services/categories';
-import { pagesService } from '@/services/pages';
-import { formatDate } from '@/lib/utils';
-import Button from '@/components/ui/Button';
-import LoadingSpinner from '@/components/ui/LoadingSpinner';
-
-interface DashboardStats {
-  totalPosts: number;
-  publishedPosts: number;
-  draftPosts: number;
-  totalCategories: number;
-  totalPages: number;
-  recentPosts: any[];
-}
+import { postsService } from '../../services/posts';
+import { categoriesService } from '../../services/categories';
+import { pagesService } from '../../services/pages';
+import { formatDate } from '../../lib/utils';
+import Button from '../../components/ui/Button';
+import LoadingSpinner from '../../components/ui/LoadingSpinner';
 
 export default function DashboardPage() {
   // Fetch dashboard data

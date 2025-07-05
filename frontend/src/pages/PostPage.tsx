@@ -1,10 +1,10 @@
 import { useQuery } from 'react-query';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Calendar, User, Clock, Tag, ArrowLeft, Share2, Facebook, Twitter, Linkedin, Link2 } from 'lucide-react';
-import { postsService } from '@/services/posts';
-import { formatDate, generateReadingTime } from '@/lib/utils';
-import LoadingSpinner from '@/components/ui/LoadingSpinner';
-import Button from '@/components/ui/Button';
+import { Calendar, User, Clock, Tag, ArrowLeft, Facebook, Twitter, Linkedin, Link2 } from 'lucide-react';
+import { postsService } from '../services/posts';
+import { formatDate, generateReadingTime } from '../lib/utils';
+import LoadingSpinner from '../components/ui/LoadingSpinner';
+import Button from '../components/ui/Button';
 import { useEffect } from 'react';
 
 export default function PostPage() {
@@ -39,7 +39,6 @@ export default function PostPage() {
   const handleShare = async (platform: string) => {
     const url = window.location.href;
     const title = post?.title || '';
-    const text = post?.excerpt || '';
 
     switch (platform) {
       case 'facebook':
@@ -216,7 +215,7 @@ export default function PostPage() {
                     key={index}
                     className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800"
                   >
-                    {tag}
+                    {tag.name}
                   </span>
                 ))}
               </div>

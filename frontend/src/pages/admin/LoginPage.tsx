@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Lock, User, Eye, EyeOff } from 'lucide-react';
-import { useAuth } from '@/lib/auth';
-import Button from '@/components/ui/Button';
-import Input from '@/components/ui/Input';
-import LoadingSpinner from '@/components/ui/LoadingSpinner';
+import { Lock, Eye, EyeOff } from 'lucide-react';
+import { useAuthStore } from '../../lib/auth';
+import Button from '../../components/ui/Button';
+import Input from '../../components/ui/Input';
+import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import { toast } from 'react-hot-toast';
 
 export default function LoginPage() {
@@ -16,7 +16,7 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   
-  const { login } = useAuth();
+  const { login } = useAuthStore();
   const navigate = useNavigate();
 
   const validateForm = () => {
@@ -47,7 +47,7 @@ export default function LoginPage() {
 
     setIsLoading(true);
     try {
-      await login(formData.email, formData.password);
+      await login(formData);
       toast.success('Login successful!');
       navigate('/admin');
     } catch (error: any) {
@@ -104,7 +104,6 @@ export default function LoginPage() {
                 onChange={handleChange}
                 error={errors.email}
                 placeholder="Enter your email"
-                icon={<User className="h-5 w-5 text-gray-400" />}
                 required
               />
             </div>
@@ -119,7 +118,6 @@ export default function LoginPage() {
                   onChange={handleChange}
                   error={errors.password}
                   placeholder="Enter your password"
-                  icon={<Lock className="h-5 w-5 text-gray-400" />}
                   required
                 />
                 <button

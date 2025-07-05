@@ -7,7 +7,7 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://postgres:password@db:5432/cms_db
+      - DATABASE_URL=postgresql://postgres:password@db:5432/cms_db?sslmode=disable
       - JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
       - JWT_REFRESH_SECRET=your-refresh-secret-key-change-this-in-production
       - ADMIN_EMAIL=admin@example.com

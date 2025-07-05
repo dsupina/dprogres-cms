@@ -1,36 +1,26 @@
 import { useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
-import { useAuthStore } from '@/lib/auth';
 
-// Public pages
-import HomePage from '@/pages/HomePage';
-import BlogPage from '@/pages/BlogPage';
-import PostPage from '@/pages/PostPage';
-import CategoryPage from '@/pages/CategoryPage';
-import PageView from '@/pages/PageView';
-import NotFoundPage from '@/pages/NotFoundPage';
+// Import existing pages
+import HomePage from './pages/HomePage';
+import BlogPage from './pages/BlogPage';
+import PostPage from './pages/PostPage';
+import CategoryPage from './pages/CategoryPage';
+import PageView from './pages/PageView';
+import LoginPage from './pages/admin/LoginPage';
+import DashboardPage from './pages/admin/DashboardPage';
 
-// Admin pages
-import AdminLayout from '@/components/admin/AdminLayout';
-import LoginPage from '@/pages/admin/LoginPage';
-import AdminDashboard from '@/pages/admin/AdminDashboard';
-import PostsManagement from '@/pages/admin/PostsManagement';
-import CreatePost from '@/pages/admin/CreatePost';
-import EditPost from '@/pages/admin/EditPost';
-import CategoriesManagement from '@/pages/admin/CategoriesManagement';
-import PagesManagement from '@/pages/admin/PagesManagement';
-import CreatePage from '@/pages/admin/CreatePage';
-import EditPage from '@/pages/admin/EditPage';
-import MediaManagement from '@/pages/admin/MediaManagement';
-import ProfilePage from '@/pages/admin/ProfilePage';
+// Import existing components
+import PublicLayout from './components/layout/PublicLayout';
+import AdminLayout from './components/layout/AdminLayout';
+import ProtectedRoute from './components/auth/ProtectedRoute';
 
-// Components
-import PublicLayout from '@/components/layout/PublicLayout';
-import ProtectedRoute from '@/components/auth/ProtectedRoute';
-import LoadingSpinner from '@/components/ui/LoadingSpinner';
+
+// Import auth store
+import { useAuthStore } from './lib/auth';
 
 function App() {
-  const { checkAuth, isAuthenticated } = useAuthStore();
+  const { checkAuth } = useAuthStore();
 
   useEffect(() => {
     checkAuth();
@@ -47,38 +37,31 @@ function App() {
         <Route path="page/:slug" element={<PageView />} />
       </Route>
 
-      {/* Admin Routes */}
+      {/* Admin Login Route */}
       <Route path="/admin/login" element={<LoginPage />} />
-      
-      <Route path="/admin" element={
-        <ProtectedRoute>
-          <AdminLayout />
-        </ProtectedRoute>
-      }>
-        <Route index element={<AdminDashboard />} />
-        
-        {/* Posts Management */}
-        <Route path="posts" element={<PostsManagement />} />
-        <Route path="posts/new" element={<CreatePost />} />
-        <Route path="posts/:id/edit" element={<EditPost />} />
-        
-        {/* Categories Management */}
-        <Route path="categories" element={<CategoriesManagement />} />
-        
-        {/* Pages Management */}
-        <Route path="pages" element={<PagesManagement />} />
-        <Route path="pages/new" element={<CreatePage />} />
-        <Route path="pages/:id/edit" element={<EditPage />} />
-        
-        {/* Media Management */}
-        <Route path="media" element={<MediaManagement />} />
-        
-        {/* Profile */}
-        <Route path="profile" element={<ProfilePage />} />
+
+      {/* Protected Admin Routes */}
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute>
+            <AdminLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<DashboardPage />} />
+        {/* Additional admin routes will be added as components are implemented */}
       </Route>
 
-      {/* 404 Page */}
-      <Route path="*" element={<NotFoundPage />} />
+      {/* 404 Route */}
+      <Route path="*" element={
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="text-center">
+            <h1 className="text-4xl font-bold text-gray-900">404</h1>
+            <p className="text-gray-600 mt-2">Page not found</p>
+          </div>
+        </div>
+      } />
     </Routes>
   );
 }

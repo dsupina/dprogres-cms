@@ -3,7 +3,6 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { 
   Menu, 
   X, 
-  Home, 
   FileText, 
   Folder, 
   Image, 
@@ -13,8 +12,8 @@ import {
   BarChart3,
   Eye
 } from 'lucide-react';
-import { useAuth } from '@/lib/auth';
-import Button from '@/components/ui/Button';
+import { useAuthStore } from '../../lib/auth';
+import Button from '../ui/Button';
 
 const navigation = [
   { name: 'Dashboard', href: '/admin', icon: BarChart3 },
@@ -29,7 +28,7 @@ export default function AdminLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout } = useAuthStore();
 
   const handleLogout = async () => {
     await logout();
@@ -88,7 +87,7 @@ export default function AdminLayout() {
             as={Link}
             to="/"
             target="_blank"
-            variant="outline"
+            variant="secondary"
             className="w-full justify-center"
           >
             <Eye className="mr-2 h-4 w-4" />
