@@ -1,0 +1,23 @@
+{
+  "name": "lightweight-cms",
+  "version": "1.0.0",
+  "description": "A lightweight CMS for personal sites",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "npm run build:frontend && npm run build:backend",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
+    "docker:build": "docker build -t lightweight-cms .",
+    "docker:run": "docker run -p 80:80 lightweight-cms"
+  },
+  "keywords": ["cms", "blog", "personal-site"],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^7.6.0"
+  }
+} 
