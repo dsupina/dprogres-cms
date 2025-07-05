@@ -22,7 +22,7 @@ router.get('/', async (req: Request, res: Response) => {
     `;
 
     const result = await query(categoriesQuery);
-    res.json({ categories: result.rows });
+    res.json({ data: result.rows });
   } catch (error) {
     console.error('Get categories error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -142,7 +142,7 @@ router.post('/', authenticateToken, requireEditor, validate(createCategorySchema
 
     res.status(201).json({
       message: 'Category created successfully',
-      category: newCategory
+      data: newCategory
     });
   } catch (error) {
     console.error('Create category error:', error);
@@ -195,7 +195,7 @@ router.put('/:id', authenticateToken, requireEditor, validate(updateCategorySche
 
     res.json({
       message: 'Category updated successfully',
-      category: updatedCategory
+      data: updatedCategory
     });
   } catch (error) {
     console.error('Update category error:', error);
