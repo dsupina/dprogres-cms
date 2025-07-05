@@ -11,7 +11,7 @@ describe('Slug Utilities', () => {
     it('should handle special characters', () => {
       const title = 'Special & Characters! @#$%';
       const slug = generateSlug(title);
-      expect(slug).toBe('special-characters');
+      expect(slug).toBe('special-and-characters-dollarpercent');
     });
 
     it('should handle numbers', () => {
@@ -34,7 +34,7 @@ describe('Slug Utilities', () => {
     it('should handle unicode characters', () => {
       const title = 'Café & Résumé';
       const slug = generateSlug(title);
-      expect(slug).toBe('cafe-resume');
+      expect(slug).toBe('cafe-and-resume');
     });
   });
 

@@ -41,7 +41,13 @@ describe('Auth Routes', () => {
         last_name: 'Doe'
       };
 
-      mockedQuery.mockResolvedValueOnce({ rows: [mockUser] });
+      mockedQuery.mockResolvedValueOnce({ 
+        rows: [mockUser],
+        command: 'SELECT',
+        rowCount: 1,
+        oid: 0,
+        fields: []
+      });
       mockedComparePassword.mockResolvedValueOnce(true);
       mockedGenerateToken.mockReturnValueOnce('mock_token');
 
@@ -56,7 +62,13 @@ describe('Auth Routes', () => {
     });
 
     it('should fail with invalid email', async () => {
-      mockedQuery.mockResolvedValueOnce({ rows: [] });
+      mockedQuery.mockResolvedValueOnce({ 
+        rows: [],
+        command: 'SELECT',
+        rowCount: 0,
+        oid: 0,
+        fields: []
+      });
 
       const response = await request(app)
         .post('/auth/login')
@@ -74,7 +86,13 @@ describe('Auth Routes', () => {
         role: 'admin'
       };
 
-      mockedQuery.mockResolvedValueOnce({ rows: [mockUser] });
+      mockedQuery.mockResolvedValueOnce({ 
+        rows: [mockUser],
+        command: 'SELECT',
+        rowCount: 1,
+        oid: 0,
+        fields: []
+      });
       mockedComparePassword.mockResolvedValueOnce(false);
 
       const response = await request(app)

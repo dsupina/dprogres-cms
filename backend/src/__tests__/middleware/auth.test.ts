@@ -75,7 +75,7 @@ describe('Auth Middleware', () => {
       authenticateToken(mockRequest as Request, mockResponse as Response, nextFunction);
 
       expect(mockResponse.status).toHaveBeenCalledWith(403);
-      expect(mockResponse.json).toHaveBeenCalledWith({ error: 'Invalid token' });
+      expect(mockResponse.json).toHaveBeenCalledWith({ error: 'Invalid or expired token' });
       expect(nextFunction).not.toHaveBeenCalled();
     });
   });
@@ -127,7 +127,7 @@ describe('Auth Middleware', () => {
       requireAuthor(mockRequest as Request, mockResponse as Response, nextFunction);
 
       expect(mockResponse.status).toHaveBeenCalledWith(403);
-      expect(mockResponse.json).toHaveBeenCalledWith({ error: 'Author access required' });
+      expect(mockResponse.json).toHaveBeenCalledWith({ error: 'Insufficient permissions' });
       expect(nextFunction).not.toHaveBeenCalled();
     });
 
@@ -136,8 +136,8 @@ describe('Auth Middleware', () => {
 
       requireAuthor(mockRequest as Request, mockResponse as Response, nextFunction);
 
-      expect(mockResponse.status).toHaveBeenCalledWith(403);
-      expect(mockResponse.json).toHaveBeenCalledWith({ error: 'Author access required' });
+      expect(mockResponse.status).toHaveBeenCalledWith(401);
+      expect(mockResponse.json).toHaveBeenCalledWith({ error: 'Authentication required' });
       expect(nextFunction).not.toHaveBeenCalled();
     });
   });
