@@ -10,11 +10,17 @@ import PageView from './pages/PageView';
 import LoginPage from './pages/admin/LoginPage';
 import DashboardPage from './pages/admin/DashboardPage';
 
+// Import new admin pages
+import PostsPage from './pages/admin/PostsPage';
+import CategoriesPage from './pages/admin/CategoriesPage';
+import PagesPage from './pages/admin/PagesPage';
+import MediaPage from './pages/admin/MediaPage';
+import SettingsPage from './pages/admin/SettingsPage';
+
 // Import existing components
 import PublicLayout from './components/layout/PublicLayout';
 import AdminLayout from './components/layout/AdminLayout';
 import ProtectedRoute from './components/auth/ProtectedRoute';
-
 
 // Import auth store
 import { useAuthStore } from './lib/auth';
@@ -50,7 +56,11 @@ function App() {
         }
       >
         <Route index element={<DashboardPage />} />
-        {/* Additional admin routes will be added as components are implemented */}
+        <Route path="posts" element={<PostsPage />} />
+        <Route path="categories" element={<CategoriesPage />} />
+        <Route path="pages" element={<PagesPage />} />
+        <Route path="media" element={<MediaPage />} />
+        <Route path="settings" element={<SettingsPage />} />
       </Route>
 
       {/* 404 Route */}
