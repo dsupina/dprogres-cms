@@ -8,45 +8,23 @@ import {
   Plus,
   ArrowRight
 } from 'lucide-react';
-import { postsService } from '../../services/posts';
-import { categoriesService } from '../../services/categories';
-import { pagesService } from '../../services/pages';
+import { adminService } from '../../services/admin';
 import { formatDate } from '../../lib/utils';
 import Button from '../../components/ui/Button';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 
 export default function DashboardPage() {
-  // Fetch dashboard data
-  const { data: postsData, isLoading: postsLoading } = useQuery(
-    'admin-posts',
-    () => postsService.getAllPosts({ limit: 5 })
-  );
-
-  const { data: categoriesData, isLoading: categoriesLoading } = useQuery(
-    'admin-categories',
-    () => categoriesService.getAllCategories()
-  );
-
-  const { data: pagesData, isLoading: pagesLoading } = useQuery(
-    'admin-pages',
-    () => pagesService.getAllPages()
-  );
-
-  const { data: recentPostsData, isLoading: recentPostsLoading } = useQuery(
-    'admin-recent-posts',
-    () => postsService.getAllPosts({ limit: 10, sort: 'created_at', order: 'desc' })
-  );
-
-  const isLoading = postsLoading || categoriesLoading || pagesLoading;
+  // Fetch dashboard stats from backend
+  const { data: dashboard, isLoading } = useQuery('admin-dashboard', () => adminService.getDashboard());
 
   // Calculate stats
   const stats = {
-    totalPosts: postsData?.total || 0,
-    publishedPosts: postsData?.posts?.filter(p => p.status === 'published').length || 0,
-    draftPosts: postsData?.posts?.filter(p => p.status === 'draft').length || 0,
-    totalCategories: categoriesData?.total || 0,
-    totalPages: pagesData?.total || 0,
-    recentPosts: recentPostsData?.posts || []
+    totalPosts: dashboard?.totalPosts || 0,
+    publishedPosts: dashboard?.postsByStatus?.published || 0,
+    draftPosts: dashboard?.postsByStatus?.draft || 0,
+    totalCategories: dashboard?.totalCategories || 0,
+    totalPages: dashboard?.totalPages || 0,
+    recentPosts: dashboard?.recentPosts || [],
   };
 
   const statCards = [
@@ -183,11 +161,7 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className="divide-y divide-gray-200">
-              {recentPostsLoading ? (
-                <div className="p-6 text-center">
-                  <LoadingSpinner size="sm" />
-                </div>
-              ) : stats.recentPosts.length === 0 ? (
+              {stats.recentPosts.length === 0 ? (
                 <div className="p-6 text-center text-gray-500">
                   No posts yet. Create your first post!
                 </div>

@@ -3,18 +3,23 @@ import Joi from 'joi';
 
 export const validate = (schema: Joi.ObjectSchema) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    const { error } = schema.validate(req.body);
-    
+    const { error, value } = schema.validate(req.body, {
+      abortEarly: false,
+      stripUnknown: true,
+    });
+
     if (error) {
       return res.status(400).json({
         error: 'Validation failed',
-        details: error.details.map(detail => ({
+        details: error.details.map((detail) => ({
           field: detail.path.join('.'),
-          message: detail.message
-        }))
+          message: detail.message,
+        })),
       });
     }
-    
+
+    // Replace body with validated/sanitized value
+    (req as any).body = value;
     next();
   };
 };
@@ -38,13 +43,15 @@ export const createPostSchema = Joi.object({
   slug: Joi.string().max(255).optional(),
   excerpt: Joi.string().optional(),
   content: Joi.string().optional(),
-  featured_image: Joi.string().optional(),
+  // featured_image removed in favor of embedded media
   status: Joi.string().valid('draft', 'published', 'scheduled').optional(),
   category_id: Joi.number().integer().optional(),
   meta_title: Joi.string().max(255).optional(),
   meta_description: Joi.string().optional(),
   seo_indexed: Joi.boolean().optional(),
-  scheduled_at: Joi.date().optional(),
+  scheduled_at: Joi.alternatives()
+    .try(Joi.date(), Joi.string().allow('', null))
+    .optional(),
   featured: Joi.boolean().optional(),
   tags: Joi.array().items(Joi.string()).optional()
 });
@@ -54,13 +61,15 @@ export const updatePostSchema = Joi.object({
   slug: Joi.string().max(255).optional(),
   excerpt: Joi.string().optional(),
   content: Joi.string().optional(),
-  featured_image: Joi.string().optional(),
+  // featured_image removed in favor of embedded media
   status: Joi.string().valid('draft', 'published', 'scheduled').optional(),
   category_id: Joi.number().integer().optional(),
   meta_title: Joi.string().max(255).optional(),
   meta_description: Joi.string().optional(),
   seo_indexed: Joi.boolean().optional(),
-  scheduled_at: Joi.date().optional(),
+  scheduled_at: Joi.alternatives()
+    .try(Joi.date(), Joi.string().allow('', null))
+    .optional(),
   featured: Joi.boolean().optional(),
   tags: Joi.array().items(Joi.string()).optional()
 });

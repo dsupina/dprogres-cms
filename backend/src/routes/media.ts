@@ -1,6 +1,7 @@
 import express from 'express';
 import { Request, Response } from 'express';
 import multer from 'multer';
+import sharp from 'sharp';
 import path from 'path';
 import fs from 'fs';
 import { query } from '../utils/database';
@@ -53,7 +54,7 @@ const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit
+    fileSize: 20 * 1024 * 1024 // 20MB limit
   }
 });
 
@@ -115,8 +116,23 @@ router.get('/', authenticateToken, requireAuthor, async (req: Request, res: Resp
   }
 });
 
-// Upload single file (admin only)
-router.post('/upload', authenticateToken, requireAuthor, upload.single('file'), async (req: Request, res: Response) => {
+// Upload single file (admin only) with basic image optimization
+// Custom wrapper to handle multer errors and return friendly messages
+router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Response, next) => {
+  const handler = upload.single('file');
+  handler(req as any, res as any, function(err: any) {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'File too large', maxSize: '20MB' });
+      }
+      if (err.message === 'File type not allowed') {
+        return res.status(400).json({ error: 'File type not allowed' });
+      }
+      return res.status(400).json({ error: err.message || 'Upload failed' });
+    }
+    next();
+  });
+}, async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -124,6 +140,30 @@ router.post('/upload', authenticateToken, requireAuthor, upload.single('file'), 
 
     const { alt_text } = req.body;
     const userId = req.user?.userId;
+
+    // If image, generate a web-optimized copy (webp) and a thumbnail
+    let storedPath = `/uploads/${req.file.filename}`;
+    const fullPath = path.join(__dirname, '../../uploads', req.file.filename);
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const isImage = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext);
+
+    try {
+      if (isImage) {
+        const baseName = path.basename(req.file.filename, ext);
+        const webpName = `${baseName}.webp`;
+        const thumbName = `${baseName}-thumb.webp`;
+        const webpPath = path.join(__dirname, '../../uploads', webpName);
+        const thumbPath = path.join(__dirname, '../../uploads', thumbName);
+
+        await sharp(fullPath).rotate().resize({ width: 1600, withoutEnlargement: true }).webp({ quality: 82 }).toFile(webpPath);
+        await sharp(fullPath).rotate().resize({ width: 480, withoutEnlargement: true }).webp({ quality: 78 }).toFile(thumbPath);
+
+        // prefer webp as canonical path
+        storedPath = `/uploads/${webpName}`;
+      }
+    } catch (e) {
+      // If optimization fails, fall back to original upload
+    }
 
     const insertQuery = `
       INSERT INTO media_files (
@@ -136,7 +176,7 @@ router.post('/upload', authenticateToken, requireAuthor, upload.single('file'), 
     const values = [
       req.file.filename,
       req.file.originalname,
-      `/uploads/${req.file.filename}`,
+      storedPath,
       req.file.size,
       req.file.mimetype,
       alt_text,

@@ -2,11 +2,29 @@ import { useQuery } from 'react-query';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Calendar, User, Clock } from 'lucide-react';
 import { postsService } from '../services/posts';
-import { formatDate, generateReadingTime, truncateText } from '../lib/utils';
+import { formatDate, generateReadingTime, truncateText, getImageUrl, getFirstImageFromHtml } from '../lib/utils';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Button from '../components/ui/Button';
+import { settingsService } from '@/services/settings';
+import { useEffect, useState } from 'react';
 
 export default function HomePage() {
+  const [heroTitle, setHeroTitle] = useState('Welcome to My Blog');
+  const [heroSubtitle, setHeroSubtitle] = useState('Discover insights, tutorials, and stories about web development, technology, and personal growth.');
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const s = await settingsService.getSettings();
+        const name = s?.site_title || s?.site_name;
+        if (name) setHeroTitle(name);
+        if (s?.site_description) setHeroSubtitle(s.site_description);
+      } catch (_) {
+        // ignore
+      }
+    };
+    load();
+  }, []);
   const { data: featuredPosts, isLoading: featuredLoading } = useQuery(
     'featured-posts',
     () => postsService.getFeaturedPosts(3)
@@ -23,13 +41,8 @@ export default function HomePage() {
       <section className="bg-gradient-to-r from-primary-600 to-primary-800 text-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
           <div className="text-center">
-            <h1 className="text-4xl md:text-6xl font-bold mb-6">
-              Welcome to My Blog
-            </h1>
-            <p className="text-xl md:text-2xl mb-8 text-primary-100 max-w-3xl mx-auto">
-              Discover insights, tutorials, and stories about web development, 
-              technology, and personal growth.
-            </p>
+            <h1 className="text-4xl md:text-6xl font-bold mb-6">{heroTitle}</h1>
+            <p className="text-xl md:text-2xl mb-8 text-primary-100 max-w-3xl mx-auto">{heroSubtitle}</p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button
                 as={Link}
@@ -74,12 +87,19 @@ export default function HomePage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {featuredPosts?.posts?.map((post) => (
                 <article key={post.id} className="card group hover:shadow-lg transition-shadow">
-                  {post.featured_image && (
+                  {(post.featured_image || getFirstImageFromHtml(post.content)) && (
                     <div className="aspect-video bg-gray-200 rounded-t-lg overflow-hidden">
                       <img
-                        src={post.featured_image}
+                        src={getImageUrl(post.featured_image || getFirstImageFromHtml(post.content) || '')}
                         alt={post.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        loading="lazy"
+                        decoding="async"
+                        onError={(e) => {
+                          const target = e.currentTarget as HTMLImageElement;
+                          // Hide broken image area gracefully
+                          target.style.display = 'none';
+                        }}
                       />
                     </div>
                   )}
@@ -141,12 +161,14 @@ export default function HomePage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {recentPosts?.posts?.map((post) => (
                 <article key={post.id} className="card group hover:shadow-lg transition-shadow">
-                  {post.featured_image && (
+                  {(post.featured_image || getFirstImageFromHtml(post.content)) && (
                     <div className="aspect-video bg-gray-200 rounded-t-lg overflow-hidden">
                       <img
-                        src={post.featured_image}
+                        src={getImageUrl(post.featured_image || getFirstImageFromHtml(post.content) || '')}
                         alt={post.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        loading="lazy"
+                        decoding="async"
                       />
                     </div>
                   )}

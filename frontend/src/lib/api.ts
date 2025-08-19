@@ -37,6 +37,9 @@ api.interceptors.response.use(
       window.location.href = '/admin/login';
     } else if (error.response?.status === 403) {
       toast.error('You do not have permission to perform this action');
+    } else if (error.response?.status === 429) {
+      const msg = error.response?.data?.error || 'You are sending requests too quickly. Please wait a moment and try again.';
+      toast.error(msg);
     } else if (error.response?.status >= 500) {
       toast.error('Server error. Please try again later.');
     } else if (error.response?.data?.error) {

@@ -11,6 +11,7 @@ import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import Textarea from '../../components/ui/Textarea';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import { settingsService } from '../../services/settings';
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
@@ -28,21 +29,8 @@ export default function SettingsPage() {
   const fetchSettings = async () => {
     try {
       setLoading(true);
-      // Mock settings data for now
-      setSettings({
-        site_name: 'My CMS Site',
-        site_description: 'A modern content management system',
-        site_url: 'https://example.com',
-        admin_email: 'admin@example.com',
-        posts_per_page: '10',
-        allow_registration: 'true',
-        require_email_verification: 'true',
-        smtp_host: '',
-        smtp_port: '587',
-        smtp_username: '',
-        smtp_password: '',
-        smtp_encryption: 'tls',
-      });
+      const data = await settingsService.getSettings();
+      setSettings(data || {});
     } catch (error) {
       console.error('Error fetching settings:', error);
       toast.error('Failed to fetch settings');
@@ -58,8 +46,7 @@ export default function SettingsPage() {
   const handleSave = async () => {
     try {
       setSaving(true);
-      // Mock save functionality
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await settingsService.updateSettings(settings);
       toast.success('Settings saved successfully');
     } catch (error) {
       console.error('Error saving settings:', error);
@@ -123,8 +110,12 @@ export default function SettingsPage() {
         </label>
         <Input
           type="text"
-          value={settings.site_name || ''}
-          onChange={(e) => updateSetting('site_name', e.target.value)}
+          value={settings.site_name || settings.site_title || ''}
+          onChange={(e) => {
+            const v = e.target.value;
+            // Keep both keys in sync for compatibility
+            setSettings(prev => ({ ...prev, site_name: v, site_title: v }));
+          }}
           placeholder="My CMS Site"
         />
       </div>

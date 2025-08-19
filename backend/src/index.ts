@@ -26,11 +26,30 @@ const PORT = process.env.PORT || 3000;
 app.set('trust proxy', 1);
 
 // Rate limiting
+const isLocalIp = (ip?: string) => {
+  if (!ip) return false;
+  // handle formats like ::ffff:127.0.0.1
+  const normalized = ip.replace('::ffff:', '');
+  return (
+    normalized === '127.0.0.1' ||
+    normalized === '::1' ||
+    normalized.startsWith('127.') ||
+    /^10\./.test(normalized) ||
+    /^192\.168\./.test(normalized) ||
+    /^172\.(1[6-9]|2[0-9]|3[01])\./.test(normalized)
+  );
+};
+
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.',
-  skip: (req) => req.ip === '127.0.0.1' || req.ip === '::1', // Skip rate limiting for localhost
+  windowMs: 60 * 1000, // 1 minute
+  max: process.env.NODE_ENV === 'production' ? 600 : 0, // disable in non-prod (0 => skip via handler below)
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests. Please wait a moment and retry.',
+  skip: (req) => process.env.NODE_ENV !== 'production' || isLocalIp(req.ip),
+  handler: (req, res /*, next*/) => {
+    res.status(429).json({ error: 'Too many requests. Please wait a moment and retry.' });
+  },
 });
 
 // Middleware
@@ -40,7 +59,8 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "blob:"],
+      // Allow local uploads and external HTTPS/HTTP images
+      imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
       fontSrc: ["'self'"],
       connectSrc: ["'self'"],
       mediaSrc: ["'self'"],

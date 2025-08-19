@@ -2,7 +2,8 @@ import { useQuery } from 'react-query';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Calendar, User, Clock, Tag, ArrowLeft, Facebook, Twitter, Linkedin, Link2 } from 'lucide-react';
 import { postsService } from '../services/posts';
-import { formatDate, generateReadingTime } from '../lib/utils';
+import { formatDate, generateReadingTime, getImageUrl } from '../lib/utils';
+import { Post as PostType } from '../types';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Button from '../components/ui/Button';
 import { useEffect } from 'react';
@@ -17,11 +18,7 @@ export default function PostPage() {
     { enabled: !!slug }
   );
 
-  const { data: relatedPosts } = useQuery(
-    ['related-posts', post?.id],
-    () => postsService.getRelatedPosts(post!.id, 3),
-    { enabled: !!post?.id }
-  );
+  const relatedPosts: PostType[] = ((post as any)?.relatedPosts as PostType[]) || [];
 
   // Update page title and meta tags
   useEffect(() => {
@@ -189,7 +186,7 @@ export default function PostPage() {
           {post.featured_image && (
             <div className="mb-8">
               <img
-                src={post.featured_image}
+                src={getImageUrl(post.featured_image)}
                 alt={post.title}
                 className="w-full h-auto rounded-lg shadow-lg"
               />
@@ -230,12 +227,12 @@ export default function PostPage() {
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
             <h2 className="text-2xl font-bold text-gray-900 mb-8">Related Posts</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {relatedPosts.map((relatedPost) => (
+              {relatedPosts.map((relatedPost: PostType) => (
                 <article key={relatedPost.id} className="card group hover:shadow-lg transition-shadow">
                   {relatedPost.featured_image && (
                     <div className="aspect-video bg-gray-200 rounded-t-lg overflow-hidden">
                       <img
-                        src={relatedPost.featured_image}
+                        src={getImageUrl(relatedPost.featured_image)}
                         alt={relatedPost.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       />

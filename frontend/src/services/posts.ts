@@ -19,7 +19,8 @@ export const postsService = {
     });
 
     const response = await api.get(`/posts?${searchParams.toString()}`);
-    return response.data;
+    const body = response.data as any;
+    return { posts: body.data, pagination: body.pagination, total: body.pagination?.totalCount } as unknown as ApiResponse<Post[]>;
   },
 
   // Get all published posts (public) - alias for backward compatibility
@@ -30,7 +31,7 @@ export const postsService = {
   // Get single post by slug (public)
   getPostBySlug: async (slug: string): Promise<Post> => {
     const response = await api.get(`/posts/${slug}`);
-    return response.data.data;
+    return response.data.post || response.data.data;
   },
 
   // Get related posts
@@ -86,14 +87,16 @@ export const postsService = {
 
   // Featured posts
   getFeaturedPosts: async (limit: number = 5): Promise<ApiResponse<Post[]>> => {
-    const response = await api.get(`/posts?featured=true&limit=${limit}`);
-    return response.data;
+    const resp = await api.get(`/posts?featured=true&limit=${limit}`);
+    const body = resp.data as any;
+    return { posts: body.data, pagination: body.pagination } as unknown as ApiResponse<Post[]>;
   },
 
   // Recent posts
   getRecentPosts: async (limit: number = 5): Promise<ApiResponse<Post[]>> => {
-    const response = await api.get(`/posts?limit=${limit}&sort=created_at&order=desc`);
-    return response.data;
+    const resp = await api.get(`/posts?limit=${limit}`);
+    const body = resp.data as any;
+    return { posts: body.data, pagination: body.pagination } as unknown as ApiResponse<Post[]>;
   },
 
   // Search posts

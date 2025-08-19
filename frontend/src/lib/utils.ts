@@ -72,7 +72,24 @@ export function isValidUrl(url: string): boolean {
 export function getImageUrl(path: string): string {
   if (!path) return '';
   if (path.startsWith('http')) return path;
+  // Ensure uploads path maps correctly (Nginx serves /uploads from /app/uploads)
+  if (path.startsWith('/uploads/')) return path;
+  if (path.startsWith('uploads/')) return `/${path}`;
   return path.startsWith('/') ? path : `/${path}`;
+}
+
+// Extract first <img src="..."> from HTML content
+export function getFirstImageFromHtml(html: string | undefined | null): string | null {
+  if (!html) return null;
+  try {
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    const img = div.querySelector('img');
+    const src = img?.getAttribute('src') || null;
+    return src ? getImageUrl(src) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function stripHtml(html: string): string {

@@ -13,6 +13,8 @@ import DashboardPage from './pages/admin/DashboardPage';
 // Import new admin pages
 import PostsPage from './pages/admin/PostsPage';
 import CategoriesPage from './pages/admin/CategoriesPage';
+import PostNewPage from './pages/admin/PostNewPage';
+import PostEditPage from './pages/admin/PostEditPage';
 import PagesPage from './pages/admin/PagesPage';
 import MediaPage from './pages/admin/MediaPage';
 import SettingsPage from './pages/admin/SettingsPage';
@@ -57,6 +59,8 @@ function App() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="posts" element={<PostsPage />} />
+        <Route path="posts/new" element={<PostNewPage />} />
+        <Route path="posts/:id/edit" element={<PostEditPage />} />
         <Route path="categories" element={<CategoriesPage />} />
         <Route path="pages" element={<PagesPage />} />
         <Route path="media" element={<MediaPage />} />
