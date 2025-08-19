@@ -1,0 +1,441 @@
+# Lightweight CMS System - Cursor Rules
+
+## Project Overview
+A modern, full-stack Content Management System built with React, Node.js, Express, TypeScript, and PostgreSQL. Designed for personal blogs and lightweight content management with a focus on performance, SEO optimization, and modern development practices.
+
+## Architecture Overview
+
+### System Architecture
+- **Frontend**: React 18 + TypeScript + Vite (SPA)
+- **Backend**: Node.js + Express + TypeScript (REST API)
+- **Database**: PostgreSQL 15+ with optimized indexes
+- **Deployment**: Docker containerized with Nginx reverse proxy
+- **Process Management**: Supervisor for multi-process orchestration
+
+### Project Structure
+```
+dprogres_site/
+├── frontend/           # React frontend application
+├── backend/            # Express.js API server
+├── nginx/              # Nginx configuration for production
+├── docker-compose.yml  # Multi-service Docker setup
+├── Dockerfile          # Production container build
+├── init-db.sql         # Database schema and initial data
+└── supervisord.conf    # Process management configuration
+```
+
+## Tech Stack Details
+
+### Backend (Node.js + Express + TypeScript)
+**Core Dependencies:**
+- `express` (^4.18.2) - Web framework
+- `typescript` (^5.1.6) - Type safety
+- `pg` (^8.11.3) - PostgreSQL client
+- `bcryptjs` (^2.4.3) - Password hashing
+- `jsonwebtoken` (^9.0.2) - JWT authentication
+- `joi` (^17.9.2) - Input validation
+- `multer` (^1.4.5) - File upload handling
+- `slugify` (^1.6.6) - URL slug generation
+
+**Security & Middleware:**
+- `helmet` (^7.0.0) - Security headers
+- `cors` (^2.8.5) - Cross-origin resource sharing
+- `express-rate-limit` (^6.8.1) - Rate limiting
+- `compression` (^1.7.4) - Response compression
+- `morgan` (^1.10.0) - HTTP request logging
+
+**Development Tools:**
+- `ts-node-dev` (^2.0.0) - Development server with hot reload
+- `jest` (^29.6.2) + `ts-jest` - Testing framework
+- `eslint` + `@typescript-eslint/*` - Code linting
+
+### Frontend (React + TypeScript + Vite)
+**Core Dependencies:**
+- `react` (^18.2.0) + `react-dom` (^18.2.0) - UI framework
+- `typescript` (^5.0.2) - Type safety
+- `vite` (^4.4.5) - Build tool and dev server
+- `react-router-dom` (^6.14.2) - Client-side routing
+
+**State Management & Data:**
+- `react-query` (^3.39.3) - Server state management
+- `zustand` (^4.4.1) - Client state management
+- `axios` (^1.4.0) - HTTP client
+
+**UI & Styling:**
+- `tailwindcss` (^3.3.3) - Utility-first CSS framework
+- `lucide-react` (^0.263.1) - Icon library
+- `framer-motion` (^10.16.0) - Animation library
+- `clsx` (^2.0.0) + `tailwind-merge` (^1.14.0) - Conditional classes
+
+**Forms & Content:**
+- `react-hook-form` (^7.45.2) - Form management
+- `react-quill` (^2.0.0) - WYSIWYG editor
+- `react-markdown` (^8.0.7) - Markdown rendering
+- `react-syntax-highlighter` (^15.5.0) - Code syntax highlighting
+- `react-dropzone` (^14.2.3) - File drag & drop
+
+**Utilities:**
+- `date-fns` (^2.30.0) - Date manipulation
+- `react-hot-toast` (^2.4.1) - Toast notifications
+- `react-infinite-scroll-component` (^6.1.0) - Infinite scrolling
+
+## Database Schema
+
+### Core Tables
+1. **users** - Admin authentication and user management
+   - JWT-based authentication with role-based access control
+   - Supports both local and OAuth authentication
+   - Roles: 'admin', 'author', 'editor'
+
+2. **posts** - Blog posts with SEO optimization
+   - Full-text search capabilities
+   - Status management (draft, published, scheduled)
+   - Featured posts support
+   - View count tracking
+   - SEO meta fields
+
+3. **categories** - Hierarchical content organization
+   - URL-friendly slugs
+   - SEO-optimized with meta descriptions
+
+4. **pages** - Static content management
+   - Template-based rendering
+   - SEO meta fields
+
+5. **tags** - Flexible content tagging system
+   - Many-to-many relationship with posts
+
+6. **media_files** - File upload and management
+   - Image optimization and storage
+   - Alt text for accessibility
+
+7. **site_settings** - Configurable site settings
+   - Key-value store for global configuration
+
+### Performance Optimizations
+- Indexes on frequently queried columns (slug, status, created_at)
+- Optimized JOIN queries for post listings
+- Connection pooling for database efficiency
+
+### Complete Database Schema (SQL DDL)
+```sql
+-- Users table for admin authentication
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255),
+    oauth_provider VARCHAR(50),
+    oauth_id VARCHAR(255),
+    role VARCHAR(50) DEFAULT 'author',
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Categories for blog organization
+CREATE TABLE categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    slug VARCHAR(100) UNIQUE NOT NULL,
+    description TEXT,
+    seo_indexed BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Main posts table
+CREATE TABLE posts (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) UNIQUE NOT NULL,
+    excerpt TEXT,
+    content TEXT,
+    featured_image VARCHAR(255),
+    status VARCHAR(20) DEFAULT 'draft',
+    category_id INTEGER REFERENCES categories(id),
+    author_id INTEGER REFERENCES users(id),
+    meta_title VARCHAR(255),
+    meta_description TEXT,
+    seo_indexed BOOLEAN DEFAULT TRUE,
+    scheduled_at TIMESTAMP,
+    view_count INTEGER DEFAULT 0,
+    featured BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Static pages
+CREATE TABLE pages (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) UNIQUE NOT NULL,
+    content TEXT,
+    template VARCHAR(100),
+    meta_title VARCHAR(255),
+    meta_description TEXT,
+    seo_indexed BOOLEAN DEFAULT TRUE,
+    published BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Tags system
+CREATE TABLE tags (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    slug VARCHAR(100) UNIQUE NOT NULL
+);
+
+-- Post-Tag relationship (many-to-many)
+CREATE TABLE post_tags (
+    post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+    tag_id INTEGER REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (post_id, tag_id)
+);
+
+-- Media files
+CREATE TABLE media_files (
+    id SERIAL PRIMARY KEY,
+    filename VARCHAR(255) NOT NULL,
+    original_name VARCHAR(255),
+    file_path VARCHAR(500),
+    file_size INTEGER,
+    mime_type VARCHAR(100),
+    alt_text VARCHAR(255),
+    uploaded_by INTEGER REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Site settings (key-value store)
+CREATE TABLE site_settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Performance indexes
+CREATE INDEX idx_posts_status ON posts(status);
+CREATE INDEX idx_posts_category_id ON posts(category_id);
+CREATE INDEX idx_posts_slug ON posts(slug);
+CREATE INDEX idx_posts_created_at ON posts(created_at);
+CREATE INDEX idx_categories_slug ON categories(slug);
+CREATE INDEX idx_pages_slug ON pages(slug);
+CREATE INDEX idx_media_files_uploaded_by ON media_files(uploaded_by);
+```
+
+### Default Data Seeds
+```sql
+-- Default admin user (password: admin123)
+INSERT INTO users (email, password_hash, role, first_name, last_name) VALUES 
+('admin@example.com', '$2b$10$8.xS8YO5.WYhYJNvdS9rEO1qDT7aQzNhpL8vDCqT7rXBzS5Z8YC2u', 'admin', 'Admin', 'User');
+
+-- Default categories
+INSERT INTO categories (name, slug, description) VALUES 
+('Technology', 'technology', 'Posts about technology and programming'),
+('Lifestyle', 'lifestyle', 'Personal and lifestyle posts'),
+('Business', 'business', 'Business and entrepreneurship content');
+
+-- Default site settings
+INSERT INTO site_settings (key, value) VALUES 
+('site_title', 'My Personal CMS'),
+('site_description', 'A lightweight CMS for personal blogging'),
+('site_url', 'https://example.com'),
+('posts_per_page', '10'),
+('allow_comments', 'true'),
+('theme', 'default');
+```
+
+## API Architecture
+
+### Authentication & Authorization
+- JWT-based authentication with access and refresh tokens
+- Role-based access control (RBAC)
+- Protected routes with middleware validation
+- Rate limiting for security
+
+### RESTful API Endpoints
+```
+/api/auth/*        - Authentication (login, logout, refresh)
+/api/posts/*       - Blog post management (CRUD + search)
+/api/categories/*  - Category management
+/api/pages/*       - Static page management
+/api/media/*       - File upload and management
+/api/admin/*       - Admin-specific operations
+/api/settings/*    - Site configuration
+```
+
+### Middleware Stack
+1. **Security**: Helmet, CORS, CSP headers
+2. **Logging**: Morgan HTTP request logging
+3. **Rate Limiting**: Express rate limit
+4. **Compression**: Gzip response compression
+5. **Body Parsing**: JSON and URL-encoded data
+6. **File Upload**: Multer for multipart/form-data
+7. **Authentication**: JWT token verification
+8. **Validation**: Joi schema validation
+
+## Frontend Architecture
+
+### Component Structure
+```
+src/
+├── components/
+│   ├── auth/           # Authentication components
+│   ├── layout/         # Layout wrappers (Public, Admin)
+│   └── ui/             # Reusable UI components
+├── pages/
+│   ├── admin/          # Admin panel pages
+│   └── *.tsx           # Public pages (Blog, Post, Category)
+├── lib/
+│   ├── api.ts          # Axios HTTP client configuration
+│   ├── auth.ts         # Authentication store (Zustand)
+│   └── utils.ts        # Utility functions
+├── services/           # API service layers
+└── types/              # TypeScript type definitions
+```
+
+### Key Frontend Patterns
+1. **Protected Routes**: HOC for authentication-required pages
+2. **Layout System**: Nested layouts for public/admin interfaces
+3. **State Management**: 
+   - Zustand for client state (auth, UI state)
+   - React Query for server state (API data)
+4. **Form Management**: React Hook Form with validation
+5. **Error Handling**: Global error boundaries and toast notifications
+
+### Routing Structure
+- **Public Routes**: `/`, `/blog`, `/blog/:slug`, `/category/:slug`, `/page/:slug`
+- **Admin Routes**: `/admin/*` (protected)
+- **Authentication**: `/admin/login`
+
+## Development Patterns
+
+### Code Organization
+- **Separation of Concerns**: Clear separation between frontend/backend
+- **Type Safety**: Full TypeScript coverage with strict configuration
+- **Modular Architecture**: Feature-based organization
+- **Reusable Components**: UI component library approach
+
+### Testing Strategy
+- **Backend**: Jest + Supertest for API testing
+- **Frontend**: Vitest + Testing Library for component testing
+- **E2E**: Playwright for end-to-end testing
+- **Coverage**: Configured coverage reporting
+
+### Build & Deployment
+- **Development**: Hot reload with ts-node-dev (backend) and Vite (frontend)
+- **Production**: Multi-stage Docker builds for optimization
+- **Reverse Proxy**: Nginx for serving static files and API routing
+- **Process Management**: Supervisor for multi-service orchestration
+
+## Docker Configuration
+
+### Docker Compose Services
+```yaml
+services:
+  app:                    # Main application container
+    - Multi-stage build (frontend + backend)
+    - Nginx reverse proxy + Node.js API
+    - Supervisor process management
+    - Port 3000 exposed
+    
+  db:                     # PostgreSQL database
+    - PostgreSQL 15 Alpine
+    - Persistent data volumes
+    - Port 5432 exposed
+    - Auto-initialization with init-db.sql
+```
+
+### Multi-Stage Dockerfile
+1. **frontend-builder**: Builds React application with Vite
+2. **backend-builder**: Compiles TypeScript backend
+3. **runtime**: Alpine Linux with Node.js, Nginx, Supervisor
+
+### Nginx Configuration
+- **Static Files**: Serves React build from `/app/public`
+- **API Proxy**: Routes `/api/*` to backend on port 3001
+- **Media Files**: Serves uploads with caching from `/app/uploads`
+- **Security**: CSP headers, XSS protection, content type sniffing protection
+- **Performance**: Gzip compression, static file caching
+
+### Supervisor Process Management
+```ini
+[program:backend]       # Node.js API server on port 3001
+[program:nginx]         # Nginx reverse proxy on port 3000
+```
+
+### Docker Development vs Production
+- **Development**: Use `npm run dev` for hot reload
+- **Production**: Use `docker-compose up` for containerized deployment
+- **Ports**: Frontend (5173), Backend (3001), Nginx (3000), PostgreSQL (5432)
+
+## Environment Configuration
+
+### Required Environment Variables
+```
+# Database
+DATABASE_URL=postgresql://postgres:password@db:5432/cms_db?sslmode=disable
+
+# Authentication
+JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+JWT_REFRESH_SECRET=your-refresh-secret-key-change-this-in-production
+
+# Application
+NODE_ENV=production
+PORT=3001                # Backend port (Nginx serves on 3000)
+
+# Admin User
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=admin123
+ADMIN_FIRST_NAME=Admin
+ADMIN_LAST_NAME=User
+
+# File Uploads
+UPLOAD_DIR=uploads
+MAX_FILE_SIZE=10485760
+```
+
+### Docker Environment Variables
+```yaml
+# In docker-compose.yml
+environment:
+  - NODE_ENV=production
+  - DATABASE_URL=postgresql://postgres:password@db:5432/cms_db?sslmode=disable
+  - JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+  - JWT_REFRESH_SECRET=your-refresh-secret-key-change-this-in-production
+```
+
+## File Upload & Media Management
+- **Storage**: Local filesystem with configurable upload directory
+- **Validation**: File type and size restrictions
+- **Security**: Sanitized filenames and secure storage paths
+- **API**: RESTful endpoints for upload, delete, and listing
+
+## SEO & Performance Features
+- **Meta Tags**: Dynamic meta title, description, and social sharing
+- **URL Structure**: SEO-friendly slugs for all content
+- **Performance**: Gzip compression, optimized queries, lazy loading
+- **Accessibility**: Alt text for images, semantic HTML structure
+
+## Development Guidelines
+
+### Code Style
+- **TypeScript**: Strict type checking enabled
+- **ESLint**: Configured for TypeScript with React rules
+- **Imports**: Absolute imports using path aliases (@/)
+- **Error Handling**: Comprehensive error boundaries and try-catch blocks
+
+### Security Best Practices
+- **Input Validation**: Joi schemas for all API inputs
+- **SQL Injection**: Parameterized queries using pg
+- **XSS Protection**: Content Security Policy headers
+- **Authentication**: Secure JWT implementation with refresh tokens
+- **File Upload**: Validated file types and size limits
+
+### Performance Considerations
+- **Database**: Optimized indexes and efficient queries
+- **Caching**: Static file caching with Nginx
+- **Bundle Size**: Code splitting with Vite
+- **API**: Pagination for large data sets
+
+This project follows modern full-stack development practices with a focus on type safety, performance, and maintainability. The architecture supports both development efficiency and production scalability. 

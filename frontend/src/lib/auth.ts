@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import api from './api';
-import { User, LoginData, RegisterData, UpdateProfileData, ChangePasswordData, ApiResponse } from '@/types';
+import { User, LoginData, RegisterData, UpdateProfileData, ChangePasswordData, ApiResponse } from '../types';
 
 interface AuthState {
   user: User | null;
@@ -28,6 +28,7 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true });
         try {
           const response = await api.post<ApiResponse<any>>('/auth/login', data);
+          // Backend returns { message, token, user } structure
           const { token, user } = response.data;
           
           if (token && user) {
@@ -38,6 +39,8 @@ export const useAuthStore = create<AuthState>()(
               isAuthenticated: true, 
               isLoading: false 
             });
+          } else {
+            throw new Error('Invalid response structure from server');
           }
         } catch (error) {
           set({ isLoading: false });
@@ -101,6 +104,7 @@ export const useAuthStore = create<AuthState>()(
 
         try {
           const response = await api.get<ApiResponse<any>>('/auth/me');
+          // Backend returns { user } structure  
           const { user } = response.data;
           
           if (user) {
@@ -110,9 +114,11 @@ export const useAuthStore = create<AuthState>()(
               isAuthenticated: true 
             });
           } else {
+            console.warn('No user data received from /auth/me');
             get().logout();
           }
         } catch (error) {
+          console.error('Auth check failed:', error);
           get().logout();
         }
       },

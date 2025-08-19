@@ -19,7 +19,7 @@ router.get('/', async (req: Request, res: Response) => {
     `;
 
     const result = await query(pagesQuery);
-    res.json({ pages: result.rows });
+    res.json({ data: result.rows });
   } catch (error) {
     console.error('Get pages error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -91,7 +91,7 @@ router.post('/', authenticateToken, requireEditor, validate(createPageSchema), a
 
     res.status(201).json({
       message: 'Page created successfully',
-      page: newPage
+      data: newPage
     });
   } catch (error) {
     console.error('Create page error:', error);
@@ -153,7 +153,7 @@ router.put('/:id', authenticateToken, requireEditor, validate(updatePageSchema),
 
     res.json({
       message: 'Page updated successfully',
-      page: updatedPage
+      data: updatedPage
     });
   } catch (error) {
     console.error('Update page error:', error);

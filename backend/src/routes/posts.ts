@@ -47,7 +47,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     if (featured !== undefined) {
       whereClause += ` AND p.featured = $${++paramCount}`;
-      params.push(featured === 'true');
+      params.push(String(featured) === 'true');
     }
 
     const postsQuery = `
@@ -96,7 +96,7 @@ router.get('/', async (req: Request, res: Response) => {
     const totalPages = Math.ceil(totalCount / Number(limit));
 
     res.json({
-      posts,
+      data: posts,
       pagination: {
         page: Number(page),
         limit: Number(limit),
@@ -226,7 +226,7 @@ router.post('/', authenticateToken, requireAuthor, validate(createPostSchema), a
 
     res.status(201).json({
       message: 'Post created successfully',
-      post: newPost
+      data: newPost
     });
   } catch (error) {
     console.error('Create post error:', error);
@@ -307,7 +307,7 @@ router.put('/:id', authenticateToken, requireAuthor, validate(updatePostSchema),
 
     res.json({
       message: 'Post updated successfully',
-      post: updatedPost
+      data: updatedPost
     });
   } catch (error) {
     console.error('Update post error:', error);

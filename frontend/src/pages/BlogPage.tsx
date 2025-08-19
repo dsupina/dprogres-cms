@@ -2,13 +2,13 @@ import { useState } from 'react';
 import { useQuery } from 'react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Search, Filter, Calendar, User, Clock, ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
-import { postsService } from '@/services/posts';
-import { categoriesService } from '@/services/categories';
-import { formatDate, generateReadingTime, truncateText } from '@/lib/utils';
-import LoadingSpinner from '@/components/ui/LoadingSpinner';
-import Button from '@/components/ui/Button';
-import Input from '@/components/ui/Input';
-import Select from '@/components/ui/Select';
+import { postsService } from '../services/posts';
+import { categoriesService } from '../services/categories';
+import { formatDate, generateReadingTime, truncateText } from '../lib/utils';
+import LoadingSpinner from '../components/ui/LoadingSpinner';
+import Button from '../components/ui/Button';
+import Input from '../components/ui/Input';
+import Select from '../components/ui/Select';
 
 export default function BlogPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -76,6 +76,22 @@ export default function BlogPage() {
 
   const totalPages = Math.ceil((postsData?.total || 0) / limit);
 
+  // Create options arrays for Select components
+  const categoryOptions = [
+    { value: '', label: 'All Categories' },
+    ...(categoriesData?.categories?.map(category => ({
+      value: category.slug,
+      label: category.name
+    })) || [])
+  ];
+
+  const sortOptions = [
+    { value: 'created_at-desc', label: 'Latest First' },
+    { value: 'created_at-asc', label: 'Oldest First' },
+    { value: 'title-asc', label: 'Title A-Z' },
+    { value: 'title-desc', label: 'Title Z-A' }
+  ];
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -120,26 +136,16 @@ export default function BlogPage() {
               
               <Select
                 value={selectedCategory}
-                onValueChange={handleCategoryChange}
+                onChange={(e) => handleCategoryChange(e.target.value)}
+                options={categoryOptions}
                 placeholder="All Categories"
-              >
-                <option value="">All Categories</option>
-                {categoriesData?.categories?.map((category) => (
-                  <option key={category.id} value={category.slug}>
-                    {category.name}
-                  </option>
-                ))}
-              </Select>
+              />
 
               <Select
                 value={`${sortBy}-${sortOrder}`}
-                onValueChange={handleSortChange}
-              >
-                <option value="created_at-desc">Latest First</option>
-                <option value="created_at-asc">Oldest First</option>
-                <option value="title-asc">Title A-Z</option>
-                <option value="title-desc">Title Z-A</option>
-              </Select>
+                onChange={(e) => handleSortChange(e.target.value)}
+                options={sortOptions}
+              />
             </div>
           </div>
         </div>

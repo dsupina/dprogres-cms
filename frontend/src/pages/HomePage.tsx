@@ -1,10 +1,10 @@
 import { useQuery } from 'react-query';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Calendar, User, Clock } from 'lucide-react';
-import { postsService } from '@/services/posts';
-import { formatDate, generateReadingTime, truncateText } from '@/lib/utils';
-import LoadingSpinner from '@/components/ui/LoadingSpinner';
-import Button from '@/components/ui/Button';
+import { postsService } from '../services/posts';
+import { formatDate, generateReadingTime, truncateText } from '../lib/utils';
+import LoadingSpinner from '../components/ui/LoadingSpinner';
+import Button from '../components/ui/Button';
 
 export default function HomePage() {
   const { data: featuredPosts, isLoading: featuredLoading } = useQuery(

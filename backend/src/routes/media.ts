@@ -99,7 +99,7 @@ router.get('/', authenticateToken, requireAuthor, async (req: Request, res: Resp
     const totalPages = Math.ceil(totalCount / Number(limit));
 
     res.json({
-      mediaFiles,
+      data: mediaFiles,
       pagination: {
         page: Number(page),
         limit: Number(limit),
@@ -148,7 +148,7 @@ router.post('/upload', authenticateToken, requireAuthor, upload.single('file'), 
 
     res.status(201).json({
       message: 'File uploaded successfully',
-      mediaFile
+      data: mediaFile
     });
   } catch (error) {
     console.error('Upload error:', error);
@@ -191,7 +191,7 @@ router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('
 
     res.status(201).json({
       message: 'Files uploaded successfully',
-      mediaFiles: uploadedFiles
+      data: uploadedFiles
     });
   } catch (error) {
     console.error('Multiple upload error:', error);
@@ -223,7 +223,7 @@ router.put('/:id', authenticateToken, requireAuthor, async (req: Request, res: R
 
     res.json({
       message: 'Media file updated successfully',
-      mediaFile: updatedFile
+      data: updatedFile
     });
   } catch (error) {
     console.error('Update media error:', error);

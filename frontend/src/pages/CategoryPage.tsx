@@ -2,13 +2,13 @@ import { useState } from 'react';
 import { useQuery } from 'react-query';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { Search, Calendar, User, Clock, ArrowRight, ChevronLeft, ChevronRight, Folder } from 'lucide-react';
-import { postsService } from '@/services/posts';
-import { categoriesService } from '@/services/categories';
-import { formatDate, generateReadingTime, truncateText } from '@/lib/utils';
-import LoadingSpinner from '@/components/ui/LoadingSpinner';
-import Button from '@/components/ui/Button';
-import Input from '@/components/ui/Input';
-import Select from '@/components/ui/Select';
+import { postsService } from '../services/posts';
+import { categoriesService } from '../services/categories';
+import { formatDate, generateReadingTime, truncateText } from '../lib/utils';
+import LoadingSpinner from '../components/ui/LoadingSpinner';
+import Button from '../components/ui/Button';
+import Input from '../components/ui/Input';
+import Select from '../components/ui/Select';
 
 export default function CategoryPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -74,7 +74,14 @@ export default function CategoryPage() {
   };
 
   const totalPages = Math.ceil((postsData?.total || 0) / limit);
-  const isLoading = categoryLoading || postsLoading;
+
+  // Create sort options
+  const sortOptions = [
+    { value: 'created_at-desc', label: 'Latest First' },
+    { value: 'created_at-asc', label: 'Oldest First' },
+    { value: 'title-asc', label: 'Title A-Z' },
+    { value: 'title-desc', label: 'Title Z-A' }
+  ];
 
   if (categoryLoading) {
     return (
@@ -152,13 +159,9 @@ export default function CategoryPage() {
               <span className="text-sm text-gray-600">Sort by:</span>
               <Select
                 value={`${sortBy}-${sortOrder}`}
-                onValueChange={handleSortChange}
-              >
-                <option value="created_at-desc">Latest First</option>
-                <option value="created_at-asc">Oldest First</option>
-                <option value="title-asc">Title A-Z</option>
-                <option value="title-desc">Title Z-A</option>
-              </Select>
+                onChange={(e) => handleSortChange(e.target.value)}
+                options={sortOptions}
+              />
             </div>
           </div>
         </div>
