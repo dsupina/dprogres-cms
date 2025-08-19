@@ -1,8 +1,21 @@
 import { Link } from 'react-router-dom';
 import { Github, Twitter, Mail } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { settingsService } from '@/services/settings';
 
 export default function PublicFooter() {
   const currentYear = new Date().getFullYear();
+  const [siteName, setSiteName] = useState('Personal CMS');
+  const [siteDescription, setSiteDescription] = useState('A lightweight content management system for personal blogging and content creation. Built with modern web technologies for optimal performance.');
+
+  useEffect(() => {
+    settingsService.getSettings().then((s) => {
+      if (s?.site_title || s?.site_name) {
+        setSiteName(s.site_title || s.site_name);
+      }
+      if (s?.site_description) setSiteDescription(s.site_description);
+    }).catch(() => {});
+  }, []);
 
   return (
     <footer className="bg-gray-50 border-t border-gray-200">
@@ -11,14 +24,9 @@ export default function PublicFooter() {
           {/* Brand */}
           <div className="col-span-1 md:col-span-2">
             <Link to="/" className="flex items-center mb-4">
-              <h2 className="text-xl font-bold text-primary-600">
-                Personal CMS
-              </h2>
+              <h2 className="text-xl font-bold text-primary-600">{siteName}</h2>
             </Link>
-            <p className="text-gray-600 text-sm max-w-md">
-              A lightweight content management system for personal blogging and content creation.
-              Built with modern web technologies for optimal performance.
-            </p>
+            <p className="text-gray-600 text-sm max-w-md">{siteDescription}</p>
           </div>
 
           {/* Quick Links */}
@@ -82,9 +90,7 @@ export default function PublicFooter() {
         </div>
 
         <div className="mt-8 pt-8 border-t border-gray-200">
-          <p className="text-center text-sm text-gray-500">
-            © {currentYear} Personal CMS. All rights reserved.
-          </p>
+          <p className="text-center text-sm text-gray-500">© {currentYear} {siteName}. All rights reserved.</p>
         </div>
       </div>
     </footer>

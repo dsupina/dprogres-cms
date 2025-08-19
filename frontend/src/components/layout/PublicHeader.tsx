@@ -1,11 +1,29 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Menu, X, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { settingsService } from '@/services/settings';
 
 export default function PublicHeader() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const location = useLocation();
+  const [siteName, setSiteName] = useState('Personal CMS');
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const s = await settingsService.getSettings();
+        const name = s?.site_title || s?.site_name;
+        if (name) {
+          setSiteName(name);
+          document.title = name;
+        }
+      } catch (_) {
+        // ignore
+      }
+    };
+    load();
+  }, []);
 
   const navigation = [
     { name: 'Home', href: '/' },
@@ -26,9 +44,7 @@ export default function PublicHeader() {
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
           <Link to="/" className="flex items-center">
-            <h1 className="text-2xl font-bold text-primary-600">
-              Personal CMS
-            </h1>
+            <h1 className="text-2xl font-bold text-primary-600">{siteName}</h1>
           </Link>
 
           {/* Desktop Navigation */}

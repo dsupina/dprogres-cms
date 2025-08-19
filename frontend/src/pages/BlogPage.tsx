@@ -4,7 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Search, Filter, Calendar, User, Clock, ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import { postsService } from '../services/posts';
 import { categoriesService } from '../services/categories';
-import { formatDate, generateReadingTime, truncateText } from '../lib/utils';
+import { formatDate, generateReadingTime, truncateText, getImageUrl, getFirstImageFromHtml } from '../lib/utils';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -74,7 +74,7 @@ export default function BlogPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const totalPages = Math.ceil((postsData?.total || 0) / limit);
+  const totalPages = Math.ceil((postsData?.total || postsData?.pagination?.totalCount || 0) / limit);
 
   // Create options arrays for Select components
   const categoryOptions = [
@@ -200,10 +200,10 @@ export default function BlogPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {postsData?.posts?.map((post) => (
                 <article key={post.id} className="card group hover:shadow-lg transition-shadow">
-                  {post.featured_image && (
+                  {(post.featured_image || getFirstImageFromHtml(post.content)) && (
                     <div className="aspect-video bg-gray-200 rounded-t-lg overflow-hidden">
                       <img
-                        src={post.featured_image}
+                        src={getImageUrl(post.featured_image || getFirstImageFromHtml(post.content) || '')}
                         alt={post.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       />

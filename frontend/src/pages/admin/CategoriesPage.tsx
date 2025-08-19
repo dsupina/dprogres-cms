@@ -33,7 +33,7 @@ export default function CategoriesPage() {
     try {
       setLoading(true);
       const response = await categoriesService.getCategoriesWithCounts();
-      setCategories(response.categories || []);
+      setCategories((response.data as any) || []);
     } catch (error) {
       console.error('Error fetching categories:', error);
       toast.error('Failed to fetch categories');

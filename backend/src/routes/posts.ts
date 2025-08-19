@@ -22,7 +22,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     const offset = (Number(page) - 1) * Number(limit);
     
-    let whereClause = "WHERE p.status = 'published'";
+    let whereClause = "WHERE 1=1";
     const params: any[] = [];
     let paramCount = 0;
 
@@ -50,9 +50,12 @@ router.get('/', async (req: Request, res: Response) => {
       params.push(String(featured) === 'true');
     }
 
+    // Ensure public list shows only published posts
+    whereClause += ` AND p.status = 'published'`;
+
     const postsQuery = `
       SELECT 
-        p.id, p.title, p.slug, p.excerpt, p.featured_image, p.featured,
+        p.id, p.title, p.slug, p.excerpt, p.content, p.featured_image, p.featured,
         p.created_at, p.updated_at, p.view_count,
         c.name as category_name, c.slug as category_slug,
         u.first_name, u.last_name, u.email as author_email,
@@ -70,6 +73,7 @@ router.get('/', async (req: Request, res: Response) => {
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
       ${whereClause}
+      AND p.status = 'published'
       GROUP BY p.id, c.name, c.slug, u.first_name, u.last_name, u.email
       ORDER BY p.created_at DESC
       LIMIT $${++paramCount} OFFSET $${++paramCount}
@@ -164,7 +168,9 @@ router.get('/:slug', async (req: Request, res: Response) => {
 
     const relatedResult = await query(relatedQuery, [post.id, post.category_id]);
 
+    // Keep backward compatibility returning both shapes
     res.json({
+      data: post,
       post,
       relatedPosts: relatedResult.rows
     });

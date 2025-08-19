@@ -171,6 +171,33 @@ router.get('/posts', async (req: Request, res: Response) => {
   }
 });
 
+// Get single post by ID (admin edit view)
+router.get('/posts/:id', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || !['admin', 'editor', 'author'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { id } = req.params;
+    const result = await query(
+      `SELECT p.*, c.name as category_name, c.slug as category_slug
+       FROM posts p
+       LEFT JOIN categories c ON p.category_id = c.id
+       WHERE p.id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    res.json({ data: result.rows[0] });
+  } catch (error) {
+    console.error('Admin get post by id error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Admin categories endpoint - returns ALL categories with counts
 router.get('/categories', async (req: Request, res: Response) => {
   try {

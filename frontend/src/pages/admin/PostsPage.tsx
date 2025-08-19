@@ -41,7 +41,7 @@ export default function PostsPage() {
       };
 
       const response = await postsService.getAllPosts(params);
-      setPosts(response.posts || []);
+      setPosts((response.data as any) || []);
       setTotalPages(response.pagination?.totalPages || 1);
     } catch (error) {
       console.error('Error fetching posts:', error);
@@ -54,7 +54,7 @@ export default function PostsPage() {
   const fetchCategories = async () => {
     try {
       const response = await categoriesService.getAllCategories();
-      setCategories(response.categories || []);
+      setCategories((response.data as any) || []);
     } catch (error) {
       console.error('Error fetching categories:', error);
     }
@@ -66,6 +66,7 @@ export default function PostsPage() {
 
   useEffect(() => {
     fetchPosts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, searchQuery, selectedCategory, selectedStatus]);
 
   const handleSearch = (e: React.FormEvent) => {

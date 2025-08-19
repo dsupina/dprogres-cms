@@ -25,7 +25,7 @@ export const categoriesService = {
   // Get single category by slug (public)
   getCategoryBySlug: async (slug: string): Promise<Category> => {
     const response = await api.get(`/categories/${slug}`);
-    return response.data.data;
+    return response.data.category || response.data.data;
   },
 
   // Get single category by ID (public)
@@ -71,7 +71,7 @@ export const categoriesService = {
 
   // Get categories with post counts
   getCategoriesWithCounts: async (): Promise<ApiResponse<Category[]>> => {
-    const response = await api.get('/categories?include_counts=true');
+    const response = await api.get('/admin/categories');
     return response.data;
   },
 }; 

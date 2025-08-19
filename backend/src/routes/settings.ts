@@ -15,6 +15,10 @@ router.get('/', async (req: Request, res: Response) => {
       settings[row.key] = row.value;
     });
 
+    // Normalize: ensure site_title mirrors site_name if provided
+    if (settings['site_name']) {
+      settings['site_title'] = settings['site_name'];
+    }
     res.json(settings);
   } catch (error) {
     console.error('Get settings error:', error);
@@ -41,6 +45,18 @@ router.put('/', authenticateToken, async (req: Request, res: Response) => {
       await query(
         'INSERT INTO site_settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = CURRENT_TIMESTAMP',
         [key, value]
+      );
+    }
+    // Keep site_title and site_name strictly in sync based on whichever is provided
+    const providedName = (settings['site_title'] as string) || (settings['site_name'] as string);
+    if (providedName) {
+      await query(
+        'INSERT INTO site_settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = CURRENT_TIMESTAMP',
+        ['site_name', providedName]
+      );
+      await query(
+        'INSERT INTO site_settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = CURRENT_TIMESTAMP',
+        ['site_title', providedName]
       );
     }
 
