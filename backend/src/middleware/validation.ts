@@ -98,7 +98,8 @@ export const createPageSchema = Joi.object({
   meta_title: Joi.string().max(255).optional(),
   meta_description: Joi.string().optional(),
   seo_indexed: Joi.boolean().optional(),
-  published: Joi.boolean().optional()
+  published: Joi.boolean().optional(),
+  data: Joi.object().unknown(true).optional(),
 });
 
 export const updatePageSchema = Joi.object({
@@ -109,5 +110,25 @@ export const updatePageSchema = Joi.object({
   meta_title: Joi.string().max(255).optional(),
   meta_description: Joi.string().optional(),
   seo_indexed: Joi.boolean().optional(),
-  published: Joi.boolean().optional()
+  published: Joi.boolean().optional(),
+  data: Joi.object().unknown(true).optional(),
+});
+
+// Templates validation schemas
+export const createTemplateSchema = Joi.object({
+  key: Joi.string().max(100).regex(/^[a-z0-9-]+$/).required(),
+  name: Joi.string().max(150).required(),
+  description: Joi.string().allow('', null).optional(),
+  enabled: Joi.boolean().optional(),
+  schema: Joi.object().unknown(true).optional(),
+  default_data: Joi.object().unknown(true).optional(),
+});
+
+export const updateTemplateSchema = Joi.object({
+  key: Joi.string().max(100).regex(/^[a-z0-9-]+$/).optional(),
+  name: Joi.string().max(150).optional(),
+  description: Joi.string().allow('', null).optional(),
+  enabled: Joi.boolean().optional(),
+  schema: Joi.object().unknown(true).optional(),
+  default_data: Joi.object().unknown(true).optional(),
 }); 

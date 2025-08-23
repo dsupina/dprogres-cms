@@ -3,11 +3,14 @@ import { Link, useLocation } from 'react-router-dom';
 import { Menu, X, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { settingsService } from '@/services/settings';
+import { pagesService } from '@/services/pages';
+import type { Page } from '@/types';
 
 export default function PublicHeader() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const location = useLocation();
   const [siteName, setSiteName] = useState('Personal CMS');
+  const [pages, setPages] = useState<Page[]>([]);
 
   useEffect(() => {
     const load = async () => {
@@ -21,6 +24,12 @@ export default function PublicHeader() {
       } catch (_) {
         // ignore
       }
+      try {
+        const resp = await pagesService.getPublicPages();
+        setPages((resp.data as any) || []);
+      } catch (_) {
+        // ignore navigation pages fetch failure
+      }
     };
     load();
   }, []);
@@ -28,8 +37,7 @@ export default function PublicHeader() {
   const navigation = [
     { name: 'Home', href: '/' },
     { name: 'Blog', href: '/blog' },
-    { name: 'About', href: '/page/about' },
-    { name: 'Contact', href: '/page/contact' },
+    ...pages.map((p) => ({ name: p.title, href: `/page/${p.slug}` })),
   ];
 
   const isActive = (path: string) => {

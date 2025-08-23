@@ -20,6 +20,7 @@ const navigation = [
   { name: 'Posts', href: '/admin/posts', icon: FileText },
   { name: 'Categories', href: '/admin/categories', icon: Folder },
   { name: 'Pages', href: '/admin/pages', icon: FileText },
+  { name: 'Templates', href: '/admin/templates', icon: FileText },
   { name: 'Media', href: '/admin/media', icon: Image },
   { name: 'Settings', href: '/admin/settings', icon: Settings },
 ];

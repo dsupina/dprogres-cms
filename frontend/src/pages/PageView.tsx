@@ -7,6 +7,34 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Button from '@/components/ui/Button';
 import { useEffect } from 'react';
 
+// Simple template registry and renderer
+type TemplateComponentProps = { content?: string; data?: any };
+const TemplateAbout = ({ content }: TemplateComponentProps) => (
+  <div className="prose prose-lg max-w-none" dangerouslySetInnerHTML={{ __html: content || '' }} />
+);
+const TemplateContact = ({ content }: TemplateComponentProps) => (
+  <div className="space-y-8">
+    <div className="prose prose-lg max-w-none" dangerouslySetInnerHTML={{ __html: content || '' }} />
+    <div className="bg-white p-6 rounded-lg shadow-sm border">
+      <h2 className="text-xl font-semibold mb-4">Contact</h2>
+      <p className="text-gray-600 mb-4">Email: hello@example.com</p>
+      <div className="flex gap-3">
+        <Button as="a" href="mailto:hello@example.com">Send Email</Button>
+        <Button as="a" href="https://linkedin.com" target="_blank" rel="noopener noreferrer" variant="outline">LinkedIn</Button>
+      </div>
+    </div>
+  </div>
+);
+const TemplateDefault = ({ content }: TemplateComponentProps) => (
+  <div className="prose prose-lg max-w-none" dangerouslySetInnerHTML={{ __html: content || '' }} />
+);
+
+const templates: Record<string, (p: TemplateComponentProps) => JSX.Element> = {
+  about: TemplateAbout,
+  contact: TemplateContact,
+  default: TemplateDefault,
+};
+
 export default function PageView() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
@@ -115,12 +143,13 @@ export default function PageView() {
             </div>
           )}
 
-          {/* Content */}
-          <div className="prose prose-lg max-w-none">
-            <div 
-              dangerouslySetInnerHTML={{ __html: page.content || '' }}
-              className="prose-headings:text-gray-900 prose-p:text-gray-700 prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 prose-code:text-primary-600 prose-code:bg-gray-100 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-blockquote:border-l-4 prose-blockquote:border-primary-500 prose-blockquote:text-gray-700 prose-img:rounded-lg prose-img:shadow-md"
-            />
+          {/* Content via Template Renderer */}
+          <div className="prose-headings:text-gray-900 prose-p:text-gray-700 prose-a:text-primary-600 prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 prose-code:text-primary-600 prose-code:bg-gray-100 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-blockquote:border-l-4 prose-blockquote:border-primary-500 prose-blockquote:text-gray-700 prose-img:rounded-lg prose-img:shadow-md">
+            {(() => {
+              const key = (page.template || 'default').toLowerCase();
+              const Component = templates[key] || templates.default;
+              return <Component content={page.content} data={(page as any).data} />;
+            })()}
           </div>
         </div>
       </article>

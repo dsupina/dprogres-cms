@@ -56,6 +56,7 @@ CREATE TABLE pages (
     title VARCHAR(255) NOT NULL,
     slug VARCHAR(255) UNIQUE NOT NULL,
     content TEXT,
+    data JSONB DEFAULT '{}'::jsonb,
     template VARCHAR(100),
     meta_title VARCHAR(255),
     meta_description TEXT,
@@ -96,6 +97,19 @@ CREATE TABLE media_files (
 CREATE TABLE site_settings (
     key VARCHAR(100) PRIMARY KEY,
     value TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Page templates
+CREATE TABLE IF NOT EXISTS page_templates (
+    id SERIAL PRIMARY KEY,
+    key VARCHAR(100) UNIQUE NOT NULL,
+    name VARCHAR(150) NOT NULL,
+    description TEXT,
+    enabled BOOLEAN DEFAULT TRUE,
+    schema JSONB DEFAULT '{}'::jsonb,
+    default_data JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

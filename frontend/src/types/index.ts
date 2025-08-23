@@ -67,6 +67,7 @@ export interface Page {
   first_name?: string;
   last_name?: string;
   author_email?: string;
+  data?: any;
 }
 
 export interface MediaFile {
@@ -145,6 +146,7 @@ export interface CreatePageData {
   meta_description?: string;
   seo_indexed?: boolean;
   published?: boolean;
+  data?: any;
 }
 
 export interface UpdatePageData {
@@ -156,6 +158,7 @@ export interface UpdatePageData {
   meta_description?: string;
   seo_indexed?: boolean;
   published?: boolean;
+  data?: any;
 }
 
 export interface QueryParams {
