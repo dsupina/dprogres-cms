@@ -16,8 +16,13 @@ import CategoriesPage from './pages/admin/CategoriesPage';
 import PostNewPage from './pages/admin/PostNewPage';
 import PostEditPage from './pages/admin/PostEditPage';
 import PagesPage from './pages/admin/PagesPage';
+import PageNewPage from './pages/admin/PageNewPage';
+import PageEditPage from './pages/admin/PageEditPage';
 import MediaPage from './pages/admin/MediaPage';
 import SettingsPage from './pages/admin/SettingsPage';
+import TemplatesPage from './pages/admin/TemplatesPage';
+import TemplateNewPage from './pages/admin/TemplateNewPage';
+import TemplateEditPage from './pages/admin/TemplateEditPage';
 
 // Import existing components
 import PublicLayout from './components/layout/PublicLayout';
@@ -63,7 +68,12 @@ function App() {
         <Route path="posts/:id/edit" element={<PostEditPage />} />
         <Route path="categories" element={<CategoriesPage />} />
         <Route path="pages" element={<PagesPage />} />
+        <Route path="pages/new" element={<PageNewPage />} />
+        <Route path="pages/:id/edit" element={<PageEditPage />} />
         <Route path="media" element={<MediaPage />} />
+        <Route path="templates" element={<TemplatesPage />} />
+        <Route path="templates/new" element={<TemplateNewPage />} />
+        <Route path="templates/:id/edit" element={<TemplateEditPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
 

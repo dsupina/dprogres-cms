@@ -70,8 +70,8 @@ router.post('/', authenticateToken, requireEditor, validate(createPageSchema), a
     const insertQuery = `
       INSERT INTO pages (
         title, slug, content, template, meta_title, meta_description, 
-        seo_indexed, published
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        seo_indexed, published, data
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *
     `;
 
@@ -83,7 +83,8 @@ router.post('/', authenticateToken, requireEditor, validate(createPageSchema), a
       pageData.meta_title,
       pageData.meta_description,
       pageData.seo_indexed !== false,
-      pageData.published || false
+      pageData.published || false,
+      (pageData as any).data || null
     ];
 
     const result = await query(insertQuery, values);
@@ -131,8 +132,9 @@ router.put('/:id', authenticateToken, requireEditor, validate(updatePageSchema),
         meta_description = COALESCE($6, meta_description),
         seo_indexed = COALESCE($7, seo_indexed),
         published = COALESCE($8, published),
+        data = COALESCE($9, data),
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $9
+      WHERE id = $10
       RETURNING *
     `;
 
@@ -145,6 +147,7 @@ router.put('/:id', authenticateToken, requireEditor, validate(updatePageSchema),
       pageData.meta_description,
       pageData.seo_indexed,
       pageData.published,
+      (pageData as any).data,
       id
     ];
 

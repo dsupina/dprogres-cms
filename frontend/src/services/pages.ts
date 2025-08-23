@@ -16,7 +16,8 @@ export const pagesService = {
   // Get single page by slug (public)
   getPageBySlug: async (slug: string): Promise<Page> => {
     const response = await api.get(`/pages/${slug}`);
-    return response.data.data;
+    const body = response.data as any;
+    return body.page || body.data;
   },
 
   // Admin endpoints

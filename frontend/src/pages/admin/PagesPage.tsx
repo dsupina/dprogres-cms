@@ -26,7 +26,7 @@ export default function PagesPage() {
     try {
       setLoading(true);
       const response = await pagesService.getAllPages();
-      setPages(response.pages || []);
+      setPages((response.data as any) || []);
     } catch (error) {
       console.error('Error fetching pages:', error);
       toast.error('Failed to fetch pages');

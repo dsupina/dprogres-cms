@@ -15,6 +15,7 @@ import pagesRoutes from './routes/pages';
 import mediaRoutes from './routes/media';
 import settingsRoutes from './routes/settings';
 import adminRoutes from './routes/admin';
+import templatesAdminRoutes from './routes/templates';
 
 // Load environment variables
 dotenv.config();
@@ -60,7 +61,7 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'"],
       scriptSrc: ["'self'"],
       // Allow local uploads and external HTTPS/HTTP images
-      imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:', 'http:'],
       fontSrc: ["'self'"],
       connectSrc: ["'self'"],
       mediaSrc: ["'self'"],
@@ -90,6 +91,7 @@ app.use('/api/pages', pagesRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin/templates', templatesAdminRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
