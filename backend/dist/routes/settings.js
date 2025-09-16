@@ -14,6 +14,9 @@ router.get('/', async (req, res) => {
         result.rows.forEach((row) => {
             settings[row.key] = row.value;
         });
+        if (settings['site_name']) {
+            settings['site_title'] = settings['site_name'];
+        }
         res.json(settings);
     }
     catch (error) {
@@ -32,6 +35,11 @@ router.put('/', auth_1.authenticateToken, async (req, res) => {
         }
         for (const [key, value] of Object.entries(settings)) {
             await (0, database_1.query)('INSERT INTO site_settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = CURRENT_TIMESTAMP', [key, value]);
+        }
+        const providedName = settings['site_title'] || settings['site_name'];
+        if (providedName) {
+            await (0, database_1.query)('INSERT INTO site_settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = CURRENT_TIMESTAMP', ['site_name', providedName]);
+            await (0, database_1.query)('INSERT INTO site_settings (key, value, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = CURRENT_TIMESTAMP', ['site_title', providedName]);
         }
         res.json({ message: 'Settings updated successfully' });
     }

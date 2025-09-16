@@ -88,7 +88,7 @@ export default function PublicHeader() {
               type="button"
               className="md:hidden p-2 text-gray-400 hover:text-gray-500 transition-colors"
               onClick={() => setIsMenuOpen(!isMenuOpen)}
-              aria-label="Toggle menu"
+              aria-label={isMenuOpen ? 'Close menu' : 'Open menu'}
             >
               {isMenuOpen ? (
                 <X className="h-6 w-6" />
@@ -102,7 +102,7 @@ export default function PublicHeader() {
         {/* Mobile Navigation */}
         {isMenuOpen && (
           <div className="md:hidden">
-            <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3 border-t border-gray-200">
+            <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3 border-t border-gray-200" role="menu" aria-label="Mobile navigation">
               {navigation.map((item) => (
                 <Link
                   key={item.name}

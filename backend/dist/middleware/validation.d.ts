@@ -9,4 +9,6 @@ export declare const createCategorySchema: Joi.ObjectSchema<any>;
 export declare const updateCategorySchema: Joi.ObjectSchema<any>;
 export declare const createPageSchema: Joi.ObjectSchema<any>;
 export declare const updatePageSchema: Joi.ObjectSchema<any>;
+export declare const createTemplateSchema: Joi.ObjectSchema<any>;
+export declare const updateTemplateSchema: Joi.ObjectSchema<any>;
 //# sourceMappingURL=validation.d.ts.map

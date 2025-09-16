@@ -311,6 +311,7 @@ export default function PostsPage() {
                         as={Link}
                         to={`/blog/${post.slug}`}
                         target="_blank"
+                        aria-label={`Preview post ${post.title}`}
                       >
                         <Eye className="h-4 w-4" />
                       </Button>
@@ -319,6 +320,7 @@ export default function PostsPage() {
                         size="sm"
                         as={Link}
                         to={`/admin/posts/${post.id}/edit`}
+                        aria-label={`Edit post ${post.title}`}
                       >
                         <Edit className="h-4 w-4" />
                       </Button>
@@ -327,6 +329,7 @@ export default function PostsPage() {
                         size="sm"
                         onClick={() => handleDelete(post.id)}
                         className="text-red-600 hover:text-red-700"
+                        aria-label={`Delete post ${post.title}`}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>

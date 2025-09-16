@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
       ORDER BY title ASC
     `;
         const result = await (0, database_1.query)(pagesQuery);
-        res.json({ pages: result.rows });
+        res.json({ data: result.rows });
     }
     catch (error) {
         console.error('Get pages error:', error);
@@ -60,8 +60,8 @@ router.post('/', auth_1.authenticateToken, auth_1.requireEditor, (0, validation_
         const insertQuery = `
       INSERT INTO pages (
         title, slug, content, template, meta_title, meta_description, 
-        seo_indexed, published
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        seo_indexed, published, data
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *
     `;
         const values = [
@@ -72,13 +72,14 @@ router.post('/', auth_1.authenticateToken, auth_1.requireEditor, (0, validation_
             pageData.meta_title,
             pageData.meta_description,
             pageData.seo_indexed !== false,
-            pageData.published || false
+            pageData.published || false,
+            pageData.data || null
         ];
         const result = await (0, database_1.query)(insertQuery, values);
         const newPage = result.rows[0];
         res.status(201).json({
             message: 'Page created successfully',
-            page: newPage
+            data: newPage
         });
     }
     catch (error) {
@@ -111,8 +112,9 @@ router.put('/:id', auth_1.authenticateToken, auth_1.requireEditor, (0, validatio
         meta_description = COALESCE($6, meta_description),
         seo_indexed = COALESCE($7, seo_indexed),
         published = COALESCE($8, published),
+        data = COALESCE($9, data),
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $9
+      WHERE id = $10
       RETURNING *
     `;
         const values = [
@@ -124,13 +126,14 @@ router.put('/:id', auth_1.authenticateToken, auth_1.requireEditor, (0, validatio
             pageData.meta_description,
             pageData.seo_indexed,
             pageData.published,
+            pageData.data,
             id
         ];
         const result = await (0, database_1.query)(updateQuery, values);
         const updatedPage = result.rows[0];
         res.json({
             message: 'Page updated successfully',
-            page: updatedPage
+            data: updatedPage
         });
     }
     catch (error) {

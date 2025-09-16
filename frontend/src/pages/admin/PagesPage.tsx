@@ -138,6 +138,7 @@ export default function PagesPage() {
                     as={Link}
                     to={`/page/${page.slug}`}
                     target="_blank"
+                    aria-label="Preview page"
                   >
                     <Eye className="h-4 w-4" />
                   </Button>
@@ -146,6 +147,7 @@ export default function PagesPage() {
                     size="sm"
                     as={Link}
                     to={`/admin/pages/${page.id}/edit`}
+                    aria-label="Edit page"
                   >
                     <Edit className="h-4 w-4" />
                   </Button>
@@ -154,6 +156,7 @@ export default function PagesPage() {
                     size="sm"
                     onClick={() => handleDelete(page.id)}
                     className="text-red-600 hover:text-red-700"
+                    aria-label="Delete page"
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>

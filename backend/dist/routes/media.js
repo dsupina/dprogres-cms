@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const multer_1 = __importDefault(require("multer"));
+const sharp_1 = __importDefault(require("sharp"));
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
 const database_1 = require("../utils/database");
@@ -50,7 +51,7 @@ const upload = (0, multer_1.default)({
     storage: storage,
     fileFilter: fileFilter,
     limits: {
-        fileSize: 10 * 1024 * 1024
+        fileSize: 20 * 1024 * 1024
     }
 });
 router.get('/', auth_1.authenticateToken, auth_1.requireAuthor, async (req, res) => {
@@ -86,7 +87,7 @@ router.get('/', auth_1.authenticateToken, auth_1.requireAuthor, async (req, res)
         const totalCount = parseInt(countResult.rows[0].count);
         const totalPages = Math.ceil(totalCount / Number(limit));
         res.json({
-            mediaFiles,
+            data: mediaFiles,
             pagination: {
                 page: Number(page),
                 limit: Number(limit),
@@ -102,13 +103,45 @@ router.get('/', auth_1.authenticateToken, auth_1.requireAuthor, async (req, res)
         res.status(500).json({ error: 'Internal server error' });
     }
 });
-router.post('/upload', auth_1.authenticateToken, auth_1.requireAuthor, upload.single('file'), async (req, res) => {
+router.post('/upload', auth_1.authenticateToken, auth_1.requireAuthor, (req, res, next) => {
+    const handler = upload.single('file');
+    handler(req, res, function (err) {
+        if (err) {
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(413).json({ error: 'File too large', maxSize: '20MB' });
+            }
+            if (err.message === 'File type not allowed') {
+                return res.status(400).json({ error: 'File type not allowed' });
+            }
+            return res.status(400).json({ error: err.message || 'Upload failed' });
+        }
+        next();
+    });
+}, async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'No file uploaded' });
         }
         const { alt_text } = req.body;
         const userId = req.user?.userId;
+        let storedPath = `/uploads/${req.file.filename}`;
+        const fullPath = path_1.default.join(__dirname, '../../uploads', req.file.filename);
+        const ext = path_1.default.extname(req.file.originalname).toLowerCase();
+        const isImage = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext);
+        try {
+            if (isImage) {
+                const baseName = path_1.default.basename(req.file.filename, ext);
+                const webpName = `${baseName}.webp`;
+                const thumbName = `${baseName}-thumb.webp`;
+                const webpPath = path_1.default.join(__dirname, '../../uploads', webpName);
+                const thumbPath = path_1.default.join(__dirname, '../../uploads', thumbName);
+                await (0, sharp_1.default)(fullPath).rotate().resize({ width: 1600, withoutEnlargement: true }).webp({ quality: 82 }).toFile(webpPath);
+                await (0, sharp_1.default)(fullPath).rotate().resize({ width: 480, withoutEnlargement: true }).webp({ quality: 78 }).toFile(thumbPath);
+                storedPath = `/uploads/${webpName}`;
+            }
+        }
+        catch (e) {
+        }
         const insertQuery = `
       INSERT INTO media_files (
         filename, original_name, file_path, file_size, mime_type, 
@@ -119,7 +152,7 @@ router.post('/upload', auth_1.authenticateToken, auth_1.requireAuthor, upload.si
         const values = [
             req.file.filename,
             req.file.originalname,
-            `/uploads/${req.file.filename}`,
+            storedPath,
             req.file.size,
             req.file.mimetype,
             alt_text,
@@ -129,7 +162,7 @@ router.post('/upload', auth_1.authenticateToken, auth_1.requireAuthor, upload.si
         const mediaFile = result.rows[0];
         res.status(201).json({
             message: 'File uploaded successfully',
-            mediaFile
+            data: mediaFile
         });
     }
     catch (error) {
@@ -165,7 +198,7 @@ router.post('/upload-multiple', auth_1.authenticateToken, auth_1.requireAuthor, 
         }
         res.status(201).json({
             message: 'Files uploaded successfully',
-            mediaFiles: uploadedFiles
+            data: uploadedFiles
         });
     }
     catch (error) {
@@ -191,7 +224,7 @@ router.put('/:id', auth_1.authenticateToken, auth_1.requireAuthor, async (req, r
         const updatedFile = result.rows[0];
         res.json({
             message: 'Media file updated successfully',
-            mediaFile: updatedFile
+            data: updatedFile
         });
     }
     catch (error) {

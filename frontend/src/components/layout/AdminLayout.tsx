@@ -125,6 +125,7 @@ export default function AdminLayout() {
                 variant="ghost"
                 onClick={handleLogout}
                 className="text-gray-500 hover:text-gray-700"
+                aria-label="Log out"
               >
                 <LogOut className="h-5 w-5" />
               </Button>

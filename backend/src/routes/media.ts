@@ -54,7 +54,7 @@ const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 20 * 1024 * 1024 // 20MB limit
+    fileSize: 50 * 1024 * 1024 // 50MB limit
   }
 });
 
@@ -123,7 +123,7 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
   handler(req as any, res as any, function(err: any) {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: 'File too large', maxSize: '20MB' });
+        return res.status(413).json({ error: 'File too large', maxSize: '50MB' });
       }
       if (err.message === 'File type not allowed') {
         return res.status(400).json({ error: 'File type not allowed' });

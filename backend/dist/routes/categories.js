@@ -21,7 +21,7 @@ router.get('/', async (req, res) => {
       ORDER BY c.name ASC
     `;
         const result = await (0, database_1.query)(categoriesQuery);
-        res.json({ categories: result.rows });
+        res.json({ data: result.rows });
     }
     catch (error) {
         console.error('Get categories error:', error);
@@ -117,7 +117,7 @@ router.post('/', auth_1.authenticateToken, auth_1.requireEditor, (0, validation_
         const newCategory = result.rows[0];
         res.status(201).json({
             message: 'Category created successfully',
-            category: newCategory
+            data: newCategory
         });
     }
     catch (error) {
@@ -160,7 +160,7 @@ router.put('/:id', auth_1.authenticateToken, auth_1.requireEditor, (0, validatio
         const updatedCategory = result.rows[0];
         res.json({
             message: 'Category updated successfully',
-            category: updatedCategory
+            data: updatedCategory
         });
     }
     catch (error) {

@@ -18,13 +18,32 @@ const pages_1 = __importDefault(require("./routes/pages"));
 const media_1 = __importDefault(require("./routes/media"));
 const settings_1 = __importDefault(require("./routes/settings"));
 const admin_1 = __importDefault(require("./routes/admin"));
+const templates_1 = __importDefault(require("./routes/templates"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
+app.set('trust proxy', 1);
+const isLocalIp = (ip) => {
+    if (!ip)
+        return false;
+    const normalized = ip.replace('::ffff:', '');
+    return (normalized === '127.0.0.1' ||
+        normalized === '::1' ||
+        normalized.startsWith('127.') ||
+        /^10\./.test(normalized) ||
+        /^192\.168\./.test(normalized) ||
+        /^172\.(1[6-9]|2[0-9]|3[01])\./.test(normalized));
+};
 const limiter = (0, express_rate_limit_1.default)({
-    windowMs: 15 * 60 * 1000,
-    max: 100,
-    message: 'Too many requests from this IP, please try again later.',
+    windowMs: 60 * 1000,
+    max: process.env.NODE_ENV === 'production' ? 600 : 0,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: 'Too many requests. Please wait a moment and retry.',
+    skip: (req) => process.env.NODE_ENV !== 'production' || isLocalIp(req.ip),
+    handler: (req, res) => {
+        res.status(429).json({ error: 'Too many requests. Please wait a moment and retry.' });
+    },
 });
 app.use((0, helmet_1.default)({
     contentSecurityPolicy: {
@@ -32,7 +51,7 @@ app.use((0, helmet_1.default)({
             defaultSrc: ["'self'"],
             styleSrc: ["'self'", "'unsafe-inline'"],
             scriptSrc: ["'self'"],
-            imgSrc: ["'self'", "data:", "blob:"],
+            imgSrc: ["'self'", 'data:', 'blob:', 'https:', 'http:'],
             fontSrc: ["'self'"],
             connectSrc: ["'self'"],
             mediaSrc: ["'self'"],
@@ -58,6 +77,7 @@ app.use('/api/pages', pages_1.default);
 app.use('/api/media', media_1.default);
 app.use('/api/settings', settings_1.default);
 app.use('/api/admin', admin_1.default);
+app.use('/api/admin/templates', templates_1.default);
 app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', message: 'CMS API is running' });
 });
