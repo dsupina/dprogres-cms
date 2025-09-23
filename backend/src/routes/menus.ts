@@ -1,429 +1,451 @@
-/**
- * Menu management API routes with comprehensive security measures
- */
-
-import { Router, Request, Response, NextFunction } from 'express';
-import { Pool } from 'pg';
-import MenuQueries from '../db/menuQueries';
-import { authenticate, requireRole } from '../middleware/auth';
-import { csrfProtect } from '../middleware/csrf';
-import { menuRateLimiter } from '../middleware/rateLimit';
-import { sanitizeMenuItems, containsXSS } from '../utils/sanitizer';
-import { validateMenuItemUrl } from '../utils/urlValidator';
+import { Router, Request, Response } from 'express';
+import { pool } from '../utils/database';
+import { authenticateToken, requireAdmin } from '../middleware/auth';
+import { validateRequest } from '../middleware/validation';
+import Joi from 'joi';
 
 const router = Router();
 
-// Extended request with user info
-interface AuthRequest extends Request {
-  user?: {
-    id: number;
-    email: string;
-    role: string;
-  };
-}
+// Validation schemas
+const createMenuItemSchema = Joi.object({
+  domain_id: Joi.number().integer().positive().required(),
+  parent_id: Joi.number().integer().positive().allow(null).optional(),
+  label: Joi.string().min(1).max(255).required(),
+  url: Joi.string().uri().max(500).allow(null, '').optional(),
+  page_id: Joi.number().integer().positive().allow(null).optional(),
+  position: Joi.number().integer().min(0).optional(),
+  is_active: Joi.boolean().optional()
+});
 
-// Middleware stack for menu operations
-const menuMiddleware = [
-  authenticate,
-  requireRole(['admin', 'editor']),
-  csrfProtect,
-  menuRateLimiter
-];
+const updateMenuItemSchema = Joi.object({
+  label: Joi.string().min(1).max(255).optional(),
+  url: Joi.string().uri().max(500).allow(null, '').optional(),
+  page_id: Joi.number().integer().positive().allow(null).optional(),
+  position: Joi.number().integer().min(0).optional(),
+  is_active: Joi.boolean().optional(),
+  parent_id: Joi.number().integer().positive().allow(null).optional()
+});
 
-/**
- * Initialize menu routes
- * @param pool - Database connection pool
- * @returns Express router
- */
-export const createMenuRouter = (pool: Pool): Router => {
-  const menuQueries = new MenuQueries(pool);
+const reorderSchema = Joi.object({
+  items: Joi.array().items(
+    Joi.object({
+      id: Joi.number().integer().positive().required(),
+      position: Joi.number().integer().min(0).required(),
+      parent_id: Joi.number().integer().positive().allow(null).required()
+    })
+  ).required()
+});
 
-  /**
-   * GET /api/menus/:domainId/tree
-   * Get complete menu tree for a domain
-   * Public endpoint - no auth required for reading
-   */
-  router.get('/menus/:domainId/tree', async (req: Request, res: Response) => {
-    try {
-      const domainId = parseInt(req.params.domainId);
+// Get menu items for a domain
+router.get('/domain/:domainId', authenticateToken, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const domainId = parseInt(req.params.domainId);
 
-      if (isNaN(domainId) || domainId < 1) {
-        return res.status(400).json({ error: 'Invalid domain ID' });
-      }
-
-      const menuTree = await menuQueries.getMenuTree(domainId);
-
-      // Set cache headers for public endpoint
-      res.setHeader('Cache-Control', 'public, max-age=300'); // 5 minutes
-      res.json({
-        success: true,
-        data: menuTree
-      });
-    } catch (error) {
-      console.error('Error fetching menu tree:', error);
-      res.status(500).json({ error: 'Failed to fetch menu tree' });
+    if (isNaN(domainId)) {
+      return res.status(400).json({ error: 'Invalid domain ID' });
     }
-  });
 
-  /**
-   * GET /api/menus/:id
-   * Get single menu item details
-   */
-  router.get('/menus/:id', authenticate, async (req: AuthRequest, res: Response) => {
-    try {
-      const id = parseInt(req.params.id);
+    const result = await pool.query(
+      `SELECT
+        mi.*,
+        p.title as page_title,
+        p.slug as page_slug
+      FROM menu_items mi
+      LEFT JOIN pages p ON mi.page_id = p.id
+      WHERE mi.domain_id = $1
+      ORDER BY mi.parent_id NULLS FIRST, mi.position ASC`,
+      [domainId]
+    );
 
-      if (isNaN(id) || id < 1) {
-        return res.status(400).json({ error: 'Invalid menu item ID' });
-      }
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching menu items:', error);
+    res.status(500).json({ error: 'Failed to fetch menu items' });
+  }
+});
 
-      const menuItem = await menuQueries.getMenuItem(id);
+// Get menu tree for a domain (public endpoint)
+router.get('/domain/:domainId/tree', async (req: Request, res: Response) => {
+  try {
+    const domainId = parseInt(req.params.domainId);
 
-      if (!menuItem) {
-        return res.status(404).json({ error: 'Menu item not found' });
-      }
-
-      res.json({
-        success: true,
-        data: menuItem
-      });
-    } catch (error) {
-      console.error('Error fetching menu item:', error);
-      res.status(500).json({ error: 'Failed to fetch menu item' });
+    if (isNaN(domainId)) {
+      return res.status(400).json({ error: 'Invalid domain ID' });
     }
-  });
 
-  /**
-   * POST /api/menus
-   * Create new menu item
-   * Requires admin/editor role and CSRF token
-   */
-  router.post('/menus', menuMiddleware, async (req: AuthRequest, res: Response) => {
+    const result = await pool.query(
+      `WITH RECURSIVE menu_tree AS (
+        SELECT
+          mi.*,
+          p.title as page_title,
+          p.slug as page_slug,
+          0 as level
+        FROM menu_items mi
+        LEFT JOIN pages p ON mi.page_id = p.id
+        WHERE mi.domain_id = $1 AND mi.parent_id IS NULL AND mi.is_active = true
+
+        UNION ALL
+
+        SELECT
+          mi.*,
+          p.title as page_title,
+          p.slug as page_slug,
+          mt.level + 1
+        FROM menu_items mi
+        LEFT JOIN pages p ON mi.page_id = p.id
+        INNER JOIN menu_tree mt ON mi.parent_id = mt.id
+        WHERE mi.is_active = true AND mt.level < 3
+      )
+      SELECT * FROM menu_tree
+      ORDER BY parent_id NULLS FIRST, position ASC`,
+      [domainId]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching menu tree:', error);
+    res.status(500).json({ error: 'Failed to fetch menu tree' });
+  }
+});
+
+// Get single menu item
+router.get('/:id', authenticateToken, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+
+    if (isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid menu item ID' });
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM menu_items WHERE id = $1',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching menu item:', error);
+    res.status(500).json({ error: 'Failed to fetch menu item' });
+  }
+});
+
+// Create menu item
+router.post('/',
+  authenticateToken,
+  requireAdmin,
+  validateRequest(createMenuItemSchema),
+  async (req: Request, res: Response) => {
     try {
       const { domain_id, parent_id, label, url, page_id, position, is_active } = req.body;
 
-      // Validate required fields
-      if (!domain_id || !label) {
-        return res.status(400).json({ error: 'Domain ID and label are required' });
+      // Validate domain exists
+      const domainCheck = await pool.query(
+        'SELECT id FROM domains WHERE id = $1',
+        [domain_id]
+      );
+
+      if (domainCheck.rows.length === 0) {
+        return res.status(400).json({ error: 'Domain not found' });
       }
 
-      // Check for XSS attempts
-      if (containsXSS(label)) {
-        return res.status(400).json({ error: 'Invalid characters in menu label' });
-      }
+      // Validate parent exists if provided
+      if (parent_id) {
+        const parentResult = await pool.query(
+          'SELECT id, depth FROM menu_items WHERE id = $1 AND domain_id = $2',
+          [parent_id, domain_id]
+        );
 
-      // Validate URL if provided
-      if (url) {
-        const urlValidation = validateMenuItemUrl(url, page_id);
-        if (!urlValidation.valid) {
-          return res.status(400).json({ error: urlValidation.error });
+        if (parentResult.rows.length === 0) {
+          return res.status(400).json({ error: 'Parent menu item not found' });
+        }
+
+        // Check depth limit (parent at depth 2 means child would be at depth 3, which is max)
+        if (parentResult.rows[0].depth >= 2) {
+          return res.status(400).json({ error: 'Maximum nesting depth (3 levels) reached' });
         }
       }
 
-      // Validate that only URL or page_id is set, not both
-      if (url && page_id) {
-        return res.status(400).json({ error: 'Menu item cannot have both URL and page reference' });
+      // Get next position if not provided
+      let finalPosition = position;
+      if (finalPosition === undefined) {
+        const posResult = await pool.query(
+          'SELECT COALESCE(MAX(position), -1) + 1 as next_position FROM menu_items WHERE domain_id = $1 AND ($2::integer IS NULL AND parent_id IS NULL OR parent_id = $2)',
+          [domain_id, parent_id]
+        );
+        finalPosition = posResult.rows[0].next_position;
       }
 
-      const menuItem = await menuQueries.createMenuItem({
-        domain_id: parseInt(domain_id),
-        parent_id: parent_id ? parseInt(parent_id) : null,
-        label,
-        url: url || null,
-        page_id: page_id ? parseInt(page_id) : null,
-        position: position ? parseInt(position) : 0,
-        is_active: is_active !== false
-      });
+      // Insert menu item
+      const result = await pool.query(
+        `INSERT INTO menu_items (domain_id, parent_id, label, url, page_id, position, is_active)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *`,
+        [domain_id, parent_id || null, label, url || null, page_id || null, finalPosition, is_active !== false]
+      );
 
-      res.status(201).json({
-        success: true,
-        data: menuItem
-      });
+      res.status(201).json(result.rows[0]);
     } catch (error) {
       console.error('Error creating menu item:', error);
-
-      // Handle specific errors
-      if (error.message.includes('maximum depth')) {
-        return res.status(400).json({ error: 'Maximum menu depth of 3 levels exceeded' });
-      }
-      if (error.message.includes('Circular reference')) {
-        return res.status(400).json({ error: 'Operation would create circular reference' });
-      }
-
       res.status(500).json({ error: 'Failed to create menu item' });
     }
-  });
+  }
+);
 
-  /**
-   * PUT /api/menus/:id
-   * Update menu item
-   * Requires admin/editor role and CSRF token
-   */
-  router.put('/menus/:id', menuMiddleware, async (req: AuthRequest, res: Response) => {
+// Update menu item
+router.put('/:id',
+  authenticateToken,
+  requireAdmin,
+  validateRequest(updateMenuItemSchema),
+  async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
 
-      if (isNaN(id) || id < 1) {
+      if (isNaN(id)) {
         return res.status(400).json({ error: 'Invalid menu item ID' });
       }
 
-      const updates = req.body;
+      const { label, url, page_id, position, is_active, parent_id } = req.body;
 
-      // Check for XSS in label if updating
-      if (updates.label && containsXSS(updates.label)) {
-        return res.status(400).json({ error: 'Invalid characters in menu label' });
+      // Build update query dynamically
+      const updates = [];
+      const values = [];
+      let valueIndex = 1;
+
+      if (label !== undefined) {
+        updates.push(`label = $${valueIndex++}`);
+        values.push(label);
       }
-
-      // Validate URL if updating
-      if (updates.url !== undefined) {
-        const urlValidation = validateMenuItemUrl(updates.url, updates.page_id);
-        if (!urlValidation.valid) {
-          return res.status(400).json({ error: urlValidation.error });
+      if (url !== undefined) {
+        updates.push(`url = $${valueIndex++}`);
+        values.push(url);
+      }
+      if (page_id !== undefined) {
+        updates.push(`page_id = $${valueIndex++}`);
+        values.push(page_id);
+      }
+      if (position !== undefined) {
+        updates.push(`position = $${valueIndex++}`);
+        values.push(position);
+      }
+      if (is_active !== undefined) {
+        updates.push(`is_active = $${valueIndex++}`);
+        values.push(is_active);
+      }
+      if (parent_id !== undefined) {
+        // Validate no circular reference
+        if (parent_id === id) {
+          return res.status(400).json({ error: 'Cannot set item as its own parent' });
         }
+
+        // Check if the new parent is a descendant
+        const circularCheck = await pool.query(
+          `WITH RECURSIVE descendants AS (
+            SELECT id FROM menu_items WHERE parent_id = $1
+            UNION ALL
+            SELECT mi.id FROM menu_items mi
+            INNER JOIN descendants d ON mi.parent_id = d.id
+          )
+          SELECT 1 FROM descendants WHERE id = $2`,
+          [id, parent_id]
+        );
+
+        if (circularCheck.rows.length > 0) {
+          return res.status(400).json({ error: 'Circular reference detected' });
+        }
+
+        updates.push(`parent_id = $${valueIndex++}`);
+        values.push(parent_id);
       }
 
-      const menuItem = await menuQueries.updateMenuItem(id, updates);
+      if (updates.length === 0) {
+        return res.status(400).json({ error: 'No fields to update' });
+      }
 
-      res.json({
-        success: true,
-        data: menuItem
-      });
-    } catch (error) {
-      console.error('Error updating menu item:', error);
+      updates.push(`updated_at = NOW()`);
+      values.push(id);
 
-      if (error.message.includes('not found')) {
+      const result = await pool.query(
+        `UPDATE menu_items SET ${updates.join(', ')} WHERE id = $${valueIndex} RETURNING *`,
+        values
+      );
+
+      if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Menu item not found' });
       }
-      if (error.message.includes('maximum depth')) {
-        return res.status(400).json({ error: 'Maximum menu depth of 3 levels exceeded' });
-      }
-      if (error.message.includes('Circular reference')) {
-        return res.status(400).json({ error: 'Operation would create circular reference' });
-      }
 
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error('Error updating menu item:', error);
       res.status(500).json({ error: 'Failed to update menu item' });
     }
-  });
+  }
+);
 
-  /**
-   * DELETE /api/menus/:id
-   * Delete menu item and its descendants
-   * Requires admin role and CSRF token
-   */
-  router.delete('/menus/:id',
-    authenticate,
-    requireRole(['admin']),
-    csrfProtect,
-    menuRateLimiter,
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const id = parseInt(req.params.id);
+// Delete menu item
+router.delete('/:id', authenticateToken, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
 
-        if (isNaN(id) || id < 1) {
-          return res.status(400).json({ error: 'Invalid menu item ID' });
-        }
-
-        // Check if item has children and warn
-        const hasChildren = await menuQueries.hasChildren(id);
-        if (hasChildren && !req.query.confirm) {
-          return res.status(400).json({
-            error: 'Menu item has children',
-            message: 'This menu item has child items that will also be deleted. Add ?confirm=true to proceed.',
-            hasChildren: true
-          });
-        }
-
-        const deleted = await menuQueries.deleteMenuItem(id);
-
-        if (!deleted) {
-          return res.status(404).json({ error: 'Menu item not found' });
-        }
-
-        res.json({
-          success: true,
-          message: 'Menu item deleted successfully'
-        });
-      } catch (error) {
-        console.error('Error deleting menu item:', error);
-        res.status(500).json({ error: 'Failed to delete menu item' });
-      }
+    if (isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid menu item ID' });
     }
-  );
 
-  /**
-   * POST /api/menus/:domainId/reorder
-   * Reorder menu items within same parent
-   * Requires admin/editor role and CSRF token
-   */
-  router.post('/menus/:domainId/reorder', menuMiddleware, async (req: AuthRequest, res: Response) => {
+    const result = await pool.query(
+      'DELETE FROM menu_items WHERE id = $1 RETURNING id',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    console.error('Error deleting menu item:', error);
+    res.status(500).json({ error: 'Failed to delete menu item' });
+  }
+});
+
+// Reorder menu items
+router.put('/domain/:domainId/reorder',
+  authenticateToken,
+  requireAdmin,
+  validateRequest(reorderSchema),
+  async (req: Request, res: Response) => {
+    const client = await pool.connect();
+
     try {
       const domainId = parseInt(req.params.domainId);
-      const { parent_id, item_ids } = req.body;
 
-      if (isNaN(domainId) || domainId < 1) {
+      if (isNaN(domainId)) {
         return res.status(400).json({ error: 'Invalid domain ID' });
       }
 
-      if (!Array.isArray(item_ids) || item_ids.length === 0) {
-        return res.status(400).json({ error: 'Item IDs array is required' });
-      }
+      const { items } = req.body;
 
-      // Validate all item IDs are numbers
-      const validIds = item_ids.every(id => !isNaN(parseInt(id)));
-      if (!validIds) {
-        return res.status(400).json({ error: 'Invalid item IDs' });
-      }
-
-      await menuQueries.reorderMenuItems(
-        domainId,
-        parent_id ? parseInt(parent_id) : null,
-        item_ids.map(id => parseInt(id))
+      // Validate domain exists
+      const domainCheck = await client.query(
+        'SELECT id FROM domains WHERE id = $1',
+        [domainId]
       );
 
-      res.json({
-        success: true,
-        message: 'Menu items reordered successfully'
-      });
+      if (domainCheck.rows.length === 0) {
+        return res.status(400).json({ error: 'Domain not found' });
+      }
+
+      // Validate all item IDs exist and belong to this domain
+      const itemIds = items.map((item: any) => item.id);
+      const itemCheck = await client.query(
+        'SELECT id FROM menu_items WHERE domain_id = $1 AND id = ANY($2::int[])',
+        [domainId, itemIds]
+      );
+
+      if (itemCheck.rows.length !== items.length) {
+        return res.status(400).json({ error: 'Invalid menu items - some items not found or belong to different domain' });
+      }
+
+      await client.query('BEGIN');
+
+      // Update each item's position and parent
+      for (const item of items) {
+        await client.query(
+          `UPDATE menu_items
+          SET position = $1, parent_id = $2, updated_at = NOW()
+          WHERE id = $3 AND domain_id = $4`,
+          [item.position, item.parent_id, item.id, domainId]
+        );
+      }
+
+      await client.query('COMMIT');
+      res.json({ success: true });
     } catch (error) {
+      await client.query('ROLLBACK');
       console.error('Error reordering menu items:', error);
       res.status(500).json({ error: 'Failed to reorder menu items' });
+    } finally {
+      client.release();
     }
-  });
+  }
+);
 
-  /**
-   * POST /api/menus/:domainId/batch
-   * Batch create menu items
-   * Requires admin role and CSRF token
-   */
-  router.post('/menus/:domainId/batch',
-    authenticate,
-    requireRole(['admin']),
-    csrfProtect,
-    menuRateLimiter,
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const domainId = parseInt(req.params.domainId);
-        const { items } = req.body;
+// Duplicate menu from one domain to another
+router.post('/domain/:fromDomainId/duplicate',
+  authenticateToken,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const client = await pool.connect();
 
-        if (isNaN(domainId) || domainId < 1) {
-          return res.status(400).json({ error: 'Invalid domain ID' });
-        }
-
-        if (!Array.isArray(items) || items.length === 0) {
-          return res.status(400).json({ error: 'Items array is required' });
-        }
-
-        // Limit batch size
-        if (items.length > 50) {
-          return res.status(400).json({ error: 'Batch size cannot exceed 50 items' });
-        }
-
-        // Sanitize all items
-        const sanitizedItems = sanitizeMenuItems(items);
-
-        // Add domain_id to all items
-        const itemsWithDomain = sanitizedItems.map(item => ({
-          ...item,
-          domain_id: domainId
-        }));
-
-        const createdItems = await menuQueries.batchCreateMenuItems(itemsWithDomain);
-
-        res.status(201).json({
-          success: true,
-          data: createdItems,
-          count: createdItems.length
-        });
-      } catch (error) {
-        console.error('Error batch creating menu items:', error);
-        res.status(500).json({ error: 'Failed to batch create menu items' });
-      }
-    }
-  );
-
-  /**
-   * POST /api/menus/:id/move
-   * Move menu item to new parent/position
-   * Requires admin/editor role and CSRF token
-   */
-  router.post('/menus/:id/move', menuMiddleware, async (req: AuthRequest, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
-      const { parent_id, position } = req.body;
+      const fromDomainId = parseInt(req.params.fromDomainId);
+      const { toDomainId } = req.body;
 
-      if (isNaN(id) || id < 1) {
-        return res.status(400).json({ error: 'Invalid menu item ID' });
+      if (isNaN(fromDomainId) || !toDomainId || isNaN(toDomainId)) {
+        return res.status(400).json({ error: 'Invalid domain IDs' });
       }
 
-      if (position === undefined || isNaN(parseInt(position))) {
-        return res.status(400).json({ error: 'Position is required' });
+      if (fromDomainId === toDomainId) {
+        return res.status(400).json({ error: 'Source and target domains must be different' });
       }
 
-      const movedItem = await menuQueries.moveMenuItem(
-        id,
-        parent_id ? parseInt(parent_id) : null,
-        parseInt(position)
+      // Validate both domains exist
+      const domainsCheck = await client.query(
+        'SELECT id FROM domains WHERE id IN ($1, $2)',
+        [fromDomainId, toDomainId]
       );
 
-      res.json({
-        success: true,
-        data: movedItem
-      });
+      if (domainsCheck.rows.length !== 2) {
+        return res.status(400).json({ error: 'One or both domains not found' });
+      }
+
+      await client.query('BEGIN');
+
+      // Delete existing menu items in target domain
+      await client.query(
+        'DELETE FROM menu_items WHERE domain_id = $1',
+        [toDomainId]
+      );
+
+      // Copy menu structure
+      await client.query(
+        `INSERT INTO menu_items (domain_id, parent_id, label, url, page_id, position, is_active)
+        SELECT
+          $2,
+          CASE
+            WHEN parent_id IS NULL THEN NULL
+            ELSE (
+              SELECT new_items.id
+              FROM menu_items old_items
+              INNER JOIN menu_items new_items ON new_items.domain_id = $2
+                AND new_items.label = old_items.label
+                AND new_items.position = old_items.position
+              WHERE old_items.id = menu_items.parent_id
+            )
+          END,
+          label,
+          url,
+          page_id,
+          position,
+          is_active
+        FROM menu_items
+        WHERE domain_id = $1
+        ORDER BY depth, position`,
+        [fromDomainId, toDomainId]
+      );
+
+      await client.query('COMMIT');
+      res.json({ success: true });
     } catch (error) {
-      console.error('Error moving menu item:', error);
-
-      if (error.message.includes('not found')) {
-        return res.status(404).json({ error: 'Menu item not found' });
-      }
-      if (error.message.includes('maximum depth')) {
-        return res.status(400).json({ error: 'Move would exceed maximum menu depth' });
-      }
-      if (error.message.includes('Circular reference')) {
-        return res.status(400).json({ error: 'Move would create circular reference' });
-      }
-
-      res.status(500).json({ error: 'Failed to move menu item' });
+      await client.query('ROLLBACK');
+      console.error('Error duplicating menu:', error);
+      res.status(500).json({ error: 'Failed to duplicate menu' });
+    } finally {
+      client.release();
     }
-  });
+  }
+);
 
-  /**
-   * POST /api/menus/:sourceDomainId/duplicate/:targetDomainId
-   * Duplicate menu structure to another domain
-   * Requires admin role and CSRF token
-   */
-  router.post('/menus/:sourceDomainId/duplicate/:targetDomainId',
-    authenticate,
-    requireRole(['admin']),
-    csrfProtect,
-    async (req: AuthRequest, res: Response) => {
-      try {
-        const sourceDomainId = parseInt(req.params.sourceDomainId);
-        const targetDomainId = parseInt(req.params.targetDomainId);
-
-        if (isNaN(sourceDomainId) || sourceDomainId < 1 ||
-            isNaN(targetDomainId) || targetDomainId < 1) {
-          return res.status(400).json({ error: 'Invalid domain IDs' });
-        }
-
-        if (sourceDomainId === targetDomainId) {
-          return res.status(400).json({ error: 'Source and target domains must be different' });
-        }
-
-        const count = await menuQueries.duplicateMenuStructure(sourceDomainId, targetDomainId);
-
-        res.json({
-          success: true,
-          message: `Duplicated ${count} menu items`,
-          count
-        });
-      } catch (error) {
-        console.error('Error duplicating menu structure:', error);
-        res.status(500).json({ error: 'Failed to duplicate menu structure' });
-      }
-    }
-  );
-
-  return router;
-};
-
-export default createMenuRouter;
+export default router;

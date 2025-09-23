@@ -21,10 +21,19 @@ router.get('/', async (req: Request, res: Response) => {
     } = req.query as QueryParams;
 
     const offset = (Number(page) - 1) * Number(limit);
-    
+
+    // Get domain context from request (set by middleware)
+    const domain = (req as any).domain;
+
     let whereClause = "WHERE 1=1";
     const params: any[] = [];
     let paramCount = 0;
+
+    // Filter by domain if domain context exists
+    if (domain && domain.id) {
+      whereClause += ` AND (p.domain_id = $${++paramCount} OR p.domain_id IS NULL)`;
+      params.push(domain.id);
+    }
 
     if (search) {
       whereClause += ` AND (p.title ILIKE $${++paramCount} OR p.excerpt ILIKE $${paramCount} OR p.content ILIKE $${paramCount})`;
@@ -121,17 +130,27 @@ router.get('/:slug', async (req: Request, res: Response) => {
   try {
     const { slug } = req.params;
 
+    // Get domain context from request (set by middleware)
+    const domain = (req as any).domain;
+    const params: any[] = [slug];
+
+    let domainFilter = '';
+    if (domain && domain.id) {
+      domainFilter = ' AND (p.domain_id = $2 OR p.domain_id IS NULL)';
+      params.push(domain.id);
+    }
+
     const postQuery = `
-      SELECT 
-        p.*, 
+      SELECT
+        p.*,
         c.name as category_name, c.slug as category_slug,
         u.first_name, u.last_name, u.email as author_email,
         COALESCE(
           JSON_AGG(
-            CASE WHEN t.id IS NOT NULL THEN 
+            CASE WHEN t.id IS NOT NULL THEN
               JSON_BUILD_OBJECT('id', t.id, 'name', t.name, 'slug', t.slug)
             END
-          ) FILTER (WHERE t.id IS NOT NULL), 
+          ) FILTER (WHERE t.id IS NOT NULL),
           '[]'
         ) as tags
       FROM posts p
@@ -139,11 +158,11 @@ router.get('/:slug', async (req: Request, res: Response) => {
       LEFT JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.slug = $1 AND p.status = 'published'
+      WHERE p.slug = $1 AND p.status = 'published'${domainFilter}
       GROUP BY p.id, c.name, c.slug, u.first_name, u.last_name, u.email
     `;
 
-    const result = await query(postQuery, [slug]);
+    const result = await query(postQuery, params);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Post not found' });

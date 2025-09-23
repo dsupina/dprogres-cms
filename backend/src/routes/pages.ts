@@ -11,14 +11,24 @@ const router = express.Router();
 // Get all published pages (public)
 router.get('/', async (req: Request, res: Response) => {
   try {
+    // Get domain context from request (set by middleware)
+    const domain = (req as any).domain;
+    const params: any[] = [];
+
+    let domainFilter = '';
+    if (domain && domain.id) {
+      domainFilter = ' AND (domain_id = $1 OR domain_id IS NULL)';
+      params.push(domain.id);
+    }
+
     const pagesQuery = `
       SELECT id, title, slug, template, created_at, updated_at
-      FROM pages 
-      WHERE published = true
+      FROM pages
+      WHERE published = true${domainFilter}
       ORDER BY title ASC
     `;
 
-    const result = await query(pagesQuery);
+    const result = await query(pagesQuery, params);
     res.json({ data: result.rows });
   } catch (error) {
     console.error('Get pages error:', error);
@@ -31,12 +41,22 @@ router.get('/:slug', async (req: Request, res: Response) => {
   try {
     const { slug } = req.params;
 
+    // Get domain context from request (set by middleware)
+    const domain = (req as any).domain;
+    const params: any[] = [slug];
+
+    let domainFilter = '';
+    if (domain && domain.id) {
+      domainFilter = ' AND (domain_id = $2 OR domain_id IS NULL)';
+      params.push(domain.id);
+    }
+
     const pageQuery = `
-      SELECT * FROM pages 
-      WHERE slug = $1 AND published = true
+      SELECT * FROM pages
+      WHERE slug = $1 AND published = true${domainFilter}
     `;
 
-    const result = await query(pageQuery, [slug]);
+    const result = await query(pageQuery, params);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Page not found' });
@@ -67,10 +87,13 @@ router.post('/', authenticateToken, requireEditor, validate(createPageSchema), a
       }
     }
 
+    // Get domain from request context
+    const domain = (req as any).domain;
+
     const insertQuery = `
       INSERT INTO pages (
-        title, slug, content, template, meta_title, meta_description, 
-        seo_indexed, published, data
+        title, slug, content, template, meta_title, meta_description,
+        seo_indexed, published, domain_id
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *
     `;
@@ -84,7 +107,7 @@ router.post('/', authenticateToken, requireEditor, validate(createPageSchema), a
       pageData.meta_description,
       pageData.seo_indexed !== false,
       pageData.published || false,
-      (pageData as any).data || null
+      domain ? domain.id : null
     ];
 
     const result = await query(insertQuery, values);
@@ -123,7 +146,7 @@ router.put('/:id', authenticateToken, requireEditor, validate(updatePageSchema),
     }
 
     const updateQuery = `
-      UPDATE pages SET 
+      UPDATE pages SET
         title = COALESCE($1, title),
         slug = COALESCE($2, slug),
         content = COALESCE($3, content),
@@ -132,9 +155,8 @@ router.put('/:id', authenticateToken, requireEditor, validate(updatePageSchema),
         meta_description = COALESCE($6, meta_description),
         seo_indexed = COALESCE($7, seo_indexed),
         published = COALESCE($8, published),
-        data = COALESCE($9, data),
         updated_at = CURRENT_TIMESTAMP
-      WHERE id = $10
+      WHERE id = $9
       RETURNING *
     `;
 
@@ -147,7 +169,6 @@ router.put('/:id', authenticateToken, requireEditor, validate(updatePageSchema),
       pageData.meta_description,
       pageData.seo_indexed,
       pageData.published,
-      (pageData as any).data,
       id
     ];
 

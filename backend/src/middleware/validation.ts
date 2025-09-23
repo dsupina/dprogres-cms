@@ -24,6 +24,9 @@ export const validate = (schema: Joi.ObjectSchema) => {
   };
 };
 
+// Alias for consistency
+export const validateRequest = validate;
+
 // Auth validation schemas
 export const loginSchema = Joi.object({
   email: Joi.string().email().required(),
@@ -99,7 +102,7 @@ export const createPageSchema = Joi.object({
   meta_description: Joi.string().optional(),
   seo_indexed: Joi.boolean().optional(),
   published: Joi.boolean().optional(),
-  data: Joi.object().unknown(true).optional(),
+  domain_id: Joi.number().integer().optional()
 });
 
 export const updatePageSchema = Joi.object({

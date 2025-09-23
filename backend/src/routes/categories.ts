@@ -11,17 +11,30 @@ const router = express.Router();
 // Get all categories (public)
 router.get('/', async (req: Request, res: Response) => {
   try {
+    // Get domain context from request (set by middleware)
+    const domain = (req as any).domain;
+    const params: any[] = [];
+
+    let domainFilter = '';
+    let joinCondition = "c.id = p.category_id AND p.status = 'published'";
+    if (domain && domain.id) {
+      domainFilter = ' WHERE (c.domain_id = $1 OR c.domain_id IS NULL)';
+      joinCondition += ' AND (p.domain_id = c.domain_id OR p.domain_id IS NULL)';
+      params.push(domain.id);
+    }
+
     const categoriesQuery = `
-      SELECT 
+      SELECT
         c.*,
         COUNT(p.id) as post_count
       FROM categories c
-      LEFT JOIN posts p ON c.id = p.category_id AND p.status = 'published'
+      LEFT JOIN posts p ON ${joinCondition}
+      ${domainFilter}
       GROUP BY c.id
       ORDER BY c.name ASC
     `;
 
-    const result = await query(categoriesQuery);
+    const result = await query(categoriesQuery, params);
     res.json({ data: result.rows });
   } catch (error) {
     console.error('Get categories error:', error);

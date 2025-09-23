@@ -1,16 +1,18 @@
 import { useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { 
-  Menu, 
-  X, 
-  FileText, 
-  Folder, 
-  Image, 
-  Settings, 
-  LogOut, 
+import {
+  Menu,
+  X,
+  FileText,
+  Folder,
+  Image,
+  Settings,
+  LogOut,
   User,
   BarChart3,
-  Eye
+  Eye,
+  Globe,
+  Menu as MenuIcon
 } from 'lucide-react';
 import { useAuthStore } from '../../lib/auth';
 import Button from '../ui/Button';
@@ -22,6 +24,8 @@ const navigation = [
   { name: 'Pages', href: '/admin/pages', icon: FileText },
   { name: 'Templates', href: '/admin/templates', icon: FileText },
   { name: 'Media', href: '/admin/media', icon: Image },
+  { name: 'Domains', href: '/admin/domains', icon: Globe },
+  { name: 'Menus', href: '/admin/menus', icon: MenuIcon },
   { name: 'Settings', href: '/admin/settings', icon: Settings },
 ];
 

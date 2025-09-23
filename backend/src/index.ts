@@ -16,6 +16,11 @@ import mediaRoutes from './routes/media';
 import settingsRoutes from './routes/settings';
 import adminRoutes from './routes/admin';
 import templatesAdminRoutes from './routes/templates';
+import domainsRoutes from './routes/domains';
+import menusRoutes from './routes/menus';
+
+// Import domain middleware
+import { validateDomain, resolveDomain } from './middleware/domainValidation';
 
 // Load environment variables
 dotenv.config();
@@ -80,6 +85,22 @@ app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Domain validation and resolution middleware
+// Skip for health check and static files
+app.use((req, res, next) => {
+  if (req.path === '/api/health' || req.path.startsWith('/uploads')) {
+    return next();
+  }
+  validateDomain(req, res, next);
+});
+
+app.use((req, res, next) => {
+  if (req.path === '/api/health' || req.path.startsWith('/uploads')) {
+    return next();
+  }
+  resolveDomain(req, res, next);
+});
+
 // Serve uploads directory
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
@@ -92,6 +113,8 @@ app.use('/api/media', mediaRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/templates', templatesAdminRoutes);
+app.use('/api/admin/domains', domainsRoutes);
+app.use('/api/menus', menusRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
