@@ -8,13 +8,20 @@ const router = Router();
 
 // Validation schemas
 const createMenuItemSchema = Joi.object({
-  domain_id: Joi.number().integer().positive().required(),
+  domain_id: Joi.number().integer().positive().optional(), // Legacy support
+  site_id: Joi.number().integer().positive().optional(), // New field
   parent_id: Joi.number().integer().positive().allow(null).optional(),
   label: Joi.string().min(1).max(255).required(),
   url: Joi.string().uri().max(500).allow(null, '').optional(),
   page_id: Joi.number().integer().positive().allow(null).optional(),
   position: Joi.number().integer().min(0).optional(),
   is_active: Joi.boolean().optional()
+}).custom((value, helpers) => {
+  // Require either domain_id or site_id
+  if (!value.domain_id && !value.site_id) {
+    return helpers.error('any.required', { message: 'Either domain_id or site_id is required' });
+  }
+  return value;
 });
 
 const updateMenuItemSchema = Joi.object({
@@ -36,7 +43,79 @@ const reorderSchema = Joi.object({
   ).required()
 });
 
-// Get menu items for a domain
+// Get menu items for a site
+router.get('/site/:siteId', async (req: Request, res: Response) => {
+  try {
+    const siteId = parseInt(req.params.siteId);
+
+    if (isNaN(siteId)) {
+      return res.status(400).json({ error: 'Invalid site ID' });
+    }
+
+    const result = await pool.query(
+      `SELECT
+        mi.*,
+        p.title as page_title,
+        p.slug as page_slug
+      FROM menu_items mi
+      LEFT JOIN pages p ON mi.page_id = p.id
+      WHERE mi.site_id = $1
+      ORDER BY mi.parent_id NULLS FIRST, mi.position ASC`,
+      [siteId]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching site menu items:', error);
+    res.status(500).json({ error: 'Failed to fetch menu items' });
+  }
+});
+
+// Get menu tree for a site (public endpoint)
+router.get('/site/:siteId/tree', async (req: Request, res: Response) => {
+  try {
+    const siteId = parseInt(req.params.siteId);
+
+    if (isNaN(siteId)) {
+      return res.status(400).json({ error: 'Invalid site ID' });
+    }
+
+    const result = await pool.query(
+      `WITH RECURSIVE menu_tree AS (
+        SELECT
+          mi.*,
+          p.title as page_title,
+          p.slug as page_slug,
+          0 as level
+        FROM menu_items mi
+        LEFT JOIN pages p ON mi.page_id = p.id
+        WHERE mi.site_id = $1 AND mi.parent_id IS NULL AND mi.is_active = true
+
+        UNION ALL
+
+        SELECT
+          mi.*,
+          p.title as page_title,
+          p.slug as page_slug,
+          mt.level + 1
+        FROM menu_items mi
+        LEFT JOIN pages p ON mi.page_id = p.id
+        INNER JOIN menu_tree mt ON mi.parent_id = mt.id
+        WHERE mi.is_active = true AND mt.level < 3
+      )
+      SELECT * FROM menu_tree
+      ORDER BY parent_id NULLS FIRST, position ASC`,
+      [siteId]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching site menu tree:', error);
+    res.status(500).json({ error: 'Failed to fetch menu tree' });
+  }
+});
+
+// Get menu items for a domain (legacy support)
 router.get('/domain/:domainId', authenticateToken, requireAdmin, async (req: Request, res: Response) => {
   try {
     const domainId = parseInt(req.params.domainId);

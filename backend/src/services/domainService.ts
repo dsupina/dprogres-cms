@@ -47,7 +47,7 @@ class LRUCache<K, V> {
 }
 
 // Domain cache instance
-const domainCache = new LRUCache<string, any>(100);
+export const domainCache = new LRUCache<string, any>(100);
 
 export interface Domain {
   id: number;
