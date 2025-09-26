@@ -25,6 +25,7 @@ const navigation = [
   { name: 'Templates', href: '/admin/templates', icon: FileText },
   { name: 'Media', href: '/admin/media', icon: Image },
   { name: 'Domains', href: '/admin/domains', icon: Globe },
+  { name: 'Sites', href: '/admin/sites', icon: Globe },
   { name: 'Menus', href: '/admin/menus', icon: MenuIcon },
   { name: 'Settings', href: '/admin/settings', icon: Settings },
 ];

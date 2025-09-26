@@ -18,9 +18,11 @@ import adminRoutes from './routes/admin';
 import templatesAdminRoutes from './routes/templates';
 import domainsRoutes from './routes/domains';
 import menusRoutes from './routes/menus';
+import sitesRoutes from './routes/sites';
 
 // Import domain middleware
 import { validateDomain, resolveDomain } from './middleware/domainValidation';
+import { siteResolver } from './middleware/siteResolver';
 
 // Load environment variables
 dotenv.config();
@@ -101,6 +103,17 @@ app.use((req, res, next) => {
   resolveDomain(req, res, next);
 });
 
+// Site resolution middleware (feature flagged)
+const DOMAINS_SITES_ENABLED = process.env.DOMAINS_SITES_ENABLED || 'off';
+if (DOMAINS_SITES_ENABLED !== 'off') {
+  app.use((req, res, next) => {
+    if (req.path === '/api/health' || req.path.startsWith('/uploads') || req.path.startsWith('/api/admin')) {
+      return next();
+    }
+    siteResolver(req, res, next);
+  });
+}
+
 // Serve uploads directory
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
@@ -114,7 +127,9 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/templates', templatesAdminRoutes);
 app.use('/api/admin/domains', domainsRoutes);
+app.use('/api/admin/sites', sitesRoutes);
 app.use('/api/menus', menusRoutes);
+app.use('/api/sites', sitesRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

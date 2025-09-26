@@ -25,6 +25,7 @@ import TemplateNewPage from './pages/admin/TemplateNewPage';
 import TemplateEditPage from './pages/admin/TemplateEditPage';
 import DomainsPage from './pages/admin/DomainsPage';
 import MenusPage from './pages/admin/MenusPage';
+import SitesPage from './pages/admin/SitesPage';
 
 // Import existing components
 import PublicLayout from './components/layout/PublicLayout';
@@ -77,6 +78,8 @@ function App() {
         <Route path="templates/new" element={<TemplateNewPage />} />
         <Route path="templates/:id/edit" element={<TemplateEditPage />} />
         <Route path="domains" element={<DomainsPage />} />
+        <Route path="sites" element={<SitesPage />} />
+        <Route path="sites/:id/menus" element={<MenusPage />} />
         <Route path="menus" element={<MenusPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
