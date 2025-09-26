@@ -84,7 +84,8 @@ export class VersionService extends EventEmitter {
    */
   async createVersion(
     input: CreateVersionInput,
-    userId: number
+    userId: number,
+    options: { ip_address?: string; user_agent?: string } = {}
   ): Promise<ServiceResponse<ContentVersion>> {
     // Enhanced security validation
     const siteValidation = await this.validateSiteAccess(input.site_id, userId);
@@ -103,8 +104,7 @@ export class VersionService extends EventEmitter {
     if (versionCount >= this.MAX_VERSIONS_PER_CONTENT) {
       return {
         success: false,
-        error: `Maximum version limit (${this.MAX_VERSIONS_PER_CONTENT}) reached for this content`,
-        error_code: VersionErrorCode.VALIDATION_FAILED
+        error: `Maximum version limit (${this.MAX_VERSIONS_PER_CONTENT}) reached for this content`
       };
     }
 
@@ -188,7 +188,7 @@ export class VersionService extends EventEmitter {
           version_number: versionNumber,
           change_summary: input.change_summary
         },
-        data_classification: this.classifyVersionData(sanitizedInput.data)
+        data_classification: this.classifyVersionData(sanitizedInput.data!)
       }, client);
 
       await client.query('COMMIT');
@@ -669,8 +669,7 @@ export class VersionService extends EventEmitter {
       if (result.rows.length === 0) {
         return {
           success: false,
-          error: 'Access denied: User does not have permission for this site',
-          error_code: VersionErrorCode.INSUFFICIENT_PERMISSIONS
+          error: 'Access denied: User does not have permission for this site'
         };
       }
 
@@ -679,8 +678,7 @@ export class VersionService extends EventEmitter {
       console.error('Error validating site access:', error);
       return {
         success: false,
-        error: 'Failed to validate site access',
-        error_code: VersionErrorCode.VALIDATION_FAILED
+        error: 'Failed to validate site access'
       };
     }
   }
@@ -693,25 +691,23 @@ export class VersionService extends EventEmitter {
       const sanitized: CreateVersionInput = {
         ...input,
         title: DOMPurify.sanitize(input.title),
-        content: input.content ? DOMPurify.sanitize(input.content) : null,
-        excerpt: input.excerpt ? DOMPurify.sanitize(input.excerpt) : null,
-        change_summary: input.change_summary ? DOMPurify.sanitize(input.change_summary) : null
+        content: input.content ? DOMPurify.sanitize(input.content) : undefined,
+        excerpt: input.excerpt ? DOMPurify.sanitize(input.excerpt) : undefined,
+        change_summary: input.change_summary ? DOMPurify.sanitize(input.change_summary) : undefined
       };
 
       // Additional validation
       if (!sanitized.title || sanitized.title.length < 1) {
         return {
           success: false,
-          error: 'Title is required and cannot be empty',
-          error_code: VersionErrorCode.VALIDATION_FAILED
+          error: 'Title is required and cannot be empty'
         };
       }
 
       if (sanitized.title.length > 255) {
         return {
           success: false,
-          error: 'Title cannot exceed 255 characters',
-          error_code: VersionErrorCode.VALIDATION_FAILED
+          error: 'Title cannot exceed 255 characters'
         };
       }
 
@@ -720,8 +716,7 @@ export class VersionService extends EventEmitter {
       console.error('Error sanitizing input:', error);
       return {
         success: false,
-        error: 'Failed to sanitize input data',
-        error_code: VersionErrorCode.VALIDATION_FAILED
+        error: 'Failed to sanitize input data'
       };
     }
   }
@@ -894,7 +889,10 @@ export class VersionService extends EventEmitter {
       // Validate site access
       const siteValidation = await this.validateSiteAccess(siteId, userId);
       if (!siteValidation.success) {
-        return siteValidation as ServiceResponse<PaginatedResponse<ContentVersion>>;
+        return {
+          success: false,
+          error: siteValidation.error || 'Site access validation failed'
+        };
       }
 
       const {

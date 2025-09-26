@@ -498,7 +498,7 @@ describe('Enhanced VersionService - CV-003', () => {
 
   describe('Error Handling', () => {
     it('should handle database connection errors', async () => {
-      mockPool.connect.mockRejectedValueOnce(new Error('Connection failed'));
+      (mockPool.connect as jest.Mock).mockRejectedValueOnce(new Error('Connection failed'));
 
       const input: CreateVersionInput = {
         site_id: 1,
