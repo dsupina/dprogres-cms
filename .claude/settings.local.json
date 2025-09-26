@@ -20,7 +20,14 @@
       "Bash(git reset:*)",
       "Bash(npm install)",
       "Bash(python:*)",
-      "Bash(npm run test:coverage:*)"
+      "Bash(npm run test:coverage:*)",
+      "Bash(git branch:*)",
+      "Bash(for:*)",
+      "Bash(do new_name=\"EPIC-001_$file\")",
+      "Bash(echo \"Renamed: $file -> $new_name\")",
+      "Bash(done)",
+      "Bash(awk:*)",
+      "Bash(npx tsc:*)"
     ],
     "deny": [],
     "ask": []

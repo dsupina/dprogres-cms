@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 A modern, lightweight CMS built as a monorepo with React frontend and Express backend, deployed in a single Docker container with PostgreSQL database.
-
+Reference /docs/PRD.md for all project context
 ## Essential Commands
 
 ### Development
