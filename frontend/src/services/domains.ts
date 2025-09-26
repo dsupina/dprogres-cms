@@ -82,3 +82,6 @@ class DomainsService {
 }
 
 export const domainsService = new DomainsService();
+
+// Export convenience functions for compatibility
+export const fetchDomains = () => domainsService.getAll();

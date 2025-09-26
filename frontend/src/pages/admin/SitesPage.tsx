@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import AdminLayout from '../../components/admin/AdminLayout';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from 'react-query';
 import Modal from '../../components/ui/Modal';
 import Button from '../../components/ui/Button';
 import DataTable from '../../components/ui/DataTable';
 import { toast } from 'react-hot-toast';
 import { fetchSites, createSite, updateSite, deleteSite } from '../../services/sites';
 import { fetchDomains } from '../../services/domains';
+import { Edit3, Menu, Trash2 } from 'lucide-react';
 
 interface Site {
   id: number;
@@ -130,7 +130,21 @@ export default function SitesPage() {
   };
 
   const handleDelete = async (site: Site) => {
-    if (window.confirm(`Are you sure you want to delete the site "${site.name}"?`)) {
+    if (site.is_default) {
+      toast.error('Cannot delete the default site. Please set another site as default first.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete the site "${site.name}"?\n\n` +
+      `This action cannot be undone and will remove:\n` +
+      `• Site configuration and settings\n` +
+      `• Associated menu structures\n` +
+      `• Custom domain mappings\n\n` +
+      `Type "DELETE" to confirm this permanent action.`
+    );
+
+    if (confirmed) {
       deleteMutation.mutate(site.id);
     }
   };
@@ -191,26 +205,29 @@ export default function SitesPage() {
   const actions = [
     {
       label: 'Edit',
+      icon: <Edit3 />,
       onClick: handleEdit,
-      className: 'text-indigo-600 hover:text-indigo-900',
+      variant: 'primary' as const,
     },
     {
       label: 'Manage Menu',
+      icon: <Menu />,
       onClick: (site: Site) => {
         window.location.href = `/admin/sites/${site.id}/menus`;
       },
-      className: 'text-blue-600 hover:text-blue-900',
+      variant: 'secondary' as const,
     },
     {
       label: 'Delete',
+      icon: <Trash2 />,
       onClick: handleDelete,
-      className: 'text-red-600 hover:text-red-900',
+      variant: 'danger' as const,
+      disabled: (site: Site) => site.is_default, // Prevent deleting default sites
     },
   ];
 
   return (
-    <AdminLayout>
-      <div className="space-y-6">
+    <div className="space-y-6">
         <div className="flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Sites Management</h1>
@@ -232,7 +249,6 @@ export default function SitesPage() {
             data={sites || []}
             columns={columns}
             actions={actions}
-            keyField="id"
           />
         )}
 
@@ -365,9 +381,9 @@ export default function SitesPage() {
                 </Button>
                 <Button
                   type="submit"
-                  disabled={createMutation.isPending || updateMutation.isPending}
+                  disabled={createMutation.isLoading || updateMutation.isLoading}
                 >
-                  {createMutation.isPending || updateMutation.isPending
+                  {createMutation.isLoading || updateMutation.isLoading
                     ? 'Saving...'
                     : showEditModal
                     ? 'Update Site'
@@ -377,7 +393,6 @@ export default function SitesPage() {
             </form>
           </Modal>
         )}
-      </div>
-    </AdminLayout>
+    </div>
   );
 }
