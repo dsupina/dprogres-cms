@@ -412,3 +412,102 @@ GET /health → API status
 GET /health/db → Database connection
 GET /health/ready → Full system check
 ```
+
+## Content Versioning System (CV-002)
+
+### Overview
+The content versioning system provides comprehensive version management for posts and pages with multi-site support, enabling draft/publish workflows, secure preview sharing, and collaborative editing.
+
+### Type System Architecture
+
+The versioning types are organized into specialized modules:
+
+```
+backend/src/types/versioning/
+├── core.ts          # Core interfaces (ContentVersion, PreviewToken, VersionComment)
+├── enums.ts         # Type-safe enums and constants
+├── api.ts           # API request/response contracts
+├── security.ts      # Authentication, authorization, and data protection
+├── performance.ts   # Caching, optimization, and monitoring
+├── websocket.ts     # Real-time collaboration events
+├── guards.ts        # Runtime type validation and sanitization
+└── index.ts         # Main exports
+```
+
+### Database Schema
+
+#### Core Tables
+- **content_versions**: Stores all content versions with JSONB data
+  - Enforces unique version numbers per site/content
+  - Supports draft and published states
+  - Tracks change history and diffs
+
+- **preview_tokens**: Manages secure preview links
+  - Token hashing for security
+  - IP whitelisting and password protection
+  - Usage tracking and expiration
+
+- **version_comments**: Collaborative commenting system
+  - Threaded discussions
+  - Inline comments with line numbers
+  - Resolution tracking
+
+- **preview_access_logs**: Audit trail for preview access
+
+### Key Architectural Decisions
+
+1. **Multi-Site Data Isolation**
+   - All types enforce `site_id` for tenant isolation
+   - Compile-time enforcement via TypeScript
+   - Runtime validation through type guards
+
+2. **Type-Safe API Contracts**
+   - Complete request/response types for all endpoints
+   - Discriminated unions for version states
+   - Comprehensive error types with user-friendly messages
+
+3. **Security-First Design**
+   - Token hashing requirements
+   - Rate limiting configurations
+   - Audit logging for compliance
+   - PII protection patterns
+
+4. **Performance Optimization**
+   - Cursor-based pagination for large datasets
+   - Multi-layer caching strategies
+   - Lazy loading patterns
+   - Bundle size optimization
+
+5. **Real-Time Collaboration**
+   - WebSocket event types for live updates
+   - User presence tracking
+   - Optimistic UI support
+   - Conflict resolution patterns
+
+### Integration Points
+
+```typescript
+// Version Management API
+POST /api/versions           → Create new version
+PUT /api/versions/:id        → Update version
+PUT /api/versions/:id/publish → Publish version
+GET /api/versions            → List versions
+GET /api/versions/compare    → Compare versions
+
+// Preview System
+POST /api/preview-tokens     → Generate preview link
+GET /api/preview/:token      → Validate and render preview
+PUT /api/preview-tokens/:id/revoke → Revoke preview access
+
+// Collaboration
+POST /api/versions/:id/comments → Add comment
+PUT /api/comments/:id/resolve → Resolve comment thread
+WS /versioning → Real-time updates
+```
+
+### Testing Strategy
+
+- **Type Guards**: 39 unit tests covering validation, sanitization, and narrowing
+- **Runtime Validation**: Guards prevent invalid data at application boundaries
+- **Integration Tests**: API contract validation
+- **Performance Tests**: Bundle size and compilation time monitoring

@@ -1,5 +1,94 @@
 # Code Patterns & Conventions
 
+## TypeScript Type Patterns (CV-002)
+
+### Type Guard Pattern
+**Runtime validation for TypeScript interfaces**
+
+```typescript
+// Type guard with type predicate
+export function isContentVersion(value: unknown): value is ContentVersion {
+  if (!value || typeof value !== 'object') return false;
+
+  const v = value as any;
+  return (
+    typeof v.id === 'number' &&
+    typeof v.site_id === 'number' &&
+    isContentType(v.content_type) &&
+    typeof v.version_number === 'number'
+  );
+}
+
+// Usage with type narrowing
+if (isContentVersion(data)) {
+  // TypeScript knows data is ContentVersion
+  processVersion(data);
+}
+```
+
+### Site Isolation Pattern
+**Multi-tenant data isolation at type level**
+
+```typescript
+// Compile-time enforcement
+export type SiteScopedQuery<T> = T & {
+  site_id: number; // Required
+  __site_isolation_enforced: true; // Phantom type
+};
+
+// Runtime enforcement
+export function ensureSiteIsolation<T extends object>(
+  query: T,
+  allowed_sites: number[]
+): T & { site_id: number } {
+  if (!('site_id' in query)) {
+    throw new Error('Site context required');
+  }
+  // Validate site access
+  return query as T & { site_id: number };
+}
+```
+
+### Discriminated Union Pattern
+**Type-safe state machines for versions**
+
+```typescript
+export type DraftVersion = ContentVersion & {
+  version_type: VersionType.DRAFT;
+  is_current_draft: true;
+  published_at: null;
+};
+
+export type PublishedVersion = ContentVersion & {
+  version_type: VersionType.PUBLISHED;
+  published_at: Date; // Non-null
+};
+
+// Type narrowing
+function isDraftVersion(v: ContentVersion): v is DraftVersion {
+  return v.version_type === VersionType.DRAFT;
+}
+```
+
+### Input Sanitization Pattern
+**Security-focused input cleaning**
+
+```typescript
+export function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/javascript:/gi, '')
+    .replace(/on\w+\s*=/gi, '');
+}
+
+export function sanitizeFilePath(path: string): string {
+  return path
+    .replace(/\.\./g, '')
+    .replace(/^\/+/, '')
+    .replace(/[^a-zA-Z0-9_\-./]/g, '');
+}
+```
+
 ## Backend Patterns
 
 ### API Route Pattern
