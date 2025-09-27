@@ -90,13 +90,13 @@ export class VersionService extends EventEmitter {
     // Enhanced security validation
     const siteValidation = await this.validateSiteAccess(input.site_id, userId);
     if (!siteValidation.success) {
-      return siteValidation as ServiceResponse<ContentVersion>;
+      return { success: false, error: siteValidation.error } as ServiceResponse<ContentVersion>;
     }
 
     // Input sanitization
     const sanitizedInput = await this.sanitizeVersionInput(input);
     if (!sanitizedInput.success) {
-      return sanitizedInput as ServiceResponse<ContentVersion>;
+      return { success: false, error: sanitizedInput.error } as ServiceResponse<ContentVersion>;
     }
 
     // Check version limits
@@ -379,7 +379,7 @@ export class VersionService extends EventEmitter {
       const siteValidation = await this.validateSiteAccess(version.site_id, userId);
       if (!siteValidation.success) {
         await client.query('ROLLBACK');
-        return siteValidation as ServiceResponse<ContentVersion>;
+        return { success: false, error: siteValidation.error } as ServiceResponse<ContentVersion>;
       }
 
       // Mark previous published version as archived
@@ -1038,6 +1038,211 @@ export class VersionService extends EventEmitter {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to prune auto-saves'
+      };
+    }
+  }
+
+  /**
+   * Creates an auto-save version with content hash validation
+   */
+  async createAutoSave(
+    input: CreateVersionInput & { content_hash?: string },
+    userId: number,
+    siteId: number
+  ): Promise<ServiceResponse<ContentVersion>> {
+    try {
+      // Set version_type to auto_save
+      const autoSaveInput = {
+        ...input,
+        site_id: siteId,
+        content_type: input.content_type,
+        content_id: input.content_id,
+        version_type: 'auto_save' as VersionType
+      };
+
+      // Check if content has actually changed using hash
+      if (input.content_hash) {
+        const existingHash = await this.getLatestContentHash(
+          siteId,
+          input.content_type,
+          input.content_id
+        );
+
+        if (existingHash.success && existingHash.data === input.content_hash) {
+          return {
+            success: false,
+            error: 'No changes detected - auto-save skipped'
+          };
+        }
+      }
+
+      // Create the auto-save version
+      const result = await this.createVersion(autoSaveInput, userId);
+
+      if (result.success && result.data) {
+        // Clean up old auto-saves (keep last 5)
+        await this.cleanupOldAutoSaves(siteId, input.content_type, input.content_id, 5);
+
+        // Store the content hash if provided
+        if (input.content_hash) {
+          await this.pool.query(
+            'UPDATE content_versions SET content_hash = $1 WHERE id = $2',
+            [input.content_hash, result.data.id]
+          );
+        }
+      }
+
+      return result;
+    } catch (error) {
+      console.error('Error creating auto-save:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to create auto-save'
+      };
+    }
+  }
+
+  /**
+   * Retrieves the latest auto-save version for content
+   */
+  async getLatestAutoSave(
+    contentType: ContentType,
+    contentId: number,
+    siteId: number
+  ): Promise<ServiceResponse<ContentVersion | null>> {
+    try {
+      const query = `
+        SELECT *
+        FROM content_versions
+        WHERE site_id = $1
+          AND content_type = $2
+          AND content_id = $3
+          AND version_type = 'auto_save'
+          AND created_at > NOW() - INTERVAL '7 days'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `;
+
+      const result = await this.pool.query(query, [siteId, contentType, contentId]);
+
+      if (result.rows.length === 0) {
+        return { success: true, data: null };
+      }
+
+      return { success: true, data: result.rows[0] };
+    } catch (error) {
+      console.error('Error getting latest auto-save:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get latest auto-save'
+      };
+    }
+  }
+
+  /**
+   * Checks if content has unsaved changes based on content hash
+   */
+  async hasUnsavedChanges(
+    contentHash: string,
+    contentType: ContentType,
+    contentId: number,
+    siteId: number
+  ): Promise<ServiceResponse<boolean>> {
+    try {
+      const latestHash = await this.getLatestContentHash(siteId, contentType, contentId);
+
+      if (!latestHash.success) {
+        return {
+          success: false,
+          error: latestHash.error
+        };
+      }
+
+      return {
+        success: true,
+        data: latestHash.data !== contentHash
+      };
+    } catch (error) {
+      console.error('Error checking unsaved changes:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to check unsaved changes'
+      };
+    }
+  }
+
+  /**
+   * Gets the latest content hash for comparison
+   */
+  private async getLatestContentHash(
+    siteId: number,
+    contentType: ContentType,
+    contentId: number
+  ): Promise<ServiceResponse<string | null>> {
+    try {
+      const query = `
+        SELECT content_hash
+        FROM content_versions
+        WHERE site_id = $1
+          AND content_type = $2
+          AND content_id = $3
+          AND content_hash IS NOT NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+      `;
+
+      const result = await this.pool.query(query, [siteId, contentType, contentId]);
+
+      if (result.rows.length === 0) {
+        return { success: true, data: null };
+      }
+
+      return { success: true, data: result.rows[0].content_hash };
+    } catch (error) {
+      console.error('Error getting content hash:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get content hash'
+      };
+    }
+  }
+
+  /**
+   * Cleans up old auto-saves, keeping only the specified number
+   */
+  private async cleanupOldAutoSaves(
+    siteId: number,
+    contentType: ContentType,
+    contentId: number,
+    keepCount: number = 5
+  ): Promise<ServiceResponse<number>> {
+    try {
+      const query = `
+        WITH versions_to_delete AS (
+          SELECT id
+          FROM content_versions
+          WHERE site_id = $1
+            AND content_type = $2
+            AND content_id = $3
+            AND version_type = 'auto_save'
+          ORDER BY created_at DESC
+          OFFSET $4
+        )
+        DELETE FROM content_versions
+        WHERE id IN (SELECT id FROM versions_to_delete)
+      `;
+
+      const result = await this.pool.query(query, [siteId, contentType, contentId, keepCount]);
+
+      return {
+        success: true,
+        data: result.rowCount || 0
+      };
+    } catch (error) {
+      console.error('Error cleaning up auto-saves:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to cleanup auto-saves'
       };
     }
   }

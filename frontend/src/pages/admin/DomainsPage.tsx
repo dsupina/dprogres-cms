@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from 'react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Edit2, Trash2, CheckCircle, XCircle, Info } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { domainsService, Domain, CreateDomainData, UpdateDomainData } from '../../services/domains';
@@ -18,11 +18,12 @@ const DomainsPage: React.FC = () => {
     is_default: false
   });
 
-  const { data: domains, isLoading } = useQuery('domains', () => domainsService.getAll());
+  const { data: domains, isLoading } = useQuery({ queryKey: ['domains'], queryFn: () => domainsService.getAll() });
 
-  const createMutation = useMutation(domainsService.create, {
+  const createMutation = useMutation({
+    mutationFn: domainsService.create,
     onSuccess: () => {
-      queryClient.invalidateQueries('domains');
+      queryClient.invalidateQueries({ queryKey: ['domains'] });
       toast.success('Domain created successfully');
       setIsAddingDomain(false);
       resetForm();

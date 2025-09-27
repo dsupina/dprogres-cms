@@ -81,6 +81,7 @@ export interface ContentVersion {
   // Change tracking
   change_summary: string | null;
   diff_from_previous: Record<string, any> | null;
+  content_hash: string | null; // SHA-256 hash for auto-save change detection
 
   // Relations (populated when needed)
   author?: {

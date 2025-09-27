@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import Button from '../../components/ui/Button';
@@ -7,6 +7,8 @@ import Textarea from '../../components/ui/Textarea';
 import Select from '../../components/ui/Select';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import RichTextEditor from '../../components/ui/RichTextEditor';
+import { SaveStatusIndicator } from '../../components/ui/SaveStatusIndicator';
+import { useAutoSave } from '../../hooks/useAutoSave';
 import { postsService } from '../../services/posts';
 import { categoriesService } from '../../services/categories';
 import { Category, UpdatePostData, Post } from '../../types';
@@ -22,6 +24,43 @@ export default function PostEditPage() {
 
   const [formData, setFormData] = useState<UpdatePostData>({});
   const [tagsInput, setTagsInput] = useState('');
+
+  // Auto-save hook
+  const {
+    status: autoSaveStatus,
+    lastSaved,
+    hasUnsavedChanges,
+    manualSave
+  } = useAutoSave({
+    contentType: 'post',
+    contentId: Number(id) || 0,
+    content: {
+      ...formData,
+      tags: tagsInput.split(',').map(t => t.trim()).filter(Boolean)
+    },
+    enabled: !!id && !isLoading && !isSaving,
+    onSaveSuccess: () => {
+      console.log('Auto-save successful');
+    },
+    onSaveError: (error) => {
+      console.error('Auto-save failed:', error);
+    }
+  });
+
+  // Keyboard shortcut for manual save (Ctrl+S / Cmd+S)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        if (hasUnsavedChanges) {
+          manualSave();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [hasUnsavedChanges, manualSave]);
 
   useEffect(() => {
     const load = async () => {
@@ -137,7 +176,15 @@ export default function PostEditPage() {
           <h1 className="text-2xl font-bold text-gray-900">Edit Post</h1>
           <p className="text-gray-600">Update and republish your blog post</p>
         </div>
-        <Button as={Link} to="/admin/posts" variant="secondary">Cancel</Button>
+        <div className="flex items-center gap-4">
+          <SaveStatusIndicator
+            status={autoSaveStatus}
+            lastSaved={lastSaved}
+            hasUnsavedChanges={hasUnsavedChanges}
+            onManualSave={manualSave}
+          />
+          <Button as={Link} to="/admin/posts" variant="secondary">Cancel</Button>
+        </div>
       </div>
 
       <form onSubmit={onSubmit} className="bg-white p-6 rounded-lg shadow-sm border space-y-6">

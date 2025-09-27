@@ -19,6 +19,8 @@ import templatesAdminRoutes from './routes/templates';
 import domainsRoutes from './routes/domains';
 import menusRoutes from './routes/menus';
 import sitesRoutes from './routes/sites';
+import versionsRoutes from './routes/versions_simple';
+import autosaveRoutes from './routes/autosave';
 
 // Import domain middleware
 import { validateDomain, resolveDomain } from './middleware/domainValidation';
@@ -130,6 +132,8 @@ app.use('/api/admin/domains', domainsRoutes);
 app.use('/api/admin/sites', sitesRoutes);
 app.use('/api/menus', menusRoutes);
 app.use('/api/sites', sitesRoutes);
+app.use('/api', versionsRoutes); // Version endpoints at /api/content and /api/versions
+app.use('/api', autosaveRoutes); // Auto-save endpoints
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
