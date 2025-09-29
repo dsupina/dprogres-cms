@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -31,7 +31,7 @@ import {
   X
 } from 'lucide-react';
 import { MenuItem, menuService } from '../../services/menus';
-import { useQuery, useMutation, useQueryClient } from 'react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Button from '../ui/Button';
 import { toast } from 'react-hot-toast';
 import { api } from '../../lib/api';
@@ -323,82 +323,76 @@ const MenuBuilder: React.FC<MenuBuilderProps> = ({ domainId }) => {
     })
   );
 
-  const { isLoading } = useQuery(
-    ['menu', domainId],
-    () => menuService.getMenuByDomain(domainId),
-    {
-      onSuccess: (data) => {
-        const tree = menuService.buildMenuTree(data);
-        setItems(tree);
-        // Expand all items by default
-        const allIds = new Set<number>();
-        const collectIds = (items: MenuItem[]) => {
-          items.forEach(item => {
-            if (item.children && item.children.length > 0) {
-              allIds.add(item.id);
-              collectIds(item.children);
-            }
-          });
-        };
-        collectIds(tree);
-        setExpandedItems(allIds);
-      }
-    }
-  );
+  const { data: menuData, isLoading } = useQuery({
+    queryKey: ['menu', domainId],
+    queryFn: () => menuService.getMenuByDomain(domainId)
+  });
 
-  const createMutation = useMutation(
-    (data: any) => menuService.createMenuItem(data),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries(['menu', domainId]);
-        toast.success('Menu item created');
-        setAddingItem(null);
-      },
-      onError: () => {
-        toast.error('Failed to create menu item');
-      }
+  // Update menu tree when data loads
+  useEffect(() => {
+    if (menuData) {
+      const tree = menuService.buildMenuTree(menuData);
+      setItems(tree);
+      // Expand all items by default
+      const allIds = new Set<number>();
+      const collectIds = (items: MenuItem[]) => {
+        items.forEach(item => {
+          if (item.children && item.children.length > 0) {
+            allIds.add(item.id);
+            collectIds(item.children);
+          }
+        });
+      };
+      collectIds(tree);
+      setExpandedItems(allIds);
     }
-  );
+  }, [menuData]);
 
-  const updateMutation = useMutation(
-    ({ id, data }: { id: number; data: any }) => menuService.updateMenuItem(id, data),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries(['menu', domainId]);
-        toast.success('Menu item updated');
-        setEditingItem(null);
-      },
-      onError: () => {
-        toast.error('Failed to update menu item');
-      }
+  const createMutation = useMutation({
+    mutationFn: (data: any) => menuService.createMenuItem(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['menu', domainId] });
+      toast.success('Menu item created');
+      setAddingItem(null);
+    },
+    onError: () => {
+      toast.error('Failed to create menu item');
     }
-  );
+  });
 
-  const deleteMutation = useMutation(
-    (id: number) => menuService.deleteMenuItem(id),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries(['menu', domainId]);
-        toast.success('Menu item deleted');
-      },
-      onError: () => {
-        toast.error('Failed to delete menu item');
-      }
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: any }) => menuService.updateMenuItem(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['menu', domainId] });
+      toast.success('Menu item updated');
+      setEditingItem(null);
+    },
+    onError: () => {
+      toast.error('Failed to update menu item');
     }
-  );
+  });
 
-  const reorderMutation = useMutation(
-    (data: any) => menuService.reorderMenuItems(domainId, data),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries(['menu', domainId]);
-        toast.success('Menu reordered');
-      },
-      onError: () => {
-        toast.error('Failed to reorder menu');
-      }
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => menuService.deleteMenuItem(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['menu', domainId] });
+      toast.success('Menu item deleted');
+    },
+    onError: () => {
+      toast.error('Failed to delete menu item');
     }
-  );
+  });
+
+  const reorderMutation = useMutation({
+    mutationFn: (data: any) => menuService.reorderMenuItems(domainId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['menu', domainId] });
+      toast.success('Menu reordered');
+    },
+    onError: () => {
+      toast.error('Failed to reorder menu');
+    }
+  });
 
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(Number(event.active.id));

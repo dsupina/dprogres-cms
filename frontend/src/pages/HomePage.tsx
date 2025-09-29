@@ -1,4 +1,4 @@
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Calendar, User, Clock } from 'lucide-react';
 import { postsService } from '../services/posts';
@@ -25,15 +25,9 @@ export default function HomePage() {
     };
     load();
   }, []);
-  const { data: featuredPosts, isLoading: featuredLoading } = useQuery(
-    'featured-posts',
-    () => postsService.getFeaturedPosts(3)
-  );
+  const { data: featuredPosts, isLoading: featuredLoading } = useQuery({ queryKey: ['featured-posts'], queryFn: () => postsService.getFeaturedPosts(3) });
 
-  const { data: recentPosts, isLoading: recentLoading } = useQuery(
-    'recent-posts',
-    () => postsService.getRecentPosts(6)
-  );
+  const { data: recentPosts, isLoading: recentLoading } = useQuery({ queryKey: ['recent-posts'], queryFn: () => postsService.getRecentPosts(6) });
 
   return (
     <div className="min-h-screen">

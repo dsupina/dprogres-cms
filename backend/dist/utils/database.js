@@ -1,11 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getClient = exports.query = void 0;
+exports.pool = exports.getClient = exports.query = void 0;
 const pg_1 = require("pg");
 const pool = new pg_1.Pool({
     connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/cms_db',
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
+exports.pool = pool;
 const query = async (text, params) => {
     const client = await pool.connect();
     try {

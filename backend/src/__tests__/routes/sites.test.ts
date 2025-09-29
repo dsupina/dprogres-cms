@@ -53,7 +53,13 @@ describe('Sites Routes', () => {
         .get('/api/sites')
         .expect(200);
 
-      expect(response.body).toEqual(mockSites);
+      expect(response.body).toEqual(
+        mockSites.map(site => ({
+          ...site,
+          created_at: site.created_at.toISOString(),
+          updated_at: site.updated_at.toISOString()
+        }))
+      );
       expect(mockSiteService.getAllSites).toHaveBeenCalledWith(undefined);
     });
 
@@ -81,7 +87,13 @@ describe('Sites Routes', () => {
         .get('/api/sites?domain_id=2')
         .expect(200);
 
-      expect(response.body).toEqual(mockSites);
+      expect(response.body).toEqual(
+        mockSites.map(site => ({
+          ...site,
+          created_at: site.created_at.toISOString(),
+          updated_at: site.updated_at.toISOString()
+        }))
+      );
       expect(mockSiteService.getAllSites).toHaveBeenCalledWith(2);
     });
 
@@ -160,7 +172,11 @@ describe('Sites Routes', () => {
         .get('/api/sites/1')
         .expect(200);
 
-      expect(response.body).toEqual(mockSite);
+      expect(response.body).toEqual({
+        ...mockSite,
+        created_at: mockSite.created_at.toISOString(),
+        updated_at: mockSite.updated_at.toISOString()
+      });
       expect(mockSiteService.getSiteById).toHaveBeenCalledWith(1);
     });
 
@@ -220,7 +236,11 @@ describe('Sites Routes', () => {
         .send(validSiteData)
         .expect(201);
 
-      expect(response.body).toEqual(mockCreatedSite);
+      expect(response.body).toEqual({
+        ...mockCreatedSite,
+        created_at: mockCreatedSite.created_at.toISOString(),
+        updated_at: mockCreatedSite.updated_at.toISOString()
+      });
       expect(mockSiteService.createSite).toHaveBeenCalledWith(validSiteData);
     });
 
@@ -291,7 +311,11 @@ describe('Sites Routes', () => {
         .send(updateData)
         .expect(200);
 
-      expect(response.body).toEqual(mockUpdatedSite);
+      expect(response.body).toEqual({
+        ...mockUpdatedSite,
+        created_at: mockUpdatedSite.created_at.toISOString(),
+        updated_at: mockUpdatedSite.updated_at.toISOString()
+      });
       expect(mockSiteService.updateSite).toHaveBeenCalledWith(1, updateData);
     });
 
@@ -454,12 +478,14 @@ describe('Sites Routes', () => {
       expect(mockSiteService.resolveSiteByHostAndPath).toHaveBeenCalledWith('example.com', '/');
     });
 
-    it('should return 400 when no hostname in request', async () => {
+    it('should return 404 when no site found for default host', async () => {
+      mockSiteService.resolveSiteByHostAndPath.mockResolvedValue(null);
+
       const response = await request(app)
         .get('/api/sites/context/current')
-        .expect(400);
+        .expect(404);
 
-      expect(response.body).toEqual({ error: 'No hostname in request' });
+      expect(response.body).toEqual({ error: 'No site found for this domain' });
     });
 
     it('should return 404 when no site found', async () => {

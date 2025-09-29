@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useQuery } from 'react-query';
+import React, { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { domainsService } from '../../services/domains';
 import MenuBuilder from '../../components/admin/MenuBuilder';
 import { Globe, Menu, Copy } from 'lucide-react';
@@ -12,19 +12,18 @@ const MenusPage: React.FC = () => {
   const [duplicateModalOpen, setDuplicateModalOpen] = useState(false);
   const [duplicateTargetDomain, setDuplicateTargetDomain] = useState<number | null>(null);
 
-  const { data: domains, isLoading: domainsLoading } = useQuery(
-    'domains',
-    () => domainsService.getAll(),
-    {
-      onSuccess: (data) => {
-        // Auto-select first domain if none selected
-        if (!selectedDomainId && data.length > 0) {
-          const defaultDomain = data.find(d => d.is_default) || data[0];
-          setSelectedDomainId(defaultDomain.id);
-        }
-      }
+  const { data: domains, isLoading: domainsLoading } = useQuery({
+    queryKey: ['domains'],
+    queryFn: () => domainsService.getAll()
+  });
+
+  // Auto-select first domain when domains load
+  useEffect(() => {
+    if (!selectedDomainId && domains && domains.length > 0) {
+      const defaultDomain = domains.find(d => d.is_default) || domains[0];
+      setSelectedDomainId(defaultDomain.id);
     }
-  );
+  }, [domains, selectedDomainId]);
 
   const handleDuplicateMenu = async () => {
     if (!selectedDomainId || !duplicateTargetDomain) return;

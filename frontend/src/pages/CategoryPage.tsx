@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { Search, Calendar, User, Clock, ArrowRight, ChevronLeft, ChevronRight, Folder } from 'lucide-react';
 import { postsService } from '../services/posts';
@@ -21,16 +21,16 @@ export default function CategoryPage() {
   const limit = 12;
 
   // Fetch category details
-  const { data: category, isLoading: categoryLoading } = useQuery(
-    ['category', slug],
-    () => categoriesService.getCategoryBySlug(slug!),
-    { enabled: !!slug }
-  );
+  const { data: category, isLoading: categoryLoading } = useQuery({
+    queryKey: ['category', slug],
+    queryFn: () => categoriesService.getCategoryBySlug(slug!),
+    enabled: !!slug
+  });
 
   // Fetch posts in category
-  const { data: postsData, isLoading: postsLoading } = useQuery(
-    ['category-posts', slug, currentPage, searchTerm, sortBy, sortOrder],
-    () => postsService.getPosts({
+  const { data: postsData, isLoading: postsLoading } = useQuery({
+    queryKey: ['category-posts', slug, currentPage, searchTerm, sortBy, sortOrder],
+    queryFn: () => postsService.getPosts({
       page: currentPage,
       limit,
       category: slug,
@@ -38,11 +38,9 @@ export default function CategoryPage() {
       sort: sortBy,
       order: sortOrder as 'asc' | 'desc'
     }),
-    { 
-      enabled: !!slug,
-      keepPreviousData: true 
-    }
-  );
+    enabled: !!slug,
+    placeholderData: (previousData) => previousData
+  });
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();

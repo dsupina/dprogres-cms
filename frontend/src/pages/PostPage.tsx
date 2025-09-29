@@ -1,4 +1,4 @@
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Calendar, User, Clock, Tag, ArrowLeft, Facebook, Twitter, Linkedin, Link2 } from 'lucide-react';
 import { postsService } from '../services/posts';
@@ -12,11 +12,11 @@ export default function PostPage() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
 
-  const { data: post, isLoading, error } = useQuery(
-    ['post', slug],
-    () => postsService.getPostBySlug(slug!),
-    { enabled: !!slug }
-  );
+  const { data: post, isLoading, error } = useQuery({
+    queryKey: ['post', slug],
+    queryFn: () => postsService.getPostBySlug(slug!),
+    enabled: !!slug
+  });
 
   const relatedPosts: PostType[] = ((post as any)?.relatedPosts as PostType[]) || [];
 

@@ -11,14 +11,21 @@ const slug_1 = require("../utils/slug");
 const router = express_1.default.Router();
 router.get('/', async (req, res) => {
     try {
+        const domain = req.domain;
+        const params = [];
+        let domainFilter = '';
+        if (domain && domain.id) {
+            domainFilter = ' AND (domain_id = $1 OR domain_id IS NULL)';
+            params.push(domain.id);
+        }
         const pagesQuery = `
       SELECT id, title, slug, template, created_at, updated_at
-      FROM pages 
-      WHERE published = true
+      FROM pages
+      WHERE published = true${domainFilter}
       ORDER BY title ASC
     `;
-        const result = await (0, database_1.query)(pagesQuery);
-        res.json({ pages: result.rows });
+        const result = await (0, database_1.query)(pagesQuery, params);
+        res.json({ data: result.rows });
     }
     catch (error) {
         console.error('Get pages error:', error);
@@ -28,11 +35,18 @@ router.get('/', async (req, res) => {
 router.get('/:slug', async (req, res) => {
     try {
         const { slug } = req.params;
+        const domain = req.domain;
+        const params = [slug];
+        let domainFilter = '';
+        if (domain && domain.id) {
+            domainFilter = ' AND (domain_id = $2 OR domain_id IS NULL)';
+            params.push(domain.id);
+        }
         const pageQuery = `
-      SELECT * FROM pages 
-      WHERE slug = $1 AND published = true
+      SELECT * FROM pages
+      WHERE slug = $1 AND published = true${domainFilter}
     `;
-        const result = await (0, database_1.query)(pageQuery, [slug]);
+        const result = await (0, database_1.query)(pageQuery, params);
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Page not found' });
         }
@@ -57,11 +71,12 @@ router.post('/', auth_1.authenticateToken, auth_1.requireEditor, (0, validation_
                 return res.status(400).json({ error: 'Slug already exists' });
             }
         }
+        const domain = req.domain;
         const insertQuery = `
       INSERT INTO pages (
-        title, slug, content, template, meta_title, meta_description, 
-        seo_indexed, published
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        title, slug, content, template, meta_title, meta_description,
+        seo_indexed, published, domain_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *
     `;
         const values = [
@@ -72,13 +87,14 @@ router.post('/', auth_1.authenticateToken, auth_1.requireEditor, (0, validation_
             pageData.meta_title,
             pageData.meta_description,
             pageData.seo_indexed !== false,
-            pageData.published || false
+            pageData.published || false,
+            domain ? domain.id : null
         ];
         const result = await (0, database_1.query)(insertQuery, values);
         const newPage = result.rows[0];
         res.status(201).json({
             message: 'Page created successfully',
-            page: newPage
+            data: newPage
         });
     }
     catch (error) {
@@ -102,7 +118,7 @@ router.put('/:id', auth_1.authenticateToken, auth_1.requireEditor, (0, validatio
             }
         }
         const updateQuery = `
-      UPDATE pages SET 
+      UPDATE pages SET
         title = COALESCE($1, title),
         slug = COALESCE($2, slug),
         content = COALESCE($3, content),
@@ -130,7 +146,7 @@ router.put('/:id', auth_1.authenticateToken, auth_1.requireEditor, (0, validatio
         const updatedPage = result.rows[0];
         res.json({
             message: 'Page updated successfully',
-            page: updatedPage
+            data: updatedPage
         });
     }
     catch (error) {

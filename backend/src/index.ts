@@ -19,10 +19,16 @@ import templatesAdminRoutes from './routes/templates';
 import domainsRoutes from './routes/domains';
 import menusRoutes from './routes/menus';
 import sitesRoutes from './routes/sites';
+import versionsRoutes from './routes/versions_simple';
+import autosaveRoutes from './routes/autosave';
+import { createVersionRoutes } from './routes/versions';
 
 // Import domain middleware
 import { validateDomain, resolveDomain } from './middleware/domainValidation';
 import { siteResolver } from './middleware/siteResolver';
+
+// Import database pool
+import pool from './utils/database';
 
 // Load environment variables
 dotenv.config();
@@ -130,6 +136,9 @@ app.use('/api/admin/domains', domainsRoutes);
 app.use('/api/admin/sites', sitesRoutes);
 app.use('/api/menus', menusRoutes);
 app.use('/api/sites', sitesRoutes);
+app.use('/api', versionsRoutes); // Version endpoints at /api/content and /api/versions
+app.use('/api', autosaveRoutes); // Auto-save endpoints
+app.use('/api/versions', createVersionRoutes(pool)); // Version comparison endpoints
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
