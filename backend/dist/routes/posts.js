@@ -13,7 +13,10 @@ router.get('/', async (req, res) => {
     try {
         const { page = 1, limit = 10, search, category, tag, featured } = req.query;
         const offset = (Number(page) - 1) * Number(limit);
+<<<<<<< HEAD
         const domain = req.domain;
+=======
+>>>>>>> chore/preflight-stabilize
         let whereClause = "WHERE 1=1";
         const params = [];
         let paramCount = 0;

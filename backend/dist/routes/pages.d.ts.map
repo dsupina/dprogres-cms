@@ -1,1 +1,5 @@
+<<<<<<< HEAD
 {"version":3,"file":"pages.d.ts","sourceRoot":"","sources":["../../src/routes/pages.ts"],"names":[],"mappings":"AAQA,QAAA,MAAM,MAAM,4CAAmB,CAAC;AAuMhC,eAAe,MAAM,CAAC"}
+=======
+{"version":3,"file":"pages.d.ts","sourceRoot":"","sources":["../../src/routes/pages.ts"],"names":[],"mappings":"AAQA,QAAA,MAAM,MAAM,4CAAmB,CAAC;AAkLhC,eAAe,MAAM,CAAC"}
+>>>>>>> chore/preflight-stabilize

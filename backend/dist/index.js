@@ -19,6 +19,7 @@ const media_1 = __importDefault(require("./routes/media"));
 const settings_1 = __importDefault(require("./routes/settings"));
 const admin_1 = __importDefault(require("./routes/admin"));
 const templates_1 = __importDefault(require("./routes/templates"));
+<<<<<<< HEAD
 const domains_1 = __importDefault(require("./routes/domains"));
 const menus_1 = __importDefault(require("./routes/menus"));
 const sites_1 = __importDefault(require("./routes/sites"));
@@ -28,6 +29,8 @@ const versions_1 = require("./routes/versions");
 const domainValidation_1 = require("./middleware/domainValidation");
 const siteResolver_1 = require("./middleware/siteResolver");
 const database_1 = __importDefault(require("./utils/database"));
+=======
+>>>>>>> chore/preflight-stabilize
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
@@ -108,6 +111,7 @@ app.use('/api/media', media_1.default);
 app.use('/api/settings', settings_1.default);
 app.use('/api/admin', admin_1.default);
 app.use('/api/admin/templates', templates_1.default);
+<<<<<<< HEAD
 app.use('/api/admin/domains', domains_1.default);
 app.use('/api/admin/sites', sites_1.default);
 app.use('/api/menus', menus_1.default);
@@ -115,6 +119,8 @@ app.use('/api/sites', sites_1.default);
 app.use('/api', versions_simple_1.default);
 app.use('/api', autosave_1.default);
 app.use('/api/versions', (0, versions_1.createVersionRoutes)(database_1.default));
+=======
+>>>>>>> chore/preflight-stabilize
 app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', message: 'CMS API is running' });
 });

@@ -30,7 +30,11 @@ router.get('/', async (req, res) => {
       GROUP BY c.id
       ORDER BY c.name ASC
     `;
+<<<<<<< HEAD
         const result = await (0, database_1.query)(categoriesQuery, params);
+=======
+        const result = await (0, database_1.query)(categoriesQuery);
+>>>>>>> chore/preflight-stabilize
         res.json({ data: result.rows });
     }
     catch (error) {

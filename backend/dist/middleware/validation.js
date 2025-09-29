@@ -3,7 +3,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+<<<<<<< HEAD
 exports.updateTemplateSchema = exports.createTemplateSchema = exports.updatePageSchema = exports.createPageSchema = exports.updateCategorySchema = exports.createCategorySchema = exports.updatePostSchema = exports.createPostSchema = exports.registerSchema = exports.loginSchema = exports.validateRequest = exports.validate = void 0;
+=======
+exports.updateTemplateSchema = exports.createTemplateSchema = exports.updatePageSchema = exports.createPageSchema = exports.updateCategorySchema = exports.createCategorySchema = exports.updatePostSchema = exports.createPostSchema = exports.registerSchema = exports.loginSchema = exports.validate = void 0;
+>>>>>>> chore/preflight-stabilize
 const joi_1 = __importDefault(require("joi"));
 const validate = (schema) => {
     return (req, res, next) => {
@@ -89,7 +93,11 @@ exports.createPageSchema = joi_1.default.object({
     meta_description: joi_1.default.string().optional(),
     seo_indexed: joi_1.default.boolean().optional(),
     published: joi_1.default.boolean().optional(),
+<<<<<<< HEAD
     domain_id: joi_1.default.number().integer().optional()
+=======
+    data: joi_1.default.object().unknown(true).optional(),
+>>>>>>> chore/preflight-stabilize
 });
 exports.updatePageSchema = joi_1.default.object({
     title: joi_1.default.string().max(255).optional(),
