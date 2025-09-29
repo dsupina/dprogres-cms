@@ -1,4 +1,4 @@
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Calendar, User } from 'lucide-react';
 import { pagesService } from '@/services/pages';
@@ -39,11 +39,11 @@ export default function PageView() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
 
-  const { data: page, isLoading, error } = useQuery(
-    ['page', slug],
-    () => pagesService.getPageBySlug(slug!),
-    { enabled: !!slug }
-  );
+  const { data: page, isLoading, error } = useQuery({
+    queryKey: ['page', slug],
+    queryFn: () => pagesService.getPageBySlug(slug!),
+    enabled: !!slug
+  });
 
   // Update page title and meta tags
   useEffect(() => {

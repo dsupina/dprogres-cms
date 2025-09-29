@@ -11,17 +11,27 @@ const slug_1 = require("../utils/slug");
 const router = express_1.default.Router();
 router.get('/', async (req, res) => {
     try {
+        const domain = req.domain;
+        const params = [];
+        let domainFilter = '';
+        let joinCondition = "c.id = p.category_id AND p.status = 'published'";
+        if (domain && domain.id) {
+            domainFilter = ' WHERE (c.domain_id = $1 OR c.domain_id IS NULL)';
+            joinCondition += ' AND (p.domain_id = c.domain_id OR p.domain_id IS NULL)';
+            params.push(domain.id);
+        }
         const categoriesQuery = `
-      SELECT 
+      SELECT
         c.*,
         COUNT(p.id) as post_count
       FROM categories c
-      LEFT JOIN posts p ON c.id = p.category_id AND p.status = 'published'
+      LEFT JOIN posts p ON ${joinCondition}
+      ${domainFilter}
       GROUP BY c.id
       ORDER BY c.name ASC
     `;
-        const result = await (0, database_1.query)(categoriesQuery);
-        res.json({ categories: result.rows });
+        const result = await (0, database_1.query)(categoriesQuery, params);
+        res.json({ data: result.rows });
     }
     catch (error) {
         console.error('Get categories error:', error);
@@ -117,7 +127,7 @@ router.post('/', auth_1.authenticateToken, auth_1.requireEditor, (0, validation_
         const newCategory = result.rows[0];
         res.status(201).json({
             message: 'Category created successfully',
-            category: newCategory
+            data: newCategory
         });
     }
     catch (error) {
@@ -160,7 +170,7 @@ router.put('/:id', auth_1.authenticateToken, auth_1.requireEditor, (0, validatio
         const updatedCategory = result.rows[0];
         res.json({
             message: 'Category updated successfully',
-            category: updatedCategory
+            data: updatedCategory
         });
     }
     catch (error) {

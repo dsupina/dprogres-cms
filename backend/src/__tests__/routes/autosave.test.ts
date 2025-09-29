@@ -8,6 +8,19 @@
  * - DELETE /api/content/:contentType/:contentId/autosave/cleanup
  */
 
+// Mock the database pool first to avoid hoisting issues
+const mockDatabasePoolQuery = jest.fn();
+const mockDatabasePoolConnect = jest.fn();
+const mockDatabasePoolEnd = jest.fn();
+
+const mockDatabasePool = {
+  query: mockDatabasePoolQuery,
+  connect: mockDatabasePoolConnect,
+  end: mockDatabasePoolEnd,
+};
+
+jest.mock('../../utils/database', () => mockDatabasePool);
+
 import request from 'supertest';
 import express from 'express';
 import { Pool } from 'pg';
@@ -18,18 +31,10 @@ import { VersionService } from '../../services/VersionService';
 import { ContentVersion } from '../../types/versioning/core';
 import { ContentType, VersionType } from '../../types/versioning/enums';
 
-// Mock dependencies
-jest.mock('../../utils/database', () => ({
-  query: jest.fn(),
-}));
-
 jest.mock('../../services/VersionService');
 jest.mock('../../middleware/auth');
 jest.mock('../../middleware/versionAuth');
 
-const mockPool = {
-  query: jest.fn(),
-} as any;
 
 const mockVersionService = {
   createAutoSave: jest.fn(),
@@ -118,7 +123,7 @@ describe('Auto-Save API Routes', () => {
 
     beforeEach(() => {
       // Mock site lookup
-      mockPool.query.mockResolvedValue({
+      mockDatabasePoolQuery.mockResolvedValue({
         rows: [{ site_id: 1 }]
       });
     });
@@ -178,7 +183,7 @@ describe('Auto-Save API Routes', () => {
     });
 
     it('should return 404 when content not found', async () => {
-      mockPool.query.mockResolvedValue({ rows: [] });
+      mockDatabasePoolQuery.mockResolvedValue({ rows: [] });
 
       const response = await request(app)
         .post('/api/content/post/999/autosave')
@@ -203,7 +208,7 @@ describe('Auto-Save API Routes', () => {
     });
 
     it('should handle internal server errors', async () => {
-      mockPool.query.mockRejectedValue(new Error('Unexpected database error'));
+      mockDatabasePoolQuery.mockRejectedValue(new Error('Unexpected database error'));
 
       const response = await request(app)
         .post('/api/content/post/1/autosave')
@@ -249,7 +254,7 @@ describe('Auto-Save API Routes', () => {
     });
 
     it('should use default site_id when not found', async () => {
-      mockPool.query.mockResolvedValue({
+      mockDatabasePoolQuery.mockResolvedValue({
         rows: [{ site_id: null }]
       });
 
@@ -270,7 +275,7 @@ describe('Auto-Save API Routes', () => {
 
   describe('GET /api/content/:contentType/:contentId/autosave/latest', () => {
     beforeEach(() => {
-      mockPool.query.mockResolvedValue({
+      mockDatabasePoolQuery.mockResolvedValue({
         rows: [{ site_id: 1 }]
       });
     });
@@ -292,7 +297,7 @@ describe('Auto-Save API Routes', () => {
       });
 
       // Mock latest version check
-      mockPool.query
+      mockDatabasePoolQuery
         .mockResolvedValueOnce({ rows: [{ site_id: 1 }] }) // Site lookup
         .mockResolvedValueOnce({ rows: [] }); // No newer manual save
 
@@ -325,7 +330,7 @@ describe('Auto-Save API Routes', () => {
         data: mockAutoSave
       });
 
-      mockPool.query
+      mockDatabasePoolQuery
         .mockResolvedValueOnce({ rows: [{ site_id: 1 }] }) // Site lookup
         .mockResolvedValueOnce({ rows: [{ created_at: manualSaveDate }] }); // Newer manual save
 
@@ -342,7 +347,7 @@ describe('Auto-Save API Routes', () => {
         data: null
       });
 
-      mockPool.query
+      mockDatabasePoolQuery
         .mockResolvedValueOnce({ rows: [{ site_id: 1 }] })
         .mockResolvedValueOnce({ rows: [] });
 
@@ -369,7 +374,7 @@ describe('Auto-Save API Routes', () => {
     });
 
     it('should return 404 for non-existent content', async () => {
-      mockPool.query.mockResolvedValue({ rows: [] });
+      mockDatabasePoolQuery.mockResolvedValue({ rows: [] });
 
       const response = await request(app)
         .get('/api/content/post/999/autosave/latest')
@@ -383,7 +388,7 @@ describe('Auto-Save API Routes', () => {
     const testContentHash = 'test_content_hash_123';
 
     beforeEach(() => {
-      mockPool.query.mockResolvedValue({
+      mockDatabasePoolQuery.mockResolvedValue({
         rows: [{ site_id: 1 }]
       });
     });
@@ -394,7 +399,7 @@ describe('Auto-Save API Routes', () => {
         data: true
       });
 
-      mockPool.query
+      mockDatabasePoolQuery
         .mockResolvedValueOnce({ rows: [{ site_id: 1 }] }) // Site lookup
         .mockResolvedValueOnce({ // Latest version info
           rows: [{ version_number: 8, created_at: new Date(), created_by: 1 }]
@@ -422,7 +427,7 @@ describe('Auto-Save API Routes', () => {
         data: false
       });
 
-      mockPool.query
+      mockDatabasePoolQuery
         .mockResolvedValueOnce({ rows: [{ site_id: 1 }] })
         .mockResolvedValueOnce({
           rows: [{ version_number: 5, created_at: new Date(), created_by: 1 }]
@@ -449,7 +454,7 @@ describe('Auto-Save API Routes', () => {
         data: true
       });
 
-      mockPool.query
+      mockDatabasePoolQuery
         .mockResolvedValueOnce({ rows: [{ site_id: 1 }] })
         .mockResolvedValueOnce({ rows: [] }); // No versions exist
 
@@ -476,7 +481,7 @@ describe('Auto-Save API Routes', () => {
 
   describe('DELETE /api/content/:contentType/:contentId/autosave/cleanup', () => {
     beforeEach(() => {
-      mockPool.query.mockResolvedValue({
+      mockDatabasePoolQuery.mockResolvedValue({
         rows: [{ site_id: 1 }]
       });
     });
@@ -541,7 +546,7 @@ describe('Auto-Save API Routes', () => {
     });
 
     it('should return 404 for non-existent content', async () => {
-      mockPool.query.mockResolvedValue({ rows: [] });
+      mockDatabasePoolQuery.mockResolvedValue({ rows: [] });
 
       const response = await request(app)
         .delete('/api/content/post/999/autosave/cleanup')

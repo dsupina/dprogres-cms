@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Search, Filter, Calendar, User, Clock, ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import { postsService } from '../services/posts';
@@ -35,10 +35,7 @@ export default function BlogPage() {
   );
 
   // Fetch categories for filter dropdown
-  const { data: categoriesData } = useQuery(
-    'categories',
-    () => categoriesService.getCategories()
-  );
+  const { data: categoriesData } = useQuery({ queryKey: ['categories'], queryFn: () => categoriesService.getCategories() });
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();

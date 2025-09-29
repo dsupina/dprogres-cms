@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { domainsService } from '../../services/domains';
 import Select from '../ui/Select';
 
@@ -20,14 +20,12 @@ const DomainSelector: React.FC<DomainSelectorProps> = ({
 }) => {
   const [selectedDomain, setSelectedDomain] = useState<string>(value?.toString() || '');
 
-  const { data: domains, isLoading } = useQuery(
-    'domains',
-    () => domainsService.getAll(),
-    {
-      staleTime: 5 * 60 * 1000, // Cache for 5 minutes
-      cacheTime: 10 * 60 * 1000
-    }
-  );
+  const { data: domains, isLoading } = useQuery({
+    queryKey: ['domains'],
+    queryFn: () => domainsService.getAll(),
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    gcTime: 10 * 60 * 1000 // gcTime replaces cacheTime in v5
+  });
 
   useEffect(() => {
     setSelectedDomain(value?.toString() || '');

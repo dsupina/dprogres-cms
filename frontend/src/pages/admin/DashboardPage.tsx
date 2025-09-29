@@ -1,4 +1,4 @@
-import { useQuery } from 'react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { 
   FileText, 
@@ -15,7 +15,7 @@ import LoadingSpinner from '../../components/ui/LoadingSpinner';
 
 export default function DashboardPage() {
   // Fetch dashboard stats from backend
-  const { data: dashboard, isLoading } = useQuery('admin-dashboard', () => adminService.getDashboard());
+  const { data: dashboard, isLoading } = useQuery({ queryKey: ['admin-dashboard'], queryFn: () => adminService.getDashboard() });
 
   // Calculate stats
   const stats = {

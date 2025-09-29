@@ -13,9 +13,14 @@ router.get('/', async (req, res) => {
     try {
         const { page = 1, limit = 10, search, category, tag, featured } = req.query;
         const offset = (Number(page) - 1) * Number(limit);
-        let whereClause = "WHERE p.status = 'published'";
+        const domain = req.domain;
+        let whereClause = "WHERE 1=1";
         const params = [];
         let paramCount = 0;
+        if (domain && domain.id) {
+            whereClause += ` AND (p.domain_id = $${++paramCount} OR p.domain_id IS NULL)`;
+            params.push(domain.id);
+        }
         if (search) {
             whereClause += ` AND (p.title ILIKE $${++paramCount} OR p.excerpt ILIKE $${paramCount} OR p.content ILIKE $${paramCount})`;
             params.push(`%${search}%`);
@@ -36,9 +41,10 @@ router.get('/', async (req, res) => {
             whereClause += ` AND p.featured = $${++paramCount}`;
             params.push(String(featured) === 'true');
         }
+        whereClause += ` AND p.status = 'published'`;
         const postsQuery = `
       SELECT 
-        p.id, p.title, p.slug, p.excerpt, p.featured_image, p.featured,
+        p.id, p.title, p.slug, p.excerpt, p.content, p.featured_image, p.featured,
         p.created_at, p.updated_at, p.view_count,
         c.name as category_name, c.slug as category_slug,
         u.first_name, u.last_name, u.email as author_email,
@@ -56,6 +62,7 @@ router.get('/', async (req, res) => {
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
       ${whereClause}
+      AND p.status = 'published'
       GROUP BY p.id, c.name, c.slug, u.first_name, u.last_name, u.email
       ORDER BY p.created_at DESC
       LIMIT $${++paramCount} OFFSET $${++paramCount}
@@ -77,7 +84,7 @@ router.get('/', async (req, res) => {
         const totalCount = parseInt(countResult.rows[0].count);
         const totalPages = Math.ceil(totalCount / Number(limit));
         res.json({
-            posts,
+            data: posts,
             pagination: {
                 page: Number(page),
                 limit: Number(limit),
@@ -96,17 +103,24 @@ router.get('/', async (req, res) => {
 router.get('/:slug', async (req, res) => {
     try {
         const { slug } = req.params;
+        const domain = req.domain;
+        const params = [slug];
+        let domainFilter = '';
+        if (domain && domain.id) {
+            domainFilter = ' AND (p.domain_id = $2 OR p.domain_id IS NULL)';
+            params.push(domain.id);
+        }
         const postQuery = `
-      SELECT 
-        p.*, 
+      SELECT
+        p.*,
         c.name as category_name, c.slug as category_slug,
         u.first_name, u.last_name, u.email as author_email,
         COALESCE(
           JSON_AGG(
-            CASE WHEN t.id IS NOT NULL THEN 
+            CASE WHEN t.id IS NOT NULL THEN
               JSON_BUILD_OBJECT('id', t.id, 'name', t.name, 'slug', t.slug)
             END
-          ) FILTER (WHERE t.id IS NOT NULL), 
+          ) FILTER (WHERE t.id IS NOT NULL),
           '[]'
         ) as tags
       FROM posts p
@@ -114,10 +128,10 @@ router.get('/:slug', async (req, res) => {
       LEFT JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.slug = $1 AND p.status = 'published'
+      WHERE p.slug = $1 AND p.status = 'published'${domainFilter}
       GROUP BY p.id, c.name, c.slug, u.first_name, u.last_name, u.email
     `;
-        const result = await (0, database_1.query)(postQuery, [slug]);
+        const result = await (0, database_1.query)(postQuery, params);
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Post not found' });
         }
@@ -135,6 +149,7 @@ router.get('/:slug', async (req, res) => {
     `;
         const relatedResult = await (0, database_1.query)(relatedQuery, [post.id, post.category_id]);
         res.json({
+            data: post,
             post,
             relatedPosts: relatedResult.rows
         });
@@ -187,7 +202,7 @@ router.post('/', auth_1.authenticateToken, auth_1.requireAuthor, (0, validation_
         }
         res.status(201).json({
             message: 'Post created successfully',
-            post: newPost
+            data: newPost
         });
     }
     catch (error) {
@@ -254,7 +269,7 @@ router.put('/:id', auth_1.authenticateToken, auth_1.requireAuthor, (0, validatio
         }
         res.json({
             message: 'Post updated successfully',
-            post: updatedPost
+            data: updatedPost
         });
     }
     catch (error) {

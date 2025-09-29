@@ -260,10 +260,40 @@
 
 ### Performance Issues
 
-#### Issue: Slow API responses
-**Symptoms**: Requests taking >1 second
+#### Issue: Slow Version and Preview Operations
+**Symptoms**:
+- Version creation taking >100ms
+- Token validation taking >50ms
+- Repeated cache misses
 
-**Solutions**:
+**Solutions for Version Management**:
+1. Review database indexes for version tables:
+   ```sql
+   EXPLAIN ANALYZE SELECT * FROM content_versions WHERE site_id = 1 AND content_type = 'post';
+   EXPLAIN ANALYZE SELECT * FROM version_audit_log WHERE site_id = 1;
+   ```
+
+2. Add performance indexes:
+   ```sql
+   CREATE INDEX idx_versions_site_content ON content_versions(site_id, content_type, content_id);
+   CREATE INDEX idx_versions_audit_site ON version_audit_log(site_id, created_at);
+   ```
+
+**Solutions for Preview Token System**:
+1. Configure caching for token validation:
+   ```typescript
+   // Default: 5-minute in-memory cache
+   const TOKEN_CACHE_TTL = 5 * 60 * 1000; // milliseconds
+   ```
+
+2. Enable detailed query logging for troubleshooting:
+   ```typescript
+   // backend/src/services/PreviewService.ts
+   logger.setLevel('debug');
+   queryMonitor.trackTokenQueries();
+   ```
+
+**General Performance Optimization**:
 1. Check for missing indexes:
    ```sql
    EXPLAIN ANALYZE SELECT * FROM posts WHERE status = 'published';
@@ -366,6 +396,9 @@
 | `TOKEN_EXPIRED` | JWT token expired | Refresh token or re-login |
 | `VALIDATION_ERROR` | Invalid request data | Check Joi schema requirements |
 | `UNIQUE_VIOLATION` | Duplicate database entry | Use different value or update existing |
+| `VERSION_LIMIT_EXCEEDED` | Too many versions for content | Archive old versions or increase `VERSION_MAX_LIMIT` |
+| `PREVIEW_TOKEN_INVALID` | Invalid or expired preview token | Generate new preview token or check access restrictions |
+| `SITE_ISOLATION_VIOLATION` | Cross-site content access | Verify site permissions and token context |
 
 ### Frontend Errors
 

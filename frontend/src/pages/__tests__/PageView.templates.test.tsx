@@ -2,7 +2,7 @@ import { describe, it, vi, expect, beforeEach } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { render, screen } from '@testing-library/react';
 import PageView from '../PageView';
-import { QueryClient, QueryClientProvider } from 'react-query';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/services/pages', () => ({
   pagesService: {

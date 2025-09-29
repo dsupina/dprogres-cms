@@ -378,6 +378,43 @@ May add GraphQL layer when complexity justifies it
 4. No comprehensive API documentation
 5. No performance monitoring
 
+## Multi-Agent Architectural Decisions
+
+### CV-003: Version Management Service
+**Decision**: Develop enterprise-grade versioning service with advanced security and performance
+
+**Multi-Agent Design Approach**:
+1. **PX Agent**: User experience optimization
+2. **Tech Architect**: System design
+3. **DB Advisor**: Database performance
+4. **Security Advisor**: Threat modeling
+5. **Performance Optimizers**: Caching and query strategies
+
+**Key Architectural Choices**:
+- Event-driven architecture
+- JWT token-based site isolation
+- Intelligent caching layer
+- Comprehensive audit logging
+
+**Performance Targets**:
+- Version creation: <100ms
+- Version publishing: <500ms
+- Cache hit ratio: >85%
+
+### CV-006: Preview Token System
+**Decision**: Implement cryptographically secure, multi-domain preview mechanism
+
+**Design Considerations**:
+- JWT+AES hybrid encryption
+- Fine-grained access controls
+- Site-specific token restrictions
+- Performance-optimized validation
+
+**Architectural Innovation**:
+- Partitioned analytics tables
+- Sub-50ms token validation
+- Comprehensive preview interaction tracking
+
 ## Content Versioning Decision
 
 ### Strategic Rationale

@@ -1,5 +1,217 @@
 # Code Patterns & Conventions
 
+## Service Response Pattern (CV-003, CV-006)
+
+### Consistent API Response Structure
+**All services return a standardized response format**
+
+```typescript
+export interface ServiceResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  details?: any;
+}
+
+// Success response
+return {
+  success: true,
+  data: result
+};
+
+// Error response
+return {
+  success: false,
+  error: 'Descriptive error message',
+  details: { code: 'ERROR_CODE' }
+};
+```
+
+## Event-Driven Architecture Pattern (CV-003)
+
+### Service Event Emitters
+**Services emit lifecycle events for decoupled operations**
+
+```typescript
+export class VersionService extends EventEmitter {
+  async createVersion(input: CreateVersionInput): Promise<ServiceResponse<ContentVersion>> {
+    // ... create version logic ...
+
+    // Emit event for external handlers
+    this.emit('version:created', {
+      action: 'create',
+      version: result,
+      userId,
+      siteId,
+      metadata: { timestamp: new Date() }
+    });
+
+    return { success: true, data: result };
+  }
+}
+
+// Event subscription
+versionService.on('version:published', async (payload) => {
+  await invalidateCache(payload.version.id);
+  await notifySubscribers(payload);
+});
+```
+
+## Token Caching Pattern (CV-006)
+
+### In-Memory Cache with TTL
+**Performance optimization for frequent validations**
+
+```typescript
+interface TokenCache {
+  token: PreviewToken;
+  version: ContentVersion;
+  cachedAt: Date;
+}
+
+class PreviewService {
+  private tokenCache: Map<string, TokenCache> = new Map();
+  private readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+  private getCacheKey(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  private isCacheValid(cached: TokenCache): boolean {
+    const age = Date.now() - cached.cachedAt.getTime();
+    return age < this.CACHE_TTL_MS;
+  }
+
+  async validateToken(token: string): Promise<ValidationResult> {
+    const cacheKey = this.getCacheKey(token);
+    const cached = this.tokenCache.get(cacheKey);
+
+    if (cached && this.isCacheValid(cached)) {
+      return { valid: true, data: cached };
+    }
+
+    // ... database validation ...
+
+    // Cache the result
+    this.tokenCache.set(cacheKey, {
+      token: dbToken,
+      version: dbVersion,
+      cachedAt: new Date()
+    });
+  }
+}
+```
+
+## Database Partitioning Pattern (CV-006)
+
+### Time-Based Table Partitioning
+**Scalable analytics storage**
+
+```sql
+-- Parent table with partitioning
+CREATE TABLE preview_analytics (
+  id BIGSERIAL,
+  accessed_at TIMESTAMP NOT NULL,
+  -- ... other columns ...
+  partition_date DATE GENERATED ALWAYS AS (accessed_at::date) STORED
+) PARTITION BY RANGE (partition_date);
+
+-- Monthly partitions
+CREATE TABLE preview_analytics_2025_01 PARTITION OF preview_analytics
+  FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
+```
+
+```typescript
+// Automatic partition creation
+async function createMonthlyPartition(date: Date): Promise<void> {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const tableName = `preview_analytics_${year}_${month}`;
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${tableName}
+    PARTITION OF preview_analytics
+    FOR VALUES FROM ($1) TO ($2)
+  `, [startOfMonth, endOfMonth]);
+}
+```
+
+## Audit Logging Pattern (CV-003, CV-006)
+
+### Comprehensive Operation Tracking
+**Security and compliance through detailed logging**
+
+```typescript
+interface AuditLog {
+  action: string;
+  entity_type: 'version' | 'preview_token';
+  entity_id: number;
+  user_id: number;
+  site_id: number;
+  ip_address?: string;
+  user_agent?: string;
+  metadata: Record<string, any>;
+  created_at: Date;
+}
+
+async function auditOperation(
+  operation: string,
+  entityId: number,
+  userId: number,
+  metadata?: Record<string, any>
+): Promise<void> {
+  await pool.query(`
+    INSERT INTO version_audit_log (
+      action, entity_type, entity_id, user_id, metadata, created_at
+    ) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+  `, [operation, 'version', entityId, userId, JSON.stringify(metadata)]);
+}
+
+// Usage in service methods
+async createVersion(input: CreateVersionInput): Promise<ServiceResponse<ContentVersion>> {
+  // ... create version ...
+
+  await auditOperation('version_create', version.id, userId, {
+    version_type: input.version_type,
+    site_id: input.site_id,
+    ip_address: context.ip
+  });
+}
+```
+
+## Multi-Agent Development Pattern
+
+### Specialized Agent Orchestration
+**Complex features developed through specialized expertise**
+
+```typescript
+// Feature development workflow
+interface AgentWorkflow {
+  phases: {
+    design: ['px-agent', 'tech-architect'];
+    security: ['security-advisor', 'db-gatekeeper'];
+    implementation: ['feature-conductor'];
+    documentation: ['project-docs-manager'];
+  };
+
+  gates: {
+    baseline: 'All tests must pass before branch creation';
+    security: 'BLOCKER requirements must be resolved';
+    performance: 'Target metrics must be achieved';
+  };
+}
+
+// Agent responsibilities
+const agentRoles = {
+  'px-agent': 'User experience and workflows',
+  'tech-architect': 'System design and API contracts',
+  'security-advisor': 'Threat modeling and compliance',
+  'db-gatekeeper': 'Schema optimization and queries',
+  'feature-conductor': 'Implementation orchestration',
+  'project-docs-manager': 'Documentation maintenance'
+};
+```
+
 ## TypeScript Type Patterns (CV-002)
 
 ### Type Guard Pattern

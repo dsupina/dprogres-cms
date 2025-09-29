@@ -42,6 +42,217 @@ router.get('/dashboard', async (req, res) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 });
+router.get('/posts', async (req, res) => {
+    try {
+        if (!req.user || !['admin', 'editor', 'author'].includes(req.user.role)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        const { page = 1, limit = 10, search, status, category, author } = req.query;
+        const offset = (Number(page) - 1) * Number(limit);
+        let whereClause = "WHERE 1=1";
+        const params = [];
+        let paramCount = 0;
+        if (req.user.role === 'author') {
+            whereClause += ` AND p.author_id = $${++paramCount}`;
+            params.push(req.user.userId);
+        }
+        if (search) {
+            whereClause += ` AND (p.title ILIKE $${++paramCount} OR p.excerpt ILIKE $${paramCount} OR p.content ILIKE $${paramCount})`;
+            params.push(`%${search}%`);
+        }
+        if (status) {
+            whereClause += ` AND p.status = $${++paramCount}`;
+            params.push(status);
+        }
+        if (category) {
+            whereClause += ` AND c.slug = $${++paramCount}`;
+            params.push(category);
+        }
+        if (author) {
+            whereClause += ` AND p.author_id = $${++paramCount}`;
+            params.push(author);
+        }
+        const postsQuery = `
+      SELECT 
+        p.id, p.title, p.slug, p.excerpt, p.featured_image, p.status,
+        p.created_at, p.updated_at, p.view_count, p.featured,
+        c.name as category_name, c.slug as category_slug,
+        u.first_name, u.last_name, u.email as author_email,
+        COALESCE(
+          JSON_AGG(
+            CASE WHEN t.id IS NOT NULL THEN 
+              JSON_BUILD_OBJECT('id', t.id, 'name', t.name, 'slug', t.slug)
+            END
+          ) FILTER (WHERE t.id IS NOT NULL), 
+          '[]'
+        ) as tags
+      FROM posts p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN users u ON p.author_id = u.id
+      LEFT JOIN post_tags pt ON p.id = pt.post_id
+      LEFT JOIN tags t ON pt.tag_id = t.id
+      ${whereClause}
+      GROUP BY p.id, c.name, c.slug, u.first_name, u.last_name, u.email
+      ORDER BY p.created_at DESC
+      LIMIT $${++paramCount} OFFSET $${++paramCount}
+    `;
+        params.push(limit, offset);
+        const countQuery = `
+      SELECT COUNT(DISTINCT p.id)
+      FROM posts p
+      LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN users u ON p.author_id = u.id
+      ${whereClause}
+    `;
+        const [postsResult, countResult] = await Promise.all([
+            (0, database_1.query)(postsQuery, params),
+            (0, database_1.query)(countQuery, params.slice(0, -2))
+        ]);
+        const posts = postsResult.rows;
+        const totalCount = parseInt(countResult.rows[0].count);
+        const totalPages = Math.ceil(totalCount / Number(limit));
+        res.json({
+            data: posts,
+            pagination: {
+                page: Number(page),
+                limit: Number(limit),
+                totalCount,
+                totalPages,
+                hasNextPage: Number(page) < totalPages,
+                hasPreviousPage: Number(page) > 1
+            }
+        });
+    }
+    catch (error) {
+        console.error('Admin get posts error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+router.get('/posts/:id', async (req, res) => {
+    try {
+        if (!req.user || !['admin', 'editor', 'author'].includes(req.user.role)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        const { id } = req.params;
+        const result = await (0, database_1.query)(`SELECT p.*, c.name as category_name, c.slug as category_slug
+       FROM posts p
+       LEFT JOIN categories c ON p.category_id = c.id
+       WHERE p.id = $1`, [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+        res.json({ data: result.rows[0] });
+    }
+    catch (error) {
+        console.error('Admin get post by id error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+router.get('/categories', async (req, res) => {
+    try {
+        if (!req.user || !['admin', 'editor', 'author'].includes(req.user.role)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        const categoriesQuery = `
+      SELECT 
+        c.*,
+        COUNT(p.id) as total_posts,
+        COUNT(CASE WHEN p.status = 'published' THEN 1 END) as published_posts,
+        COUNT(CASE WHEN p.status = 'draft' THEN 1 END) as draft_posts
+      FROM categories c
+      LEFT JOIN posts p ON c.id = p.category_id
+      GROUP BY c.id
+      ORDER BY c.name ASC
+    `;
+        const result = await (0, database_1.query)(categoriesQuery);
+        res.json({
+            data: result.rows
+        });
+    }
+    catch (error) {
+        console.error('Admin get categories error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+router.get('/pages', async (req, res) => {
+    try {
+        if (!req.user || !['admin', 'editor', 'author'].includes(req.user.role)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        const { page = 1, limit = 10, search, template, published } = req.query;
+        const offset = (Number(page) - 1) * Number(limit);
+        let whereClause = "WHERE 1=1";
+        const params = [];
+        let paramCount = 0;
+        if (search) {
+            whereClause += ` AND (p.title ILIKE $${++paramCount} OR p.content ILIKE $${paramCount})`;
+            params.push(`%${search}%`);
+        }
+        if (template) {
+            whereClause += ` AND p.template = $${++paramCount}`;
+            params.push(template);
+        }
+        if (published !== undefined) {
+            whereClause += ` AND p.published = $${++paramCount}`;
+            params.push(String(published) === 'true');
+        }
+        const pagesQuery = `
+      SELECT 
+        p.id, p.title, p.slug, p.template, p.published,
+        p.meta_title, p.meta_description, p.seo_indexed,
+        p.created_at, p.updated_at
+      FROM pages p
+      ${whereClause}
+      ORDER BY p.created_at DESC
+      LIMIT $${++paramCount} OFFSET $${++paramCount}
+    `;
+        params.push(limit, offset);
+        const countQuery = `
+      SELECT COUNT(*)
+      FROM pages p
+      ${whereClause}
+    `;
+        const [pagesResult, countResult] = await Promise.all([
+            (0, database_1.query)(pagesQuery, params),
+            (0, database_1.query)(countQuery, params.slice(0, -2))
+        ]);
+        const pages = pagesResult.rows;
+        const totalCount = parseInt(countResult.rows[0].count);
+        const totalPages = Math.ceil(totalCount / Number(limit));
+        res.json({
+            data: pages,
+            pagination: {
+                page: Number(page),
+                limit: Number(limit),
+                totalCount,
+                totalPages,
+                hasNextPage: Number(page) < totalPages,
+                hasPreviousPage: Number(page) > 1
+            }
+        });
+    }
+    catch (error) {
+        console.error('Admin get pages error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+router.get('/pages/:id', async (req, res) => {
+    try {
+        if (!req.user || !['admin', 'editor', 'author'].includes(req.user.role)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        const { id } = req.params;
+        const result = await (0, database_1.query)(`SELECT * FROM pages WHERE id = $1`, [id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Page not found' });
+        }
+        res.json({ data: result.rows[0] });
+    }
+    catch (error) {
+        console.error('Admin get page by id error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
 router.get('/users', async (req, res) => {
     try {
         if (req.user?.role !== 'admin') {
