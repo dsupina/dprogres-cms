@@ -381,9 +381,9 @@ export default function SitesPage() {
                 </Button>
                 <Button
                   type="submit"
-                  disabled={createMutation.isLoading || updateMutation.isLoading}
+                  disabled={createMutation.isPending || updateMutation.isPending}
                 >
-                  {createMutation.isLoading || updateMutation.isLoading
+                  {createMutation.isPending || updateMutation.isPending
                     ? 'Saving...'
                     : showEditModal
                     ? 'Update Site'

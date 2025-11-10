@@ -23,6 +23,17 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   showMetadata,
   currentChangeIndex
 }) => {
+  const highlightClass = useMemo(() => {
+    switch (highlightLevel) {
+      case 'word':
+        return 'tracking-wide';
+      case 'character':
+        return 'tracking-tight';
+      default:
+        return '';
+    }
+  }, [highlightLevel]);
+
   // Process changes for display
   const processedChanges = useMemo(() => {
     return diffResult.textDiff.changes.map((change, index) => ({
@@ -35,7 +46,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   const renderChange = (change: DiffChange, index: number, side?: 'left' | 'right') => {
     const isCurrentChange = index === currentChangeIndex && change.type !== 'unchanged';
 
-    let className = 'px-4 py-1 font-mono text-sm whitespace-pre-wrap ';
+    let className = 'px-4 py-1 font-mono text-sm whitespace-pre-wrap ' + highlightClass + ' ';
     let indicator = '  ';
 
     switch (change.type) {

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { AutoSaveStatus } from '../../hooks/useAutoSave';
 import { Check, Loader2, AlertCircle, CloudOff, Circle } from 'lucide-react';
 import { cn } from '../../lib/utils';

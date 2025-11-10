@@ -7,14 +7,14 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Download, Eye, Layers, List } from 'lucide-react';
+import { ChevronLeft, Download, Eye, Layers, List } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
 import { ChangeNavigator } from './ChangeNavigator';
 import { ChangeStatistics } from './ChangeStatistics';
-import { api } from '../../../services/api';
-import { ContentVersion, DiffResult } from '../../../types/versioning';
-import { LoadingSpinner } from '../../ui/LoadingSpinner';
+import { DiffResult } from '../../../types/versioning';
+import LoadingSpinner from '../../ui/LoadingSpinner';
 import { toast } from 'react-hot-toast';
+import versionsApi from '../../../services/versionsApi';
 
 export type ViewMode = 'side-by-side' | 'unified' | 'inline';
 export type HighlightLevel = 'line' | 'word' | 'character';
@@ -38,33 +38,27 @@ export const VersionComparison: React.FC<VersionComparisonProps> = ({
   const diffContainerRef = useRef<HTMLDivElement>(null);
 
   // Fetch diff data
-  const { data: diffResult, isLoading, error } = useQuery({
+  const { data: diffResult, isLoading, error } = useQuery<DiffResult>({
     queryKey: ['versions', 'compare', leftVersionId, rightVersionId, highlightLevel],
-    queryFn: async () => {
-      const response = await api.get('/api/versions/compare', {
-        params: {
-          version_a_id: leftVersionId,
-          version_b_id: rightVersionId,
-          diff_type: 'all',
-          granularity: highlightLevel,
-          include_unchanged: false,
-          algorithm: 'myers'
-        }
-      });
-      return response.data.data as DiffResult;
-    },
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    cacheTime: 10 * 60 * 1000 // 10 minutes
+    queryFn: async () =>
+      versionsApi.compareVersions(leftVersionId, rightVersionId, {
+        diff_type: 'all',
+        granularity: highlightLevel,
+        include_unchanged: false,
+        algorithm: 'myers'
+      }),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000
   });
 
   // Calculate total changes
-  const totalChanges = diffResult?.textDiff?.changes?.filter(c => c.type !== 'unchanged').length || 0;
+  const totalChanges = diffResult?.textDiff?.changes?.filter((c) => c.type !== 'unchanged').length || 0;
 
   // Navigate to specific change
   const navigateToChange = useCallback((index: number) => {
-    if (!diffResult || !diffContainerRef.current) return;
+    if (!diffResult?.textDiff || !diffContainerRef.current) return;
 
-    const changes = diffResult.textDiff.changes.filter(c => c.type !== 'unchanged');
+    const changes = diffResult.textDiff.changes.filter((c) => c.type !== 'unchanged');
     if (index < 0 || index >= changes.length) return;
 
     setCurrentChangeIndex(index);
@@ -123,24 +117,18 @@ export const VersionComparison: React.FC<VersionComparisonProps> = ({
   // Export diff
   const handleExport = async (format: 'pdf' | 'html' | 'json') => {
     try {
-      const response = await api.post('/api/versions/diff/export', {
+      const payload = {
         version_ids: [leftVersionId, rightVersionId],
         format,
         include_metadata: showMetadata,
         include_statistics: showStatistics,
         include_unchanged: false
-      }, {
-        responseType: format === 'json' ? 'json' : 'blob'
-      });
+      };
 
-      // Create download link
-      const blob = new Blob([response.data], {
-        type: format === 'pdf' ? 'application/pdf' :
-              format === 'html' ? 'text/html' :
-              'application/json'
-      });
+      const blob = await versionsApi.exportDiff(payload);
 
       const url = window.URL.createObjectURL(blob);
+
       const a = document.createElement('a');
       a.href = url;
       a.download = `version-comparison-${leftVersionId}-${rightVersionId}.${format}`;

@@ -81,7 +81,7 @@ export function useAutoSave({
         setStatus('saved');
         setLastSaved(new Date());
         setHasUnsavedChanges(false);
-        contentHashRef.current = response.content_hash;
+        contentHashRef.current = response.data.content_hash;
         retryCountRef.current = 0;
         onSaveSuccess?.(response.data.version);
 
