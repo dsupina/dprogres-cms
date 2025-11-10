@@ -28,6 +28,25 @@ export default function HomePage() {
     };
     load();
   }, []);
+  const {
+    data: featuredPosts,
+    isLoading: featuredLoading,
+    isError: featuredError
+  } = useQuery({
+    queryKey: ['posts', 'featured'],
+    queryFn: () => postsService.getFeaturedPosts(6),
+    staleTime: 1000 * 60 * 5
+  });
+
+  const {
+    data: recentPosts,
+    isLoading: recentLoading,
+    isError: recentError
+  } = useQuery({
+    queryKey: ['posts', 'recent'],
+    queryFn: () => postsService.getRecentPosts(6),
+    staleTime: 1000 * 60 * 5
+  });
   const heroBlocks = featureFlags.enableBlockRenderer && !featuredLoading
     ? (featuredPosts?.posts?.[0]?.blocks as BlockNode[] | undefined)
     : undefined;
@@ -74,12 +93,12 @@ export default function HomePage() {
               </Button>
             </div>
           </div>
-        </div>
-      </section>
+          </div>
+        </section>
 
-      {/* Featured Posts */}
-      <section className="py-16 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Featured Posts */}
+        <section className="py-16 bg-white">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
               Featured Posts
@@ -88,8 +107,11 @@ export default function HomePage() {
               Handpicked articles and tutorials that showcase the best content
             </p>
           </div>
-
-          {featuredLoading ? (
+            {featuredError ? (
+              <div className="text-center text-red-500">
+                Unable to load featured posts right now. Please try again later.
+              </div>
+            ) : featuredLoading ? (
             <div className="flex justify-center">
               <LoadingSpinner size="lg" />
             </div>
@@ -151,10 +173,10 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Recent Posts */}
-      <section className="py-16 bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
+        {/* Recent Posts */}
+        <section className="py-16 bg-gray-50">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
               Latest Posts
             </h2>
@@ -163,7 +185,11 @@ export default function HomePage() {
             </p>
           </div>
 
-          {recentLoading ? (
+            {recentError ? (
+              <div className="text-center text-red-500">
+                Unable to load recent posts right now. Please try again later.
+              </div>
+            ) : recentLoading ? (
             <div className="flex justify-center">
               <LoadingSpinner size="lg" />
             </div>
