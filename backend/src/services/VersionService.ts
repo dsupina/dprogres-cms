@@ -60,6 +60,34 @@ interface AuditLogEntry {
   data_classification: DataClassification;
 }
 
+type CreateVersionWithContext = CreateVersionInput & {
+  site_id: number;
+  content_type: ContentType;
+  content_id: number;
+};
+
+interface AiProvenanceMetadata {
+  provider: string;
+  model: string;
+  preset?: string;
+  prompt: string;
+  created_at: string;
+  temperature: number;
+  max_tokens?: number;
+  tokens_used?: number;
+  safety_warnings?: string[];
+}
+
+interface AiFeedbackRecord {
+  user_id: number;
+  signal: 'positive' | 'negative' | 'neutral';
+  comment?: string | null;
+  prompt_snapshot?: string | null;
+  suggestion_snapshot?: string | null;
+  preset?: string | null;
+  recorded_at: string;
+}
+
 export class VersionService extends EventEmitter {
   private pool: Pool;
   private versionCache: Map<string, ContentVersion> = new Map();
@@ -83,7 +111,7 @@ export class VersionService extends EventEmitter {
    * @param options - Additional options for site validation and audit context
    */
   async createVersion(
-    input: CreateVersionInput,
+    input: CreateVersionWithContext,
     userId: number,
     options: { ip_address?: string; user_agent?: string } = {}
   ): Promise<ServiceResponse<ContentVersion>> {
@@ -1039,6 +1067,145 @@ export class VersionService extends EventEmitter {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to prune auto-saves'
       };
+    }
+  }
+
+  /**
+   * Creates a draft version sourced from an AI suggestion and persists provenance metadata.
+   */
+  async createAiDraftVersion(
+    input: CreateVersionWithContext,
+    userId: number,
+    provenance: AiProvenanceMetadata,
+    options: { ip_address?: string; user_agent?: string } = {}
+  ): Promise<ServiceResponse<ContentVersion>> {
+    const enrichedInput: CreateVersionWithContext = {
+      ...input,
+      version_type: VersionType.DRAFT,
+      change_summary: input.change_summary || `AI suggestion (${provenance.preset || 'custom'})`,
+      meta_data: {
+        ...(input.meta_data || {}),
+        ai_provenance: {
+          ...provenance,
+          source: 'ai-author-service',
+        },
+        ai_feedback: Array.isArray((input.meta_data as any)?.ai_feedback)
+          ? (input.meta_data as any).ai_feedback
+          : [],
+      },
+      data: {
+        ...(input.data || {}),
+        ai_generated: true,
+      },
+    };
+
+    const result = await this.createVersion(enrichedInput, userId, options);
+
+    if (result.success && result.data) {
+      const existingMeta = ((result.data.meta_data as unknown) || {}) as Record<string, any>;
+      const mergedMeta: Record<string, any> = {
+        ...existingMeta,
+        ai_provenance: {
+          ...(existingMeta.ai_provenance || {}),
+          ...(enrichedInput.meta_data?.ai_provenance || {}),
+          version_id: result.data.id,
+        },
+      };
+
+      if (Array.isArray(existingMeta.ai_feedback)) {
+        mergedMeta.ai_feedback = existingMeta.ai_feedback;
+      }
+
+      await this.pool.query(
+        'UPDATE content_versions SET meta_data = $2::jsonb WHERE id = $1',
+        [result.data.id, JSON.stringify(mergedMeta)]
+      );
+
+      result.data.meta_data = mergedMeta as any;
+    }
+
+    return result;
+  }
+
+  /**
+   * Stores user feedback about AI generated suggestions for prompt tuning.
+   */
+  async recordAiFeedback(
+    versionId: number,
+    userId: number,
+    feedback: Omit<AiFeedbackRecord, 'user_id' | 'recorded_at'>
+  ): Promise<ServiceResponse<ContentVersion>> {
+    const client = await this.pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      const versionResult = await client.query(
+        'SELECT id, site_id, content_type, content_id, meta_data FROM content_versions WHERE id = $1 FOR UPDATE',
+        [versionId]
+      );
+
+      if (versionResult.rows.length === 0) {
+        throw new Error('Version not found');
+      }
+
+      const versionRow = versionResult.rows[0];
+      const meta = versionRow.meta_data ? { ...versionRow.meta_data } : {};
+      const existingFeedback: AiFeedbackRecord[] = Array.isArray(meta.ai_feedback)
+        ? [...meta.ai_feedback]
+        : [];
+
+      const feedbackRecord: AiFeedbackRecord = {
+        user_id: userId,
+        signal: feedback.signal,
+        comment: feedback.comment ?? null,
+        prompt_snapshot: feedback.prompt_snapshot ?? null,
+        suggestion_snapshot: feedback.suggestion_snapshot ?? null,
+        preset: feedback.preset ?? null,
+        recorded_at: new Date().toISOString(),
+      };
+
+      existingFeedback.push(feedbackRecord);
+
+      meta.ai_feedback = existingFeedback;
+      if (meta.ai_provenance) {
+        meta.ai_provenance = {
+          ...meta.ai_provenance,
+          last_feedback_at: feedbackRecord.recorded_at,
+        };
+      }
+
+      await client.query('UPDATE content_versions SET meta_data = $2::jsonb WHERE id = $1', [
+        versionId,
+        JSON.stringify(meta),
+      ]);
+
+      const updatedVersionResult = await client.query('SELECT * FROM content_versions WHERE id = $1', [versionId]);
+
+      await client.query('COMMIT');
+
+      const updatedVersion = updatedVersionResult.rows[0] as ContentVersion;
+
+      this.invalidateVersionCaches(versionRow.site_id, versionRow.content_type, versionRow.content_id);
+
+      this.emitVersionEvent({
+        action: VersionAction.UPDATED,
+        version: updatedVersion,
+        userId,
+        siteId: versionRow.site_id,
+        metadata: { ai_feedback: feedbackRecord },
+      });
+
+      return { success: true, data: updatedVersion };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Error recording AI feedback:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to record AI feedback',
+      };
+    } finally {
+      client.release();
     }
   }
 

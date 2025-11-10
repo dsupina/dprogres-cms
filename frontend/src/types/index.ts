@@ -26,6 +26,7 @@ export interface Tag {
 
 export interface Post {
   id: number;
+  site_id?: number;
   title: string;
   slug: string;
   excerpt?: string;

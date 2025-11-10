@@ -12,6 +12,7 @@ import { useAutoSave } from '../../hooks/useAutoSave';
 import { postsService } from '../../services/posts';
 import { categoriesService } from '../../services/categories';
 import { Category, UpdatePostData, Post } from '../../types';
+import AiAssistantPanel from '../../components/admin/AiAssistantPanel';
 
 export default function PostEditPage() {
   const navigate = useNavigate();
@@ -24,6 +25,10 @@ export default function PostEditPage() {
 
   const [formData, setFormData] = useState<UpdatePostData>({});
   const [tagsInput, setTagsInput] = useState('');
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+  const [siteId, setSiteId] = useState<number>(1);
+
+  const numericContentId = Number(id) || 0;
 
   // Auto-save hook
   const {
@@ -85,6 +90,7 @@ export default function PostEditPage() {
           scheduled_at: post.scheduled_at,
           featured: post.featured,
         });
+        setSiteId(post.site_id || 1);
         setTagsInput((post.tags || []).map(t => t.name).join(', '));
       } catch (e: any) {
         toast.error(e?.response?.data?.error || 'Failed to load post');
@@ -161,6 +167,19 @@ export default function PostEditPage() {
     }
   };
 
+  const handleAiInsert = useCallback((suggestion: string, mode: 'append' | 'replace' = 'append') => {
+    setFormData(prev => {
+      const existing = prev.content || '';
+      const nextContent = mode === 'replace'
+        ? suggestion
+        : [existing, suggestion].filter(Boolean).join(existing ? '\n\n' : '');
+      return {
+        ...prev,
+        content: nextContent,
+      };
+    });
+  }, []);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
@@ -171,12 +190,20 @@ export default function PostEditPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Edit Post</h1>
-          <p className="text-gray-600">Update and republish your blog post</p>
-        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Edit Post</h1>
+            <p className="text-gray-600">Update and republish your blog post</p>
+          </div>
         <div className="flex items-center gap-4">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setIsAssistantOpen(true)}
+            disabled={numericContentId <= 0}
+          >
+            Open AI Assistant
+          </Button>
           <SaveStatusIndicator
             status={autoSaveStatus}
             lastSaved={lastSaved}
@@ -217,6 +244,17 @@ export default function PostEditPage() {
           </div>
         </div>
       </form>
+      <AiAssistantPanel
+        isOpen={isAssistantOpen}
+        onClose={() => setIsAssistantOpen(false)}
+        onInsert={handleAiInsert}
+        siteId={siteId}
+        contentId={numericContentId}
+        contentType="post"
+        currentTitle={formData.title}
+        currentExcerpt={formData.excerpt}
+        currentContent={formData.content}
+      />
     </div>
   );
 }
