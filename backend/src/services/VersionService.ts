@@ -681,7 +681,11 @@ export class VersionService extends EventEmitter {
   /**
    * Validates that a user has access to a specific site
    */
-  async validateSiteAccess(siteId: number, userId: number): Promise<ServiceResponse<boolean>> {
+  async validateSiteAccess(
+    siteId: number,
+    userId: number,
+    client?: PoolClient
+  ): Promise<ServiceResponse<boolean>> {
     try {
       const query = `
         SELECT 1 FROM sites s
@@ -692,7 +696,8 @@ export class VersionService extends EventEmitter {
           WHERE su.site_id = s.id AND su.user_id = u.id
         ))`;
 
-      const result = await this.pool.query(query, [siteId, userId]);
+      const queryable = client ?? this.pool;
+      const result = await queryable.query(query, [siteId, userId]);
 
       if (result.rows.length === 0) {
         return {
@@ -1151,7 +1156,7 @@ export class VersionService extends EventEmitter {
 
       const versionRow = versionResult.rows[0];
 
-      const siteValidation = await this.validateSiteAccess(versionRow.site_id, userId);
+      const siteValidation = await this.validateSiteAccess(versionRow.site_id, userId, client);
 
       if (!siteValidation.success || !siteValidation.data) {
         await client.query('ROLLBACK');
