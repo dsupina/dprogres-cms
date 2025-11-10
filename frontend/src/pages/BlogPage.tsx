@@ -9,6 +9,7 @@ import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
+import type { ApiResponse, Post, Category } from '../types';
 
 export default function BlogPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -16,26 +17,33 @@ export default function BlogPage() {
   const [selectedCategory, setSelectedCategory] = useState(searchParams.get('category') || '');
   const [sortBy, setSortBy] = useState(searchParams.get('sort') || 'created_at');
   const [sortOrder, setSortOrder] = useState(searchParams.get('order') || 'desc');
-  
+
   const currentPage = parseInt(searchParams.get('page') || '1');
   const limit = 12;
 
   // Fetch posts with filters
-  const { data: postsData, isLoading: postsLoading } = useQuery(
-    ['posts', currentPage, searchTerm, selectedCategory, sortBy, sortOrder],
-    () => postsService.getPosts({
-      page: currentPage,
-      limit,
-      search: searchTerm || undefined,
-      category: selectedCategory || undefined,
-      sort: sortBy,
-      order: sortOrder as 'asc' | 'desc'
-    }),
-    { keepPreviousData: true }
-  );
+  const {
+    data: postsData,
+    isPending: postsPending,
+  } = useQuery<ApiResponse<Post[]>>({
+    queryKey: ['posts', currentPage, searchTerm, selectedCategory, sortBy, sortOrder],
+    queryFn: () =>
+      postsService.getPosts({
+        page: currentPage,
+        limit,
+        search: searchTerm || undefined,
+        category: selectedCategory || undefined,
+        sort: sortBy,
+        order: sortOrder as 'asc' | 'desc',
+      }),
+    placeholderData: (previousData) => previousData,
+  });
 
   // Fetch categories for filter dropdown
-  const { data: categoriesData } = useQuery({ queryKey: ['categories'], queryFn: () => categoriesService.getCategories() });
+  const { data: categoriesData } = useQuery<ApiResponse<Category[]>>({
+    queryKey: ['categories'],
+    queryFn: () => categoriesService.getCategories(),
+  });
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,7 +162,7 @@ export default function BlogPage() {
           {/* Results Summary */}
           <div className="mb-8">
             <p className="text-gray-600">
-              {postsLoading ? (
+              {postsPending ? (
                 'Loading...'
               ) : (
                 `${postsData?.total || 0} article${(postsData?.total || 0) !== 1 ? 's' : ''} found`
@@ -169,7 +177,7 @@ export default function BlogPage() {
           </div>
 
           {/* Posts Grid */}
-          {postsLoading ? (
+          {postsPending ? (
             <div className="flex justify-center py-12">
               <LoadingSpinner size="lg" />
             </div>
@@ -307,5 +315,6 @@ export default function BlogPage() {
         </div>
       </section>
     </div>
+  );
   );
 } 

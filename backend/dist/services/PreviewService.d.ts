@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { EventEmitter } from 'events';
 import { VersionService } from './VersionService';
 import { ServiceResponse, ContentVersion } from '../types/versioning';
+import { BlockNode, BlockRenderResult } from '../types/content';
 export interface PreviewToken {
     id: number;
     token: string;
@@ -78,6 +79,10 @@ export declare class PreviewService extends EventEmitter {
         password?: string;
         userEmail?: string;
     }): Promise<ServiceResponse<TokenValidationResult>>;
+    assembleBlockPreview(blocks: BlockNode[], options?: {
+        applyAI?: boolean;
+        topic?: string;
+    }): Promise<BlockRenderResult>;
     revokePreviewToken(tokenId: number, userId: number, reason?: string): Promise<ServiceResponse<void>>;
     getPreviewAnalytics(filters: {
         tokenId?: number;
@@ -85,6 +90,10 @@ export declare class PreviewService extends EventEmitter {
         startDate?: Date;
         endDate?: Date;
     }, userId: number): Promise<ServiceResponse<any[]>>;
+    private hydrateBlocksWithAI;
+    private renderBlockTree;
+    private requestBlockCompletion;
+    private buildFallbackSuggestion;
     private encryptToken;
     private generateShortUrl;
     private trackAnalytics;

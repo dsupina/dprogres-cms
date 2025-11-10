@@ -35,6 +35,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Button from '../ui/Button';
 import { toast } from 'react-hot-toast';
 import { api } from '../../lib/api';
+import type { Page } from '../../types';
 
 interface MenuBuilderProps {
   domainId: number;
@@ -183,9 +184,12 @@ const MenuItemForm: React.FC<MenuItemFormProps> = ({
   );
 
   // Fetch pages for the dropdown
-  const { data: pages = [] } = useQuery(['pages', domainId], async () => {
-    const response = await api.get('/pages');
-    return response.data.data || [];
+  const { data: pages = [] } = useQuery<Page[]>({
+    queryKey: ['pages', domainId],
+    queryFn: async () => {
+      const response = await api.get('/pages');
+      return (response.data?.data as Page[]) ?? [];
+    },
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -255,7 +259,7 @@ const MenuItemForm: React.FC<MenuItemFormProps> = ({
               required
             >
               <option value="">Select a page</option>
-              {pages.map((page: any) => (
+              {pages.map((page) => (
                 <option key={page.id} value={page.id}>
                   {page.title} ({page.slug})
                 </option>

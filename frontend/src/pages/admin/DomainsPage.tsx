@@ -18,10 +18,13 @@ const DomainsPage: React.FC = () => {
     is_default: false
   });
 
-  const { data: domains, isLoading } = useQuery({ queryKey: ['domains'], queryFn: () => domainsService.getAll() });
+  const { data: domains, isPending } = useQuery({
+    queryKey: ['domains'],
+    queryFn: () => domainsService.getAll(),
+  });
 
   const createMutation = useMutation({
-    mutationFn: domainsService.create,
+    mutationFn: (payload: CreateDomainData) => domainsService.create(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['domains'] });
       toast.success('Domain created successfully');
@@ -33,25 +36,24 @@ const DomainsPage: React.FC = () => {
     }
   });
 
-  const updateMutation = useMutation(
-    (data: { id: number; updates: UpdateDomainData }) =>
+  const updateMutation = useMutation({
+    mutationFn: (data: { id: number; updates: UpdateDomainData }) =>
       domainsService.update(data.id, data.updates),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('domains');
-        toast.success('Domain updated successfully');
-        setEditingDomain(null);
-        resetForm();
-      },
-      onError: (error: any) => {
-        toast.error(error.response?.data?.error || 'Failed to update domain');
-      }
-    }
-  );
-
-  const deleteMutation = useMutation(domainsService.delete, {
     onSuccess: () => {
-      queryClient.invalidateQueries('domains');
+      queryClient.invalidateQueries({ queryKey: ['domains'] });
+      toast.success('Domain updated successfully');
+      setEditingDomain(null);
+      resetForm();
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Failed to update domain');
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => domainsService.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['domains'] });
       toast.success('Domain deleted successfully');
     },
     onError: (error: any) => {
@@ -104,7 +106,7 @@ const DomainsPage: React.FC = () => {
     resetForm();
   };
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div className="flex justify-center py-12">
         <LoadingSpinner size="lg" />
@@ -170,7 +172,7 @@ const DomainsPage: React.FC = () => {
             </div>
 
             <div className="flex space-x-3">
-              <Button type="submit" disabled={createMutation.isLoading || updateMutation.isLoading}>
+              <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
                 {editingDomain ? 'Update' : 'Create'} Domain
               </Button>
               <Button type="button" variant="secondary" onClick={handleCancel}>

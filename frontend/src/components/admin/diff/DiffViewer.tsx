@@ -36,6 +36,11 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
     const isCurrentChange = index === currentChangeIndex && change.type !== 'unchanged';
 
     let className = 'px-4 py-1 font-mono text-sm whitespace-pre-wrap ';
+    if (highlightLevel === 'character') {
+      className += 'tracking-tight ';
+    } else if (highlightLevel === 'word') {
+      className += 'leading-relaxed ';
+    }
     let indicator = '  ';
 
     switch (change.type) {

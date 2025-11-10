@@ -32,6 +32,9 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PreviewService = void 0;
 const jwt = __importStar(require("jsonwebtoken"));
@@ -39,6 +42,9 @@ const bcrypt = __importStar(require("bcryptjs"));
 const crypto = __importStar(require("crypto"));
 const nanoid_1 = require("nanoid");
 const events_1 = require("events");
+const isomorphic_dompurify_1 = __importDefault(require("isomorphic-dompurify"));
+const blockRendering_1 = require("../utils/blockRendering");
+const contentBlocks_1 = require("../utils/contentBlocks");
 class PreviewService extends events_1.EventEmitter {
     constructor(pool, versionService) {
         super();
@@ -281,6 +287,26 @@ class PreviewService extends events_1.EventEmitter {
             };
         }
     }
+    async assembleBlockPreview(blocks, options = {}) {
+        const preparedBlocks = blocks.map((block) => (0, contentBlocks_1.normaliseBlock)(block));
+        const stats = { aiCalls: 0, completedBlocks: 0 };
+        let hydratedBlocks = preparedBlocks;
+        if (options.applyAI !== false) {
+            hydratedBlocks = await this.hydrateBlocksWithAI(preparedBlocks, options, stats);
+        }
+        const html = isomorphic_dompurify_1.default.sanitize((0, blockRendering_1.renderBlocksToHtml)(hydratedBlocks));
+        const tree = this.renderBlockTree(hydratedBlocks);
+        const missingFields = (0, contentBlocks_1.collectMissingBlockFields)(hydratedBlocks);
+        return {
+            html,
+            tree,
+            meta: {
+                missingFields,
+                aiCalls: stats.aiCalls,
+                completedBlocks: stats.completedBlocks
+            }
+        };
+    }
     async revokePreviewToken(tokenId, userId, reason) {
         try {
             const result = await this.pool.query(`UPDATE preview_tokens
@@ -356,6 +382,158 @@ class PreviewService extends events_1.EventEmitter {
                 success: false,
                 error: 'Failed to fetch analytics'
             };
+        }
+    }
+    async hydrateBlocksWithAI(blocks, options, stats) {
+        const results = [];
+        for (const block of blocks) {
+            const normalised = (0, contentBlocks_1.normaliseBlock)(block);
+            const children = normalised.children && normalised.children.length > 0
+                ? await this.hydrateBlocksWithAI(normalised.children, options, stats)
+                : [];
+            const candidate = { ...normalised, children };
+            let finalBlock = candidate;
+            const missing = (0, blockRendering_1.getMissingFields)(candidate);
+            if (missing.length > 0) {
+                const suggestion = await this.requestBlockCompletion(candidate, missing, options);
+                if (suggestion) {
+                    const updatedProps = { ...candidate.props };
+                    missing.forEach((field) => {
+                        if (suggestion.props &&
+                            suggestion.props[field] !== undefined &&
+                            (updatedProps[field] === undefined || updatedProps[field] === null || updatedProps[field] === '')) {
+                            updatedProps[field] = suggestion.props[field];
+                        }
+                    });
+                    finalBlock = {
+                        ...candidate,
+                        props: updatedProps,
+                        ai: {
+                            ...(candidate.ai || {}),
+                            provider: suggestion.provider ||
+                                candidate.ai?.provider ||
+                                (process.env.AI_SERVICE_URL ? 'ai-service' : 'heuristic'),
+                            suggested: true,
+                            summary: suggestion.summary || candidate.ai?.summary || undefined,
+                            generatedAt: new Date().toISOString(),
+                            confidence: suggestion.confidence ?? candidate.ai?.confidence
+                        }
+                    };
+                    stats.aiCalls += 1;
+                }
+            }
+            stats.completedBlocks += 1;
+            results.push(finalBlock);
+        }
+        return results;
+    }
+    renderBlockTree(blocks) {
+        return blocks.map((block) => ({
+            id: block.id,
+            type: block.type,
+            variant: block.variant,
+            props: block.props || {},
+            ai: block.ai,
+            html: (0, blockRendering_1.renderBlock)(block),
+            children: block.children && block.children.length > 0 ? this.renderBlockTree(block.children) : undefined
+        }));
+    }
+    async requestBlockCompletion(block, missingFields, context) {
+        const aiUrl = process.env.AI_SERVICE_URL;
+        const payload = {
+            block: { ...block, children: undefined },
+            missingFields,
+            context
+        };
+        const fetchFn = globalThis.fetch;
+        if (aiUrl && fetchFn) {
+            try {
+                const response = await fetchFn(`${aiUrl.replace(/\/$/, '')}/blocks/suggest`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(process.env.AI_SERVICE_TOKEN ? { Authorization: `Bearer ${process.env.AI_SERVICE_TOKEN}` } : {})
+                    },
+                    body: JSON.stringify(payload)
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    return {
+                        props: data.props || {},
+                        summary: data.summary,
+                        provider: data.provider || 'ai-service',
+                        confidence: typeof data.confidence === 'number' ? data.confidence : undefined
+                    };
+                }
+            }
+            catch (error) {
+                console.warn('AI suggestion request failed:', error);
+            }
+        }
+        return this.buildFallbackSuggestion(block, missingFields, context);
+    }
+    buildFallbackSuggestion(block, _missingFields, context) {
+        const topic = context.topic || 'your topic';
+        switch (block.type) {
+            case 'hero':
+                return {
+                    props: {
+                        title: block.props?.title || `Discover ${topic}`,
+                        subtitle: block.props?.subtitle || `Explore timely insights about ${topic}.`,
+                        ctaLabel: block.props?.ctaLabel || 'Read more',
+                        ctaHref: block.props?.ctaHref || '/blog'
+                    },
+                    summary: `Auto-generated hero messaging for ${topic}.`,
+                    provider: 'heuristic',
+                    confidence: 0.35
+                };
+            case 'heading':
+            case 'subheading':
+                return {
+                    props: {
+                        text: block.props?.text || `Highlights on ${topic}`
+                    },
+                    summary: `Suggested heading for ${topic}.`,
+                    provider: 'heuristic',
+                    confidence: 0.25
+                };
+            case 'text':
+            case 'richText':
+                return {
+                    props: {
+                        body: block.props?.body ||
+                            `Learn how ${topic} is shaping the conversation and what steps you can take next.`
+                    },
+                    summary: `Generated supporting copy for ${topic}.`,
+                    provider: 'heuristic',
+                    confidence: 0.3
+                };
+            case 'quote':
+                return {
+                    props: {
+                        quote: block.props?.quote ||
+                            `"${topic} represents a pivotal moment for thoughtful builders and curious readers alike."`,
+                        attribution: block.props?.attribution || 'AI Suggestion'
+                    },
+                    summary: `Fallback quote for ${topic}.`,
+                    provider: 'heuristic',
+                    confidence: 0.2
+                };
+            case 'cta':
+                return {
+                    props: {
+                        title: block.props?.title || `Ready to explore ${topic}?`,
+                        body: block.props?.body ||
+                            `Join us as we dive deeper into ${topic} with practical guides and curated resources.`,
+                        ctaLabel: block.props?.ctaLabel || 'Get started',
+                        ctaHref: block.props?.ctaHref || '/contact'
+                    },
+                    summary: `Suggested call to action for ${topic}.`,
+                    provider: 'heuristic',
+                    confidence: 0.3
+                };
+            default:
+                return null;
         }
     }
     encryptToken(token) {

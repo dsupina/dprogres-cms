@@ -8,15 +8,14 @@ const database_1 = require("../utils/database");
 const auth_1 = require("../middleware/auth");
 const validation_1 = require("../middleware/validation");
 const slug_1 = require("../utils/slug");
+const contentBlocks_1 = require("../utils/contentBlocks");
+const blockRendering_1 = require("../utils/blockRendering");
 const router = express_1.default.Router();
 router.get('/', async (req, res) => {
     try {
         const { page = 1, limit = 10, search, category, tag, featured } = req.query;
         const offset = (Number(page) - 1) * Number(limit);
-<<<<<<< HEAD
         const domain = req.domain;
-=======
->>>>>>> chore/preflight-stabilize
         let whereClause = "WHERE 1=1";
         const params = [];
         let paramCount = 0;
@@ -125,7 +124,11 @@ router.get('/:slug', async (req, res) => {
             END
           ) FILTER (WHERE t.id IS NOT NULL),
           '[]'
-        ) as tags
+        ) as tags,
+        EXISTS (
+          SELECT 1 FROM content_blocks cb
+          WHERE cb.entity_type = 'post' AND cb.entity_id = p.id
+        ) as has_blocks
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN users u ON p.author_id = u.id
@@ -139,8 +142,11 @@ router.get('/:slug', async (req, res) => {
             return res.status(404).json({ error: 'Post not found' });
         }
         const post = result.rows[0];
+        const blocks = await (0, contentBlocks_1.getContentBlocks)('post', post.id);
+        const missingBlockFields = blocks.length > 0 ? (0, contentBlocks_1.collectMissingBlockFields)(blocks) : [];
+        const postWithBlocks = { ...post, blocks, missingBlockFields };
         await (0, database_1.query)('UPDATE posts SET view_count = view_count + 1 WHERE id = $1', [post.id]);
-        post.view_count = post.view_count + 1;
+        postWithBlocks.view_count = post.view_count + 1;
         const relatedQuery = `
       SELECT id, title, slug, excerpt, featured_image, created_at
       FROM posts 
@@ -152,8 +158,8 @@ router.get('/:slug', async (req, res) => {
     `;
         const relatedResult = await (0, database_1.query)(relatedQuery, [post.id, post.category_id]);
         res.json({
-            data: post,
-            post,
+            data: postWithBlocks,
+            post: postWithBlocks,
             relatedPosts: relatedResult.rows
         });
     }
@@ -176,36 +182,60 @@ router.post('/', auth_1.authenticateToken, auth_1.requireAuthor, (0, validation_
                 return res.status(400).json({ error: 'Slug already exists' });
             }
         }
-        const insertQuery = `
-      INSERT INTO posts (
-        title, slug, excerpt, content, featured_image, status, category_id, 
-        author_id, meta_title, meta_description, seo_indexed, scheduled_at, featured
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-      RETURNING *
-    `;
-        const values = [
-            postData.title,
-            postData.slug,
-            postData.excerpt,
-            postData.content,
-            postData.featured_image,
-            postData.status || 'draft',
-            postData.category_id,
-            authorId,
-            postData.meta_title,
-            postData.meta_description,
-            postData.seo_indexed !== false,
-            postData.scheduled_at,
-            postData.featured || false
-        ];
-        const result = await (0, database_1.query)(insertQuery, values);
-        const newPost = result.rows[0];
-        if (postData.tags && postData.tags.length > 0) {
+        const client = await (0, database_1.getClient)();
+        let newPost;
+        const blocks = Array.isArray(postData.blocks) ? postData.blocks : undefined;
+        const htmlContent = blocks ? (0, blockRendering_1.renderBlocksToHtml)(blocks) : postData.content;
+        try {
+            await client.query('BEGIN');
+            const insertQuery = `
+        INSERT INTO posts (
+          title, slug, excerpt, content, featured_image, status, category_id,
+          author_id, meta_title, meta_description, seo_indexed, scheduled_at, featured
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING *
+      `;
+            const values = [
+                postData.title,
+                postData.slug,
+                postData.excerpt,
+                htmlContent ?? null,
+                postData.featured_image,
+                postData.status || 'draft',
+                postData.category_id,
+                authorId,
+                postData.meta_title,
+                postData.meta_description,
+                postData.seo_indexed !== false,
+                postData.scheduled_at,
+                postData.featured || false
+            ];
+            const result = await client.query(insertQuery, values);
+            newPost = result.rows[0];
+            if (blocks) {
+                await (0, contentBlocks_1.saveContentBlocks)('post', newPost.id, blocks, client);
+            }
+            await client.query('COMMIT');
+        }
+        catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+        if (postData.tags && postData.tags.length > 0 && newPost) {
             await handlePostTags(newPost.id, postData.tags);
         }
+        const missingBlockFields = blocks ? (0, contentBlocks_1.collectMissingBlockFields)(blocks) : [];
         res.status(201).json({
             message: 'Post created successfully',
-            data: newPost
+            data: {
+                ...newPost,
+                content: htmlContent ?? null,
+                blocks: blocks || null,
+                missingBlockFields
+            }
         });
     }
     catch (error) {
@@ -232,47 +262,77 @@ router.put('/:id', auth_1.authenticateToken, auth_1.requireAuthor, (0, validatio
                 return res.status(400).json({ error: 'Slug already exists' });
             }
         }
-        const updateQuery = `
-      UPDATE posts SET 
-        title = COALESCE($1, title),
-        slug = COALESCE($2, slug),
-        excerpt = COALESCE($3, excerpt),
-        content = COALESCE($4, content),
-        featured_image = COALESCE($5, featured_image),
-        status = COALESCE($6, status),
-        category_id = COALESCE($7, category_id),
-        meta_title = COALESCE($8, meta_title),
-        meta_description = COALESCE($9, meta_description),
-        seo_indexed = COALESCE($10, seo_indexed),
-        scheduled_at = COALESCE($11, scheduled_at),
-        featured = COALESCE($12, featured),
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $13
-      RETURNING *
-    `;
-        const values = [
-            postData.title,
-            postData.slug,
-            postData.excerpt,
-            postData.content,
-            postData.featured_image,
-            postData.status,
-            postData.category_id,
-            postData.meta_title,
-            postData.meta_description,
-            postData.seo_indexed,
-            postData.scheduled_at,
-            postData.featured,
-            id
-        ];
-        const result = await (0, database_1.query)(updateQuery, values);
-        const updatedPost = result.rows[0];
-        if (postData.tags !== undefined) {
-            await handlePostTags(parseInt(id), postData.tags);
+        const rawBlocks = postData.blocks;
+        const hasBlocksPayload = Object.prototype.hasOwnProperty.call(postData, 'blocks');
+        const blocks = hasBlocksPayload ? (rawBlocks || []) : undefined;
+        const htmlContent = hasBlocksPayload ? (0, blockRendering_1.renderBlocksToHtml)(blocks || []) : postData.content;
+        const contentValue = hasBlocksPayload ? (htmlContent ?? '') : (typeof postData.content === 'undefined' ? null : postData.content);
+        const client = await (0, database_1.getClient)();
+        let updatedPost;
+        try {
+            await client.query('BEGIN');
+            const updateQuery = `
+        UPDATE posts SET
+          title = COALESCE($1, title),
+          slug = COALESCE($2, slug),
+          excerpt = COALESCE($3, excerpt),
+          content = COALESCE($4, content),
+          featured_image = COALESCE($5, featured_image),
+          status = COALESCE($6, status),
+          category_id = COALESCE($7, category_id),
+          meta_title = COALESCE($8, meta_title),
+          meta_description = COALESCE($9, meta_description),
+          seo_indexed = COALESCE($10, seo_indexed),
+          scheduled_at = COALESCE($11, scheduled_at),
+          featured = COALESCE($12, featured),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $13
+        RETURNING *
+      `;
+            const values = [
+                postData.title,
+                postData.slug,
+                postData.excerpt,
+                contentValue,
+                postData.featured_image,
+                postData.status,
+                postData.category_id,
+                postData.meta_title,
+                postData.meta_description,
+                postData.seo_indexed,
+                postData.scheduled_at,
+                postData.featured,
+                id
+            ];
+            const result = await client.query(updateQuery, values);
+            updatedPost = result.rows[0];
+            if (hasBlocksPayload) {
+                await (0, contentBlocks_1.saveContentBlocks)('post', Number(id), blocks || [], client);
+            }
+            await client.query('COMMIT');
         }
+        catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+        if (postData.tags !== undefined) {
+            await handlePostTags(parseInt(id, 10), postData.tags);
+        }
+        const responseBlocks = hasBlocksPayload
+            ? blocks || []
+            : await (0, contentBlocks_1.getContentBlocks)('post', Number(id));
+        const missingBlockFields = responseBlocks.length > 0 ? (0, contentBlocks_1.collectMissingBlockFields)(responseBlocks) : [];
         res.json({
             message: 'Post updated successfully',
-            data: updatedPost
+            data: {
+                ...updatedPost,
+                content: hasBlocksPayload ? htmlContent ?? '' : updatedPost.content,
+                blocks: responseBlocks,
+                missingBlockFields
+            }
         });
     }
     catch (error) {

@@ -4,8 +4,8 @@
  * API client functions for version comparison and diff functionality
  */
 
-import { apiClient } from '../lib/api';
-import { DiffResult, VersionHistory, VersionWithChanges } from '../types/versioning';
+import api from '../lib/api';
+import { DiffResult, VersionHistory } from '../types/versioning';
 
 export interface CompareVersionsOptions {
   diff_type?: 'text' | 'structural' | 'metadata' | 'all';
@@ -36,21 +36,14 @@ export const versionsApi = {
     versionBId: number,
     options: CompareVersionsOptions = {}
   ): Promise<DiffResult> => {
-    const params = new URLSearchParams({
-      version_a_id: versionAId.toString(),
-      version_b_id: versionBId.toString(),
-      ...Object.entries(options)
-        .filter(([_, v]) => v !== undefined)
-        .reduce((acc, [k, v]) => ({ ...acc, [k]: String(v) }), {})
+    const response = await api.get('/versions/compare', {
+      params: {
+        version_a_id: versionAId,
+        version_b_id: versionBId,
+        ...options,
+      },
     });
-
-    const response = await apiClient.get(`/api/versions/compare?${params}`);
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to compare versions');
-    }
-    const result = await response.json();
-    return result.data;
+    return response.data.data as DiffResult;
   },
 
   /**
@@ -62,35 +55,29 @@ export const versionsApi = {
     format: 'json' | 'html' | 'unified' = 'json',
     contextLines = 3
   ): Promise<DiffResult | string> => {
-    const params = new URLSearchParams({
-      format,
-      context_lines: contextLines.toString()
+    const response = await api.get(`/versions/${id1}/diff/${id2}`, {
+      params: {
+        format,
+        context_lines: contextLines,
+      },
+      responseType: format === 'json' ? 'json' : 'text',
     });
 
-    const response = await apiClient.get(`/api/versions/${id1}/diff/${id2}?${params}`);
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to get diff');
+    if (format === 'json') {
+      return (response.data as { data: DiffResult }).data;
     }
 
-    if (format === 'html' || format === 'unified') {
-      return await response.text();
-    }
-
-    const result = await response.json();
-    return result.data;
+    return response.data as string;
   },
 
   /**
    * Export diff in various formats
    */
   exportDiff: async (options: ExportDiffOptions): Promise<Blob> => {
-    const response = await apiClient.post('/api/versions/diff/export', options);
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to export diff');
-    }
-    return await response.blob();
+    const response = await api.post('/versions/diff/export', options, {
+      responseType: 'blob',
+    });
+    return response.data as Blob;
   },
 
   /**
@@ -100,19 +87,14 @@ export const versionsApi = {
     versionId: number,
     compareWith: 'previous' | 'published' | 'specific' = 'previous',
     compareVersionId?: number
-  ) => {
-    const params = new URLSearchParams({
-      compare_with: compareWith,
-      ...(compareVersionId && { compare_version_id: compareVersionId.toString() })
+    ) => {
+      const response = await api.get(`/versions/${versionId}/changes-summary`, {
+        params: {
+          compare_with: compareWith,
+        ...(compareVersionId ? { compare_version_id: compareVersionId } : {}),
+      },
     });
-
-    const response = await apiClient.get(`/api/versions/${versionId}/changes-summary?${params}`);
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to get changes summary');
-    }
-    const result = await response.json();
-    return result.data;
+    return response.data.data;
   },
 
   /**
@@ -122,13 +104,8 @@ export const versionsApi = {
     contentType: string,
     contentId: number
   ): Promise<VersionHistory> => {
-    const response = await apiClient.get(`/api/versions/history/${contentType}/${contentId}`);
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to get version history');
-    }
-    const result = await response.json();
-    return result.data;
+    const response = await api.get(`/versions/history/${contentType}/${contentId}`);
+    return response.data.data as VersionHistory;
   }
 };
 

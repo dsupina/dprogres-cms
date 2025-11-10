@@ -522,38 +522,43 @@ const BlockComposer: React.FC<BlockComposerProps> = ({ value, onChange, missingF
         />
       </DndContext>
 
-      <Modal open={mediaState.open} onClose={() => setMediaState({ open: false, path: null, loading: false, files: [] })} title="Select media">
-        <div className="space-y-4">
-          {mediaState.loading ? (
-            <div className="py-6 text-center text-sm text-gray-500">Loading media…</div>
-          ) : mediaState.files.length === 0 ? (
-            <div className="py-6 text-center text-sm text-gray-500">Upload media from the Media Library to use in blocks.</div>
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {mediaState.files.map((file) => (
-                <button
-                  key={file.id}
-                  type="button"
-                  className="overflow-hidden rounded-lg border bg-white text-left shadow-sm transition hover:shadow"
-                  onClick={() => selectMedia(file)}
-                >
-                  <div className="aspect-video bg-gray-100">
-                    <img
-                      src={file.file_path}
-                      alt={file.alt_text || file.original_name}
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                  <div className="p-3">
-                    <div className="text-sm font-medium text-gray-900">{file.original_name}</div>
-                    {file.alt_text && <div className="text-xs text-gray-500">{file.alt_text}</div>}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </Modal>
+      {mediaState.open && (
+        <Modal
+          title="Select media"
+          onClose={() => setMediaState({ open: false, path: null, loading: false, files: [] })}
+        >
+          <div className="space-y-4">
+            {mediaState.loading ? (
+              <div className="py-6 text-center text-sm text-gray-500">Loading media…</div>
+            ) : mediaState.files.length === 0 ? (
+              <div className="py-6 text-center text-sm text-gray-500">Upload media from the Media Library to use in blocks.</div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {mediaState.files.map((file) => (
+                  <button
+                    key={file.id}
+                    type="button"
+                    className="overflow-hidden rounded-lg border bg-white text-left shadow-sm transition hover:shadow"
+                    onClick={() => selectMedia(file)}
+                  >
+                    <div className="aspect-video bg-gray-100">
+                      <img
+                        src={file.file_path}
+                        alt={file.alt_text || file.original_name}
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                    <div className="p-3">
+                      <div className="text-sm font-medium text-gray-900">{file.original_name}</div>
+                      {file.alt_text && <div className="text-xs text-gray-500">{file.alt_text}</div>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

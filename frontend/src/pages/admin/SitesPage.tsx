@@ -50,7 +50,7 @@ export default function SitesPage() {
   const queryClient = useQueryClient();
 
   // Fetch sites
-  const { data: sites, isLoading } = useQuery({
+  const { data: sites, isPending } = useQuery({
     queryKey: ['sites'],
     queryFn: fetchSites,
   });
@@ -240,7 +240,7 @@ export default function SitesPage() {
           </Button>
         </div>
 
-        {isLoading ? (
+        {isPending ? (
           <div className="flex justify-center py-8">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
           </div>
@@ -381,9 +381,9 @@ export default function SitesPage() {
                 </Button>
                 <Button
                   type="submit"
-                  disabled={createMutation.isLoading || updateMutation.isLoading}
+                  disabled={createMutation.isPending || updateMutation.isPending}
                 >
-                  {createMutation.isLoading || updateMutation.isLoading
+                  {createMutation.isPending || updateMutation.isPending
                     ? 'Saving...'
                     : showEditModal
                     ? 'Update Site'

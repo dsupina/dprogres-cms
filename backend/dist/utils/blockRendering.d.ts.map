@@ -1,0 +1,1 @@
+{"version":3,"file":"blockRendering.d.ts","sourceRoot":"","sources":["../../src/utils/blockRendering.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,SAAS,EAAa,MAAM,kBAAkB,CAAC;AA4B7D,eAAO,MAAM,gBAAgB,GAAI,OAAO,SAAS,KAAG,MAAM,EASzD,CAAC;AASF,eAAO,MAAM,WAAW,GAAI,OAAO,SAAS,KAAG,MAqG9C,CAAC;AAEF,eAAO,MAAM,kBAAkB,GAAI,QAAQ,SAAS,EAAE,KAAG,MAExD,CAAC"}

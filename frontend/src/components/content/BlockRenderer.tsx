@@ -191,7 +191,6 @@ export const renderBlock = (block: BlockNode): React.ReactNode => {
           )}
         </section>
       );
-    }
     case 'button':
       return (
         <a

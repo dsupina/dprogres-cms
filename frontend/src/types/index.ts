@@ -24,7 +24,7 @@ export interface Tag {
   slug: string;
 }
 
-import type { BlockNode, BlockRenderResult, RenderedBlockNode } from './content';
+import type { BlockNode } from './content';
 
 export interface Post {
   id: number;

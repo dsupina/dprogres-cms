@@ -1,11 +1,56 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
-const database_1 = require("../utils/database");
+const joi_1 = __importDefault(require("joi"));
+const database_1 = __importStar(require("../utils/database"));
 const auth_1 = require("../middleware/auth");
+const contentBlocks_1 = require("../utils/contentBlocks");
+const blockRendering_1 = require("../utils/blockRendering");
+const validation_1 = require("../middleware/validation");
+const PreviewService_1 = require("../services/PreviewService");
+const VersionService_1 = require("../services/VersionService");
+const previewService = new PreviewService_1.PreviewService(database_1.default, new VersionService_1.VersionService(database_1.default));
+const blockPreviewSchema = joi_1.default.object({
+    blocks: joi_1.default.array().items(validation_1.blockSchema).required(),
+    topic: joi_1.default.string().allow('', null).optional(),
+    applyAI: joi_1.default.boolean().optional()
+});
 const router = express_1.default.Router();
 router.use(auth_1.authenticateToken);
 router.get('/dashboard', async (req, res) => {
@@ -141,11 +186,122 @@ router.get('/posts/:id', async (req, res) => {
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Post not found' });
         }
-        res.json({ data: result.rows[0] });
+        const blocks = await (0, contentBlocks_1.getContentBlocks)('post', Number(id));
+        const missingBlockFields = (0, contentBlocks_1.collectMissingBlockFields)(blocks);
+        res.json({ data: { ...result.rows[0], blocks, missingBlockFields } });
     }
     catch (error) {
         console.error('Admin get post by id error:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+router.put('/posts/:id/blocks', async (req, res) => {
+    try {
+        if (!req.user || !['admin', 'editor', 'author'].includes(req.user.role)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        const { id } = req.params;
+        const postResult = await (0, database_1.query)('SELECT id, author_id, content FROM posts WHERE id = $1', [id]);
+        if (postResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+        const post = postResult.rows[0];
+        if (req.user.role !== 'admin' && post.author_id !== req.user.userId) {
+            return res.status(403).json({ error: 'You can only edit your own posts' });
+        }
+        const payloadSchema = joi_1.default.object({
+            blocks: joi_1.default.array().items(validation_1.blockSchema).required(),
+            regenerateHtml: joi_1.default.boolean().default(true)
+        });
+        const { error, value } = payloadSchema.validate(req.body, {
+            abortEarly: false,
+            stripUnknown: true
+        });
+        if (error) {
+            return res.status(400).json({
+                error: 'Validation failed',
+                details: error.details.map((detail) => ({
+                    field: detail.path.join('.'),
+                    message: detail.message
+                }))
+            });
+        }
+        const { blocks, regenerateHtml } = value;
+        const client = await (0, database_1.getClient)();
+        let updatedContent = post.content;
+        try {
+            await client.query('BEGIN');
+            await (0, contentBlocks_1.saveContentBlocks)('post', Number(id), blocks, client);
+            if (regenerateHtml) {
+                updatedContent = (0, blockRendering_1.renderBlocksToHtml)(blocks);
+                await client.query('UPDATE posts SET content = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [updatedContent, id]);
+            }
+            else {
+                await client.query('UPDATE posts SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [id]);
+            }
+            await client.query('COMMIT');
+        }
+        catch (err) {
+            await client.query('ROLLBACK');
+            console.error('Failed to persist content blocks:', err);
+            return res.status(500).json({ error: 'Failed to persist content blocks' });
+        }
+        finally {
+            client.release();
+        }
+        const missingBlockFields = (0, contentBlocks_1.collectMissingBlockFields)(blocks);
+        res.json({
+            message: 'Blocks updated successfully',
+            data: {
+                id: Number(id),
+                blocks,
+                content: updatedContent,
+                missingBlockFields
+            }
+        });
+    }
+    catch (error) {
+        console.error('Update post blocks error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+router.post('/posts/:id/blocks/ai', async (req, res) => {
+    try {
+        if (!req.user || !['admin', 'editor', 'author'].includes(req.user.role)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        const { id } = req.params;
+        const postResult = await (0, database_1.query)('SELECT id, author_id, title FROM posts WHERE id = $1', [id]);
+        if (postResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Post not found' });
+        }
+        const post = postResult.rows[0];
+        if (req.user.role !== 'admin' && post.author_id !== req.user.userId) {
+            return res.status(403).json({ error: 'You can only edit your own posts' });
+        }
+        const { error, value } = blockPreviewSchema.validate(req.body, {
+            abortEarly: false,
+            stripUnknown: true
+        });
+        if (error) {
+            return res.status(400).json({
+                error: 'Validation failed',
+                details: error.details.map((detail) => ({
+                    field: detail.path.join('.'),
+                    message: detail.message
+                }))
+            });
+        }
+        const { blocks, topic, applyAI } = value;
+        const preview = await previewService.assembleBlockPreview(blocks, {
+            applyAI: applyAI !== false,
+            topic: topic || post.title
+        });
+        res.json({ data: preview });
+    }
+    catch (error) {
+        console.error('AI block suggestion error:', error);
+        res.status(500).json({ error: 'Failed to generate AI suggestions' });
     }
 });
 router.get('/categories', async (req, res) => {

@@ -1,3 +1,4 @@
+import type { BlockNode } from './content';
 export interface User {
     id: number;
     email: string;
@@ -39,6 +40,8 @@ export interface Post {
     category?: Category;
     author?: User;
     tags?: Tag[];
+    blocks?: BlockNode[];
+    missingBlockFields?: string[];
 }
 export interface Page {
     id: number;
@@ -89,6 +92,7 @@ export interface CreatePostData {
     scheduled_at?: Date;
     featured?: boolean;
     tags?: string[];
+    blocks?: BlockNode[];
 }
 export interface UpdatePostData {
     title?: string;
@@ -104,6 +108,7 @@ export interface UpdatePostData {
     scheduled_at?: Date;
     featured?: boolean;
     tags?: string[];
+    blocks?: BlockNode[];
 }
 export interface CreateCategoryData {
     name: string;
