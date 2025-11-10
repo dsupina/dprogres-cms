@@ -1150,6 +1150,17 @@ export class VersionService extends EventEmitter {
       }
 
       const versionRow = versionResult.rows[0];
+
+      const siteValidation = await this.validateSiteAccess(versionRow.site_id, userId);
+
+      if (!siteValidation.success || !siteValidation.data) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          error: siteValidation.error || 'Access denied: User does not have permission for this site',
+        };
+      }
+
       const meta = versionRow.meta_data ? { ...versionRow.meta_data } : {};
       const existingFeedback: AiFeedbackRecord[] = Array.isArray(meta.ai_feedback)
         ? [...meta.ai_feedback]
