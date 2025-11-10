@@ -24,6 +24,8 @@ export interface Tag {
   slug: string;
 }
 
+import type { BlockNode, BlockRenderResult, RenderedBlockNode } from './content';
+
 export interface Post {
   id: number;
   title: string;
@@ -48,6 +50,8 @@ export interface Post {
   last_name?: string;
   author_email?: string;
   tags?: Tag[];
+  blocks?: BlockNode[];
+  missingBlockFields?: string[];
 }
 
 export interface Page {
@@ -105,6 +109,7 @@ export interface CreatePostData {
   scheduled_at?: string;
   featured?: boolean;
   tags?: string[];
+  blocks?: BlockNode[];
 }
 
 export interface UpdatePostData {
@@ -121,6 +126,7 @@ export interface UpdatePostData {
   scheduled_at?: string;
   featured?: boolean;
   tags?: string[];
+  blocks?: BlockNode[];
 }
 
 export interface CreateCategoryData {

@@ -40,12 +40,30 @@ export const registerSchema = Joi.object({
   last_name: Joi.string().max(100).optional()
 });
 
+export const blockSchema = Joi.object({
+  id: Joi.string().max(64).required(),
+  type: Joi.string().max(100).required(),
+  variant: Joi.string().max(100).allow(null, ''),
+  props: Joi.object().unknown(true).default({}),
+  settings: Joi.object().unknown(true).default({}),
+  ai: Joi.object({
+    provider: Joi.string().optional(),
+    suggested: Joi.boolean().optional(),
+    summary: Joi.string().allow('', null).optional(),
+    prompts: Joi.array().items(Joi.string()).optional(),
+    generatedAt: Joi.string().optional(),
+    confidence: Joi.number().min(0).max(1).optional()
+  }).optional(),
+  children: Joi.array().items(Joi.link('#block')).default([])
+}).id('block');
+
 // Post validation schemas
 export const createPostSchema = Joi.object({
   title: Joi.string().max(255).required(),
   slug: Joi.string().max(255).optional(),
   excerpt: Joi.string().optional(),
   content: Joi.string().optional(),
+  blocks: Joi.array().items(blockSchema).optional(),
   // featured_image removed in favor of embedded media
   status: Joi.string().valid('draft', 'published', 'scheduled').optional(),
   category_id: Joi.number().integer().optional(),
@@ -64,6 +82,7 @@ export const updatePostSchema = Joi.object({
   slug: Joi.string().max(255).optional(),
   excerpt: Joi.string().optional(),
   content: Joi.string().optional(),
+  blocks: Joi.array().items(blockSchema).optional(),
   // featured_image removed in favor of embedded media
   status: Joi.string().valid('draft', 'published', 'scheduled').optional(),
   category_id: Joi.number().integer().optional(),

@@ -1,11 +1,12 @@
 import api from '@/lib/api';
-import { 
-  Post, 
-  CreatePostData, 
-  UpdatePostData, 
-  QueryParams, 
-  ApiResponse 
+import {
+  Post,
+  CreatePostData,
+  UpdatePostData,
+  QueryParams,
+  ApiResponse
 } from '@/types';
+import type { BlockNode, BlockRenderResult } from '@/types/content';
 
 export const postsService = {
   // Get all published posts (public) - general method
@@ -67,6 +68,22 @@ export const postsService = {
   updatePost: async (id: number, data: UpdatePostData): Promise<ApiResponse<Post>> => {
     const response = await api.put(`/posts/${id}`, data);
     return response.data;
+  },
+
+  saveBlocks: async (
+    id: number,
+    payload: { blocks: BlockNode[]; regenerateHtml?: boolean }
+  ): Promise<ApiResponse<Post>> => {
+    const response = await api.put(`/admin/posts/${id}/blocks`, payload);
+    return response.data;
+  },
+
+  previewBlocks: async (
+    id: number,
+    payload: { blocks: BlockNode[]; topic?: string; applyAI?: boolean }
+  ): Promise<BlockRenderResult> => {
+    const response = await api.post(`/admin/posts/${id}/blocks/ai`, payload);
+    return response.data.data as BlockRenderResult;
   },
 
   deletePost: async (id: number): Promise<ApiResponse<void>> => {

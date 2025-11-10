@@ -7,6 +7,9 @@ import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Button from '../components/ui/Button';
 import { settingsService } from '@/services/settings';
 import { useEffect, useState } from 'react';
+import { featureFlags } from '@/lib/config';
+import BlockRenderer from '@/components/content/BlockRenderer';
+import type { BlockNode } from '@/types/content';
 
 export default function HomePage() {
   const [heroTitle, setHeroTitle] = useState('Welcome to My Blog');
@@ -25,35 +28,48 @@ export default function HomePage() {
     };
     load();
   }, []);
-  const { data: featuredPosts, isLoading: featuredLoading } = useQuery({ queryKey: ['featured-posts'], queryFn: () => postsService.getFeaturedPosts(3) });
-
-  const { data: recentPosts, isLoading: recentLoading } = useQuery({ queryKey: ['recent-posts'], queryFn: () => postsService.getRecentPosts(6) });
+  const heroBlocks = featureFlags.enableBlockRenderer && !featuredLoading
+    ? (featuredPosts?.posts?.[0]?.blocks as BlockNode[] | undefined)
+    : undefined;
+  const shouldRenderHeroBlocks = Array.isArray(heroBlocks) && heroBlocks.length > 0;
 
   return (
     <div className="min-h-screen">
       {/* Hero Section */}
-      <section className="bg-gradient-to-r from-primary-600 to-primary-800 text-white">
+      <section className={shouldRenderHeroBlocks ? 'bg-gray-50' : 'bg-gradient-to-r from-primary-600 to-primary-800 text-white'}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-          <div className="text-center">
-            <h1 className="text-4xl md:text-6xl font-bold mb-6">{heroTitle}</h1>
-            <p className="text-xl md:text-2xl mb-8 text-primary-100 max-w-3xl mx-auto">{heroSubtitle}</p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button
-                as={Link}
-                to="/blog"
-                size="lg"
-                className="bg-white text-primary-600 hover:bg-gray-100"
-              >
-                Explore Blog
-                <ArrowRight className="ml-2 h-5 w-5" />
-              </Button>
-              <Button
-                as={Link}
-                to="/page/about"
-                variant="ghost"
-                size="lg"
-                className="text-white border-white hover:bg-white hover:text-primary-600"
-              >
+          {shouldRenderHeroBlocks ? (
+            <div className="mx-auto max-w-4xl">
+              <BlockRenderer blocks={heroBlocks} />
+            </div>
+          ) : (
+            <div className="text-center">
+              <h1 className="text-4xl md:text-6xl font-bold mb-6">{heroTitle}</h1>
+              <p className="text-xl md:text-2xl mb-8 text-primary-100 max-w-3xl mx-auto">{heroSubtitle}</p>
+              <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                <Button
+                  as={Link}
+                  to="/blog"
+                  size="lg"
+                  className="bg-white text-primary-600 hover:bg-gray-100"
+                >
+                  Explore Blog
+                  <ArrowRight className="ml-2 h-5 w-5" />
+                </Button>
+                <Button
+                  as={Link}
+                  to="/page/about"
+                  variant="ghost"
+                  size="lg"
+                  className="text-white border-white hover:bg-white hover:text-primary-600"
+                >
+                  About Me
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
                 About Me
               </Button>
             </div>

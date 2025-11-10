@@ -1,10 +1,13 @@
 import express from 'express';
 import { Request, Response } from 'express';
-import { query } from '../utils/database';
+import { query, getClient } from '../utils/database';
 import { authenticateToken, requireAuthor } from '../middleware/auth';
 import { validate, createPostSchema, updatePostSchema } from '../middleware/validation';
 import { generateSlug, generateUniqueSlug } from '../utils/slug';
 import { Post, CreatePostData, UpdatePostData, QueryParams } from '../types';
+import { getContentBlocks, saveContentBlocks, collectMissingBlockFields } from '../utils/contentBlocks';
+import { renderBlocksToHtml } from '../utils/blockRendering';
+import type { BlockNode } from '../types/content';
 
 const router = express.Router();
 
@@ -152,7 +155,11 @@ router.get('/:slug', async (req: Request, res: Response) => {
             END
           ) FILTER (WHERE t.id IS NOT NULL),
           '[]'
-        ) as tags
+        ) as tags,
+        EXISTS (
+          SELECT 1 FROM content_blocks cb
+          WHERE cb.entity_type = 'post' AND cb.entity_id = p.id
+        ) as has_blocks
       FROM posts p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN users u ON p.author_id = u.id
@@ -169,10 +176,13 @@ router.get('/:slug', async (req: Request, res: Response) => {
     }
 
     const post = result.rows[0];
+    const blocks = await getContentBlocks('post', post.id);
+    const missingBlockFields = blocks.length > 0 ? collectMissingBlockFields(blocks) : [];
+    const postWithBlocks = { ...post, blocks, missingBlockFields };
 
     // Increment view count
     await query('UPDATE posts SET view_count = view_count + 1 WHERE id = $1', [post.id]);
-    post.view_count = post.view_count + 1;
+    postWithBlocks.view_count = post.view_count + 1;
 
     // Get related posts
     const relatedQuery = `
@@ -189,8 +199,8 @@ router.get('/:slug', async (req: Request, res: Response) => {
 
     // Keep backward compatibility returning both shapes
     res.json({
-      data: post,
-      post,
+      data: postWithBlocks,
+      post: postWithBlocks,
       relatedPosts: relatedResult.rows
     });
   } catch (error) {
@@ -217,41 +227,67 @@ router.post('/', authenticateToken, requireAuthor, validate(createPostSchema), a
       }
     }
 
-    const insertQuery = `
-      INSERT INTO posts (
-        title, slug, excerpt, content, featured_image, status, category_id, 
-        author_id, meta_title, meta_description, seo_indexed, scheduled_at, featured
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-      RETURNING *
-    `;
+    const client = await getClient();
+    let newPost;
+    const blocks = Array.isArray((postData as any).blocks) ? (postData as any).blocks as BlockNode[] : undefined;
+    const htmlContent = blocks ? renderBlocksToHtml(blocks) : postData.content;
 
-    const values = [
-      postData.title,
-      postData.slug,
-      postData.excerpt,
-      postData.content,
-      postData.featured_image,
-      postData.status || 'draft',
-      postData.category_id,
-      authorId,
-      postData.meta_title,
-      postData.meta_description,
-      postData.seo_indexed !== false,
-      postData.scheduled_at,
-      postData.featured || false
-    ];
+    try {
+      await client.query('BEGIN');
 
-    const result = await query(insertQuery, values);
-    const newPost = result.rows[0];
+      const insertQuery = `
+        INSERT INTO posts (
+          title, slug, excerpt, content, featured_image, status, category_id,
+          author_id, meta_title, meta_description, seo_indexed, scheduled_at, featured
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        RETURNING *
+      `;
 
-    // Handle tags
-    if (postData.tags && postData.tags.length > 0) {
+      const values = [
+        postData.title,
+        postData.slug,
+        postData.excerpt,
+        htmlContent ?? null,
+        postData.featured_image,
+        postData.status || 'draft',
+        postData.category_id,
+        authorId,
+        postData.meta_title,
+        postData.meta_description,
+        postData.seo_indexed !== false,
+        postData.scheduled_at,
+        postData.featured || false
+      ];
+
+      const result = await client.query(insertQuery, values);
+      newPost = result.rows[0];
+
+      if (blocks) {
+        await saveContentBlocks('post', newPost.id, blocks, client);
+      }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    if (postData.tags && postData.tags.length > 0 && newPost) {
       await handlePostTags(newPost.id, postData.tags);
     }
 
+    const missingBlockFields = blocks ? collectMissingBlockFields(blocks) : [];
+
     res.status(201).json({
       message: 'Post created successfully',
-      data: newPost
+      data: {
+        ...newPost,
+        content: htmlContent ?? null,
+        blocks: blocks || null,
+        missingBlockFields
+      }
     });
   } catch (error) {
     console.error('Create post error:', error);
@@ -287,52 +323,85 @@ router.put('/:id', authenticateToken, requireAuthor, validate(updatePostSchema),
       }
     }
 
-    const updateQuery = `
-      UPDATE posts SET 
-        title = COALESCE($1, title),
-        slug = COALESCE($2, slug),
-        excerpt = COALESCE($3, excerpt),
-        content = COALESCE($4, content),
-        featured_image = COALESCE($5, featured_image),
-        status = COALESCE($6, status),
-        category_id = COALESCE($7, category_id),
-        meta_title = COALESCE($8, meta_title),
-        meta_description = COALESCE($9, meta_description),
-        seo_indexed = COALESCE($10, seo_indexed),
-        scheduled_at = COALESCE($11, scheduled_at),
-        featured = COALESCE($12, featured),
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $13
-      RETURNING *
-    `;
+    const rawBlocks = (postData as any).blocks as BlockNode[] | undefined;
+    const hasBlocksPayload = Object.prototype.hasOwnProperty.call(postData, 'blocks');
+    const blocks = hasBlocksPayload ? (rawBlocks || []) : undefined;
+    const htmlContent = hasBlocksPayload ? renderBlocksToHtml(blocks || []) : postData.content;
+    const contentValue = hasBlocksPayload ? (htmlContent ?? '') : (typeof postData.content === 'undefined' ? null : postData.content);
 
-    const values = [
-      postData.title,
-      postData.slug,
-      postData.excerpt,
-      postData.content,
-      postData.featured_image,
-      postData.status,
-      postData.category_id,
-      postData.meta_title,
-      postData.meta_description,
-      postData.seo_indexed,
-      postData.scheduled_at,
-      postData.featured,
-      id
-    ];
+    const client = await getClient();
+    let updatedPost;
 
-    const result = await query(updateQuery, values);
-    const updatedPost = result.rows[0];
+    try {
+      await client.query('BEGIN');
 
-    // Handle tags
-    if (postData.tags !== undefined) {
-      await handlePostTags(parseInt(id), postData.tags);
+      const updateQuery = `
+        UPDATE posts SET
+          title = COALESCE($1, title),
+          slug = COALESCE($2, slug),
+          excerpt = COALESCE($3, excerpt),
+          content = COALESCE($4, content),
+          featured_image = COALESCE($5, featured_image),
+          status = COALESCE($6, status),
+          category_id = COALESCE($7, category_id),
+          meta_title = COALESCE($8, meta_title),
+          meta_description = COALESCE($9, meta_description),
+          seo_indexed = COALESCE($10, seo_indexed),
+          scheduled_at = COALESCE($11, scheduled_at),
+          featured = COALESCE($12, featured),
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $13
+        RETURNING *
+      `;
+
+      const values = [
+        postData.title,
+        postData.slug,
+        postData.excerpt,
+        contentValue,
+        postData.featured_image,
+        postData.status,
+        postData.category_id,
+        postData.meta_title,
+        postData.meta_description,
+        postData.seo_indexed,
+        postData.scheduled_at,
+        postData.featured,
+        id
+      ];
+
+      const result = await client.query(updateQuery, values);
+      updatedPost = result.rows[0];
+
+      if (hasBlocksPayload) {
+        await saveContentBlocks('post', Number(id), blocks || [], client);
+      }
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
+
+    if (postData.tags !== undefined) {
+      await handlePostTags(parseInt(id, 10), postData.tags);
+    }
+
+    const responseBlocks = hasBlocksPayload
+      ? blocks || []
+      : await getContentBlocks('post', Number(id));
+    const missingBlockFields = responseBlocks.length > 0 ? collectMissingBlockFields(responseBlocks) : [];
 
     res.json({
       message: 'Post updated successfully',
-      data: updatedPost
+      data: {
+        ...updatedPost,
+        content: hasBlocksPayload ? htmlContent ?? '' : updatedPost.content,
+        blocks: responseBlocks,
+        missingBlockFields
+      }
     });
   } catch (error) {
     console.error('Update post error:', error);
