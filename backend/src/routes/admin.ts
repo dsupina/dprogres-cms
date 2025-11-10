@@ -2,8 +2,22 @@ import express from 'express';
 import { Request, Response } from 'express';
 import { query } from '../utils/database';
 import { authenticateToken } from '../middleware/auth';
+import {
+  listPublishingTargets,
+  getPublishingTargetById,
+  createPublishingTarget,
+  updatePublishingTarget,
+  deletePublishingTarget,
+  listPublishingSchedules,
+  createPublishingSchedule,
+  removePublishingSchedule,
+  getDistributionMetrics,
+  getDistributionQueue,
+} from '../db/distribution';
+import DistributionService from '../services/DistributionService';
 
 const router = express.Router();
+const distributionService = new DistributionService();
 
 // All admin routes require authentication
 router.use(authenticateToken);
@@ -461,4 +475,327 @@ router.post('/posts/bulk', async (req: Request, res: Response) => {
   }
 });
 
-export default router; 
+// Distribution targets
+router.get('/distribution/targets', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || !['admin', 'editor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const targets = await listPublishingTargets();
+    res.json({ data: targets });
+  } catch (error) {
+    console.error('List publishing targets error:', error);
+    res.status(500).json({ error: 'Failed to load publishing targets' });
+  }
+});
+
+router.post('/distribution/targets', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can create publishing targets' });
+    }
+
+    const { name, channel, credentials, default_payload, is_active, rate_limit_per_hour } = req.body;
+    if (!name || !channel) {
+      return res.status(400).json({ error: 'Name and channel are required' });
+    }
+
+    const target = await createPublishingTarget({
+      name,
+      channel,
+      credentials,
+      default_payload,
+      is_active,
+      rate_limit_per_hour,
+    });
+
+    res.status(201).json({ data: target });
+  } catch (error: any) {
+    console.error('Create publishing target error:', error);
+    if (error?.code === '23505') {
+      return res.status(409).json({ error: 'A target with that name and channel already exists' });
+    }
+    res.status(500).json({ error: 'Failed to create publishing target' });
+  }
+});
+
+router.put('/distribution/targets/:id', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || !['admin', 'editor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const targetId = Number(req.params.id);
+    if (Number.isNaN(targetId)) {
+      return res.status(400).json({ error: 'Invalid target id' });
+    }
+
+    const updated = await updatePublishingTarget(targetId, req.body || {});
+    if (!updated) {
+      return res.status(404).json({ error: 'Publishing target not found' });
+    }
+
+    res.json({ data: updated });
+  } catch (error) {
+    console.error('Update publishing target error:', error);
+    res.status(500).json({ error: 'Failed to update publishing target' });
+  }
+});
+
+router.delete('/distribution/targets/:id', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can delete publishing targets' });
+    }
+
+    const targetId = Number(req.params.id);
+    if (Number.isNaN(targetId)) {
+      return res.status(400).json({ error: 'Invalid target id' });
+    }
+
+    const deleted = await deletePublishingTarget(targetId);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Publishing target not found' });
+    }
+
+    res.json({ message: 'Publishing target deleted' });
+  } catch (error) {
+    console.error('Delete publishing target error:', error);
+    res.status(500).json({ error: 'Failed to delete publishing target' });
+  }
+});
+
+// Publishing schedules
+router.get('/distribution/schedules', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || !['admin', 'editor', 'author'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const postId = req.query.postId ? Number(req.query.postId) : undefined;
+    const status = req.query.status as any;
+    const schedules = await listPublishingSchedules({
+      postId: postId && !Number.isNaN(postId) ? postId : undefined,
+      status,
+    });
+
+    res.json({ data: schedules });
+  } catch (error) {
+    console.error('List publishing schedules error:', error);
+    res.status(500).json({ error: 'Failed to load publishing schedules' });
+  }
+});
+
+router.post('/distribution/schedules', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || !['admin', 'editor', 'author'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { post_id, postId, target_id, targetId, scheduled_for, scheduledFor, status, options } = req.body;
+    const resolvedPostId = Number(post_id ?? postId);
+    const resolvedTargetId = Number(target_id ?? targetId);
+    const resolvedDate = scheduled_for ?? scheduledFor;
+
+    if (!resolvedPostId || Number.isNaN(resolvedPostId)) {
+      return res.status(400).json({ error: 'postId is required' });
+    }
+
+    if (!resolvedTargetId || Number.isNaN(resolvedTargetId)) {
+      return res.status(400).json({ error: 'targetId is required' });
+    }
+
+    if (!resolvedDate) {
+      return res.status(400).json({ error: 'scheduledFor is required' });
+    }
+
+    const when = new Date(resolvedDate);
+    if (Number.isNaN(when.getTime())) {
+      return res.status(400).json({ error: 'Invalid scheduled date' });
+    }
+
+    const schedule = await createPublishingSchedule({
+      post_id: resolvedPostId,
+      target_id: resolvedTargetId,
+      scheduled_for: when,
+      status,
+      options,
+    });
+
+    res.status(201).json({ data: schedule });
+  } catch (error) {
+    console.error('Create publishing schedule error:', error);
+    res.status(500).json({ error: 'Failed to create publishing schedule' });
+  }
+});
+
+router.delete('/distribution/schedules/:id', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || !['admin', 'editor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const scheduleId = Number(req.params.id);
+    if (Number.isNaN(scheduleId)) {
+      return res.status(400).json({ error: 'Invalid schedule id' });
+    }
+
+    const removed = await removePublishingSchedule(scheduleId);
+    if (!removed) {
+      return res.status(404).json({ error: 'Publishing schedule not found' });
+    }
+
+    res.json({ message: 'Publishing schedule removed' });
+  } catch (error) {
+    console.error('Delete publishing schedule error:', error);
+    res.status(500).json({ error: 'Failed to remove publishing schedule' });
+  }
+});
+
+router.post('/distribution/schedules/:id/dispatch', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || !['admin', 'editor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const scheduleId = Number(req.params.id);
+    if (Number.isNaN(scheduleId)) {
+      return res.status(400).json({ error: 'Invalid schedule id' });
+    }
+
+    const { requestAiAssets, customMessage } = req.body || {};
+    const result = await distributionService.dispatchSchedule(scheduleId, { requestAiAssets, customMessage });
+
+    res.json({ data: result });
+  } catch (error) {
+    console.error('Dispatch schedule error:', error);
+    res.status(500).json({ error: 'Failed to dispatch schedule' });
+  }
+});
+
+router.post('/distribution/dispatch', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || !['admin', 'editor', 'author'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const { postId, targetIds, requestAiAssets = true, customMessage } = req.body;
+    const resolvedPostId = Number(postId);
+    const ids: number[] = Array.isArray(targetIds) ? targetIds.map((id: any) => Number(id)).filter((id: number) => !Number.isNaN(id)) : [];
+
+    if (!resolvedPostId || Number.isNaN(resolvedPostId)) {
+      return res.status(400).json({ error: 'postId is required' });
+    }
+
+    if (!ids.length) {
+      return res.status(400).json({ error: 'At least one targetId is required' });
+    }
+
+    const dispatches = await Promise.all(
+      ids.map(async (targetId) => {
+        const target = await getPublishingTargetById(targetId);
+        if (!target || !target.is_active) {
+          return { targetId, error: 'Target inactive or missing' };
+        }
+        try {
+          const result = await distributionService.dispatchImmediate(resolvedPostId, targetId, { requestAiAssets, customMessage });
+          return { targetId, result };
+        } catch (error: any) {
+          return { targetId, error: error.message || 'Dispatch failed' };
+        }
+      })
+    );
+
+    res.json({ data: dispatches });
+  } catch (error) {
+    console.error('Immediate dispatch error:', error);
+    res.status(500).json({ error: 'Failed to dispatch targets' });
+  }
+});
+
+// Distribution metrics and queue
+router.get('/distribution/metrics', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || !['admin', 'editor', 'author'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const postId = req.query.postId ? Number(req.query.postId) : undefined;
+    const metrics = await getDistributionMetrics({ postId: postId && !Number.isNaN(postId) ? postId : undefined });
+
+    res.json({ data: metrics });
+  } catch (error) {
+    console.error('Distribution metrics error:', error);
+    res.status(500).json({ error: 'Failed to load distribution metrics' });
+  }
+});
+
+router.get('/distribution/queue', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || !['admin', 'editor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    const queue = await getDistributionQueue(Number.isNaN(limit) ? 50 : limit);
+    res.json({ data: queue });
+  } catch (error) {
+    console.error('Distribution queue error:', error);
+    res.status(500).json({ error: 'Failed to load distribution queue' });
+  }
+});
+
+router.post('/distribution/logs/:id/feedback', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || !['admin', 'editor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const logId = Number(req.params.id);
+    if (Number.isNaN(logId)) {
+      return res.status(400).json({ error: 'Invalid log id' });
+    }
+
+    const feedback = req.body?.feedback ?? req.body;
+    if (!feedback || typeof feedback !== 'object') {
+      return res.status(400).json({ error: 'Feedback payload is required' });
+    }
+
+    const updated = await distributionService.updateFeedback(logId, feedback);
+    if (!updated) {
+      return res.status(404).json({ error: 'Distribution log not found' });
+    }
+
+    res.json({ data: updated });
+  } catch (error) {
+    console.error('Distribution feedback error:', error);
+    res.status(500).json({ error: 'Failed to record feedback' });
+  }
+});
+
+router.post('/distribution/logs/:id/retry', async (req: Request, res: Response) => {
+  try {
+    if (!req.user || !['admin', 'editor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const logId = Number(req.params.id);
+    if (Number.isNaN(logId)) {
+      return res.status(400).json({ error: 'Invalid log id' });
+    }
+
+    const dispatchNow = req.body?.dispatch !== false;
+    const retryLog = await distributionService.resendFromLog(logId, dispatchNow);
+    if (!retryLog) {
+      return res.status(404).json({ error: 'Distribution log not found' });
+    }
+
+    res.json({ data: retryLog });
+  } catch (error) {
+    console.error('Distribution retry error:', error);
+    res.status(500).json({ error: 'Failed to retry distribution' });
+  }
+});
+
+export default router;

@@ -1,21 +1,26 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { 
-  FileText, 
-  Folder, 
-  Eye, 
+import {
+  FileText,
+  Folder,
+  Eye,
   Calendar,
   Plus,
-  ArrowRight
+  ArrowRight,
+  Share2,
+  AlertTriangle,
+  Clock
 } from 'lucide-react';
 import { adminService } from '../../services/admin';
-import { formatDate } from '../../lib/utils';
+import { formatDate, formatRelativeTime } from '../../lib/utils';
 import Button from '../../components/ui/Button';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import { useDistributionMetrics } from '../../hooks/useMetrics';
 
 export default function DashboardPage() {
   // Fetch dashboard stats from backend
   const { data: dashboard, isLoading } = useQuery({ queryKey: ['admin-dashboard'], queryFn: () => adminService.getDashboard() });
+  const { data: distributionMetrics, isLoading: isDistributionLoading } = useDistributionMetrics();
 
   // Calculate stats
   const stats = {
@@ -25,6 +30,13 @@ export default function DashboardPage() {
     totalCategories: dashboard?.totalCategories || 0,
     totalPages: dashboard?.totalPages || 0,
     recentPosts: dashboard?.recentPosts || [],
+  };
+
+  const distribution = distributionMetrics ?? {
+    channelPerformance: [],
+    upcomingSchedules: [],
+    recentDeliveries: [],
+    alerts: [],
   };
 
   const statCards = [
@@ -96,6 +108,7 @@ export default function DashboardPage() {
       external: true
     }
   ];
+
 
   if (isLoading) {
     return (
@@ -260,6 +273,142 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
+          <div className="bg-white rounded-lg shadow">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Share2 className="h-5 w-5 text-primary-600" />
+                <h2 className="text-lg font-medium text-gray-900">Distribution performance</h2>
+              </div>
+              <Button as={Link} to="/admin/distribution-queue" size="sm" variant="outline">
+                View queue
+              </Button>
+            </div>
+            {isDistributionLoading ? (
+              <div className="p-6 flex justify-center"><LoadingSpinner /></div>
+            ) : (
+              <div className="p-6 space-y-6">
+                {distribution.channelPerformance.length === 0 ? (
+                  <p className="text-sm text-gray-500">
+                    Connect publishing targets to start tracking multi-channel distribution analytics.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {distribution.channelPerformance.map((metric) => (
+                      <div key={metric.channel} className="border border-gray-200 rounded-lg p-4">
+                        <p className="text-sm font-semibold text-gray-900 capitalize">{metric.channel}</p>
+                        <div className="mt-3 space-y-2 text-xs text-gray-600">
+                          <div className="flex items-center justify-between">
+                            <span>Sent</span>
+                            <span className="text-green-600 font-medium">{metric.sent}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Queued</span>
+                            <span className="text-yellow-600 font-medium">{metric.queued}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Retrying</span>
+                            <span className="text-blue-600 font-medium">{metric.retrying}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Failed</span>
+                            <span className="text-red-600 font-medium">{metric.failed}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div>
+                  <h3 className="text-sm font-medium text-gray-900 mb-3">Recent deliveries</h3>
+                  {distribution.recentDeliveries.length === 0 ? (
+                    <p className="text-sm text-gray-500">No delivery activity recorded yet.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {distribution.recentDeliveries.slice(0, 5).map((log) => (
+                        <div key={log.id} className="border border-gray-200 rounded-lg p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">{log.post_title}</p>
+                              <p className="text-xs text-gray-500">{log.target_name} · {formatRelativeTime(log.created_at)}</p>
+                            </div>
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                                log.status === 'sent'
+                                  ? 'bg-green-100 text-green-800'
+                                  : log.status === 'failed'
+                                  ? 'bg-red-100 text-red-800'
+                                  : log.status === 'retrying'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-yellow-100 text-yellow-800'
+                              }`}
+                            >
+                              {log.status}
+                            </span>
+                          </div>
+                          {log.error && <p className="text-xs text-red-600 mt-2">{log.error}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="bg-white rounded-lg shadow">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-red-500" />
+              <h2 className="text-lg font-medium text-gray-900">Alerts & retries</h2>
+            </div>
+            <div className="p-6 space-y-4">
+              {isDistributionLoading ? (
+                <div className="flex justify-center"><LoadingSpinner size="sm" /></div>
+              ) : distribution.alerts.length === 0 ? (
+                <p className="text-sm text-gray-500">No delivery alerts. Everything looks good!</p>
+              ) : (
+                distribution.alerts.slice(0, 5).map((alert) => (
+                  <div key={alert.id} className="border border-red-100 rounded-lg p-3 bg-red-50">
+                    <p className="text-sm font-medium text-red-700">{alert.post_title}</p>
+                    <p className="text-xs text-red-600">{alert.target_name} · {formatRelativeTime(alert.updated_at)}</p>
+                    {alert.error && <p className="text-xs text-red-700 mt-2">{alert.error}</p>}
+                    <Link to="/admin/distribution-queue" className="text-xs text-red-700 font-medium mt-2 inline-flex">
+                      Investigate →
+                    </Link>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center gap-2">
+              <Clock className="h-5 w-5 text-primary-600" />
+              <h2 className="text-lg font-medium text-gray-900">Upcoming sends</h2>
+            </div>
+            <div className="p-6 space-y-4">
+              {isDistributionLoading ? (
+                <div className="flex justify-center"><LoadingSpinner size="sm" /></div>
+              ) : distribution.upcomingSchedules.length === 0 ? (
+                <p className="text-sm text-gray-500">No upcoming deliveries scheduled.</p>
+              ) : (
+                distribution.upcomingSchedules.slice(0, 5).map((schedule) => (
+                  <div key={schedule.id} className="border border-gray-200 rounded-lg p-3">
+                    <p className="text-sm font-medium text-gray-900">{schedule.post_title}</p>
+                    <p className="text-xs text-gray-500">{schedule.target_name} · {formatDate(schedule.scheduled_for, 'MMM d, h:mm a')}</p>
+                    <p className="text-xs text-gray-500">{formatRelativeTime(schedule.scheduled_for)}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
-} 
+}

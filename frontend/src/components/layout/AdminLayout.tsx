@@ -12,7 +12,8 @@ import {
   BarChart3,
   Eye,
   Globe,
-  Menu as MenuIcon
+  Menu as MenuIcon,
+  Share2
 } from 'lucide-react';
 import { useAuthStore } from '../../lib/auth';
 import Button from '../ui/Button';
@@ -24,6 +25,7 @@ const navigation = [
   { name: 'Pages', href: '/admin/pages', icon: FileText },
   { name: 'Templates', href: '/admin/templates', icon: FileText },
   { name: 'Media', href: '/admin/media', icon: Image },
+  { name: 'Distribution Queue', href: '/admin/distribution-queue', icon: Share2 },
   { name: 'Domains', href: '/admin/domains', icon: Globe },
   { name: 'Sites', href: '/admin/sites', icon: Globe },
   { name: 'Menus', href: '/admin/menus', icon: MenuIcon },

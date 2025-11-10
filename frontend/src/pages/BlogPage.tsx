@@ -9,6 +9,7 @@ import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
+import { ApiResponse, Post, Category } from '../types';
 
 export default function BlogPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -21,21 +22,28 @@ export default function BlogPage() {
   const limit = 12;
 
   // Fetch posts with filters
-  const { data: postsData, isLoading: postsLoading } = useQuery(
-    ['posts', currentPage, searchTerm, selectedCategory, sortBy, sortOrder],
-    () => postsService.getPosts({
-      page: currentPage,
-      limit,
-      search: searchTerm || undefined,
-      category: selectedCategory || undefined,
-      sort: sortBy,
-      order: sortOrder as 'asc' | 'desc'
-    }),
-    { keepPreviousData: true }
-  );
+  const { data: postsData, isLoading: postsLoading } = useQuery<ApiResponse<Post[]>>({
+    queryKey: ['posts', currentPage, searchTerm, selectedCategory, sortBy, sortOrder],
+    queryFn: () =>
+      postsService.getPosts({
+        page: currentPage,
+        limit,
+        search: searchTerm || undefined,
+        category: selectedCategory || undefined,
+        sort: sortBy,
+        order: sortOrder as 'asc' | 'desc'
+      }),
+  });
 
   // Fetch categories for filter dropdown
-  const { data: categoriesData } = useQuery({ queryKey: ['categories'], queryFn: () => categoriesService.getCategories() });
+  const { data: categoriesData } = useQuery<ApiResponse<Category[]>>({
+    queryKey: ['categories'],
+    queryFn: () => categoriesService.getCategories(),
+  });
+
+
+  const posts = postsData?.posts ?? postsData?.data ?? [];
+  const totalPosts = postsData?.total ?? postsData?.pagination?.totalCount ?? 0;
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,7 +79,7 @@ export default function BlogPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const totalPages = Math.ceil((postsData?.total || postsData?.pagination?.totalCount || 0) / limit);
+  const totalPages = Math.ceil(totalPosts / limit);
 
   // Create options arrays for Select components
   const categoryOptions = [
@@ -157,7 +165,7 @@ export default function BlogPage() {
               {postsLoading ? (
                 'Loading...'
               ) : (
-                `${postsData?.total || 0} article${(postsData?.total || 0) !== 1 ? 's' : ''} found`
+                `${totalPosts} article${totalPosts !== 1 ? 's' : ''} found`
               )}
               {searchTerm && (
                 <span> for "{searchTerm}"</span>
@@ -173,7 +181,7 @@ export default function BlogPage() {
             <div className="flex justify-center py-12">
               <LoadingSpinner size="lg" />
             </div>
-          ) : postsData?.posts?.length === 0 ? (
+          ) : posts.length === 0 ? (
             <div className="text-center py-12">
               <div className="text-gray-400 mb-4">
                 <Search className="h-16 w-16 mx-auto" />
@@ -195,7 +203,7 @@ export default function BlogPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {postsData?.posts?.map((post) => (
+              {posts.map((post: Post) => (
                 <article key={post.id} className="card group hover:shadow-lg transition-shadow">
                   {(post.featured_image || getFirstImageFromHtml(post.content)) && (
                     <div className="aspect-video bg-gray-200 rounded-t-lg overflow-hidden">
@@ -308,4 +316,5 @@ export default function BlogPage() {
       </section>
     </div>
   );
+} 
 } 

@@ -161,6 +161,68 @@ export interface UpdatePageData {
   data?: any;
 }
 
+export interface PublishingTarget {
+  id: number;
+  name: string;
+  channel: string;
+  credentials: Record<string, any>;
+  default_payload: Record<string, any>;
+  is_active: boolean;
+  rate_limit_per_hour?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PublishingSchedule {
+  id: number;
+  post_id: number;
+  target_id: number;
+  scheduled_for: string;
+  status: 'pending' | 'queued' | 'sent' | 'failed' | 'cancelled' | 'retrying';
+  options?: Record<string, any> | null;
+  dispatch_payload?: Record<string, any> | null;
+  dispatched_at?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+  post_title?: string;
+  target_name?: string;
+  target_channel?: string;
+}
+
+export interface DistributionLog {
+  id: number;
+  schedule_id?: number | null;
+  post_id: number;
+  target_id: number;
+  status: 'queued' | 'sent' | 'failed' | 'retrying' | 'cancelled';
+  payload?: Record<string, any> | null;
+  response?: Record<string, any> | null;
+  error?: string | null;
+  feedback?: Record<string, any> | null;
+  retry_count: number;
+  next_retry_at?: string | null;
+  alert_sent: boolean;
+  created_at: string;
+  updated_at: string;
+  post_title?: string;
+  target_name?: string;
+  target_channel?: string;
+}
+
+export interface DistributionMetrics {
+  channelPerformance: Array<{
+    channel: string;
+    sent: number;
+    failed: number;
+    queued: number;
+    retrying: number;
+  }>;
+  upcomingSchedules: PublishingSchedule[];
+  recentDeliveries: DistributionLog[];
+  alerts: DistributionLog[];
+}
+
 export interface QueryParams {
   page?: number;
   limit?: number;
