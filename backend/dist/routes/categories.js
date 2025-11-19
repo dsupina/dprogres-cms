@@ -11,26 +11,67 @@ const slug_1 = require("../utils/slug");
 const router = express_1.default.Router();
 router.get('/', async (req, res) => {
     try {
+        const { page = 1, limit, search, sort = 'name', order = 'asc' } = req.query;
         const domain = req.domain;
         const params = [];
-        let domainFilter = '';
-        let joinCondition = "c.id = p.category_id AND p.status = 'published'";
+        let paramCount = 0;
+        let whereConditions = [];
         if (domain && domain.id) {
-            domainFilter = ' WHERE (c.domain_id = $1 OR c.domain_id IS NULL)';
-            joinCondition += ' AND (p.domain_id = c.domain_id OR p.domain_id IS NULL)';
+            whereConditions.push(`(c.domain_id = $${++paramCount} OR c.domain_id IS NULL)`);
             params.push(domain.id);
         }
-        const categoriesQuery = `
+        if (search) {
+            whereConditions.push(`(c.name ILIKE $${++paramCount} OR c.description ILIKE $${paramCount})`);
+            params.push(`%${search}%`);
+        }
+        const whereClause = whereConditions.length > 0
+            ? `WHERE ${whereConditions.join(' AND ')}`
+            : '';
+        let joinCondition = "c.id = p.category_id AND p.status = 'published'";
+        if (domain && domain.id) {
+            joinCondition += ' AND (p.domain_id = c.domain_id OR p.domain_id IS NULL)';
+        }
+        const validSortFields = ['name', 'post_count', 'created_at'];
+        const sortField = validSortFields.includes(sort) ? sort : 'name';
+        const sortOrder = order === 'desc' ? 'DESC' : 'ASC';
+        let categoriesQuery = `
       SELECT
         c.*,
         COUNT(p.id) as post_count
       FROM categories c
       LEFT JOIN posts p ON ${joinCondition}
-      ${domainFilter}
+      ${whereClause}
       GROUP BY c.id
-      ORDER BY c.name ASC
+      ORDER BY ${sortField === 'post_count' ? 'post_count' : `c.${sortField}`} ${sortOrder}
     `;
+        if (limit) {
+            const offset = (Number(page) - 1) * Number(limit);
+            categoriesQuery += ` LIMIT $${++paramCount} OFFSET $${++paramCount}`;
+            params.push(Number(limit), offset);
+        }
         const result = await (0, database_1.query)(categoriesQuery, params);
+        if (limit) {
+            let countQuery = `
+        SELECT COUNT(DISTINCT c.id) as total
+        FROM categories c
+        ${whereClause}
+      `;
+            const countParams = params.slice(0, params.length - 2);
+            const countResult = await (0, database_1.query)(countQuery, countParams);
+            const totalCount = parseInt(countResult.rows[0].total);
+            const totalPages = Math.ceil(totalCount / Number(limit));
+            return res.json({
+                data: result.rows,
+                pagination: {
+                    page: Number(page),
+                    limit: Number(limit),
+                    totalCount,
+                    totalPages,
+                    hasNextPage: Number(page) < totalPages,
+                    hasPreviousPage: Number(page) > 1
+                }
+            });
+        }
         res.json({ data: result.rows });
     }
     catch (error) {
