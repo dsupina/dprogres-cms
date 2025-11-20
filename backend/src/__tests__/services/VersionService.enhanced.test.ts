@@ -229,7 +229,7 @@ describe('Enhanced VersionService - CV-003', () => {
       expect(result.data?.id).toBe(123);
 
       // Verify site access validation was called
-      expect(mockQuery).toHaveBeenCalledWith(
+      expect(mockPool.query).toHaveBeenCalledWith(
         expect.stringContaining('SELECT 1 FROM sites'),
         [1, 1]
       );
@@ -243,7 +243,7 @@ describe('Enhanced VersionService - CV-003', () => {
 
     it('should respect version limits', async () => {
       // Mock version count at maximum
-      mockQuery
+      mockPool.query
         .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // validateSiteAccess
         .mockResolvedValueOnce({ rows: [{ count: '1000' }] }); // getVersionCount at max
 
@@ -263,10 +263,15 @@ describe('Enhanced VersionService - CV-003', () => {
 
   describe('Enhanced Draft Operations', () => {
     it('should create draft with proper version type', async () => {
-      // Mock all the required queries for draft creation
-      mockQuery
+      // Mock pool queries for validateSiteAccess and getVersionCount
+      mockPool.query
         .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // validateSiteAccess
-        .mockResolvedValueOnce({ rows: [{ count: '5' }] }) // getVersionCount
+        .mockResolvedValueOnce({ rows: [{ count: '5' }] }); // getVersionCount
+
+      // Mock client queries for transaction operations
+      mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // SET TRANSACTION ISOLATION LEVEL
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
         .mockResolvedValueOnce({ rows: [{ version_number: 6 }] }) // get_next_version_number
         .mockResolvedValueOnce({ rows: [] }) // detectChangedFields
         .mockResolvedValueOnce({ // INSERT version
@@ -302,10 +307,15 @@ describe('Enhanced VersionService - CV-003', () => {
 
   describe('Auto-Save Features', () => {
     it('should create auto-save version and trigger pruning', async () => {
-      // Mock successful auto-save creation
-      mockQuery
+      // Mock pool queries for validateSiteAccess and getVersionCount
+      mockPool.query
         .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // validateSiteAccess
-        .mockResolvedValueOnce({ rows: [{ count: '5' }] }) // getVersionCount
+        .mockResolvedValueOnce({ rows: [{ count: '5' }] }); // getVersionCount
+
+      // Mock client queries for transaction operations
+      mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // SET TRANSACTION ISOLATION LEVEL
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
         .mockResolvedValueOnce({ rows: [{ version_number: 6 }] }) // get_next_version_number
         .mockResolvedValueOnce({ rows: [] }) // detectChangedFields
         .mockResolvedValueOnce({ // INSERT version
@@ -320,8 +330,10 @@ describe('Enhanced VersionService - CV-003', () => {
             created_by: 1
           }]
         })
-        .mockResolvedValueOnce({ rows: [] }) // auditVersionOperation
-        .mockResolvedValueOnce({ rows: [], rowCount: 3 }); // pruneOldAutoSaves
+        .mockResolvedValueOnce({ rows: [] }); // auditVersionOperation
+
+      // Mock pruneOldAutoSaves (uses pool.query)
+      mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 3 }); // pruneOldAutoSaves
 
       const input: CreateVersionInput = {
         site_id: 1,
@@ -340,7 +352,7 @@ describe('Enhanced VersionService - CV-003', () => {
       await new Promise(resolve => setTimeout(resolve, 10));
 
       // Verify pruning was called
-      expect(mockQuery).toHaveBeenCalledWith(
+      expect(mockPool.query).toHaveBeenCalledWith(
         expect.stringContaining('DELETE FROM content_versions'),
         expect.arrayContaining([1, 'post', 1])
       );
@@ -349,7 +361,7 @@ describe('Enhanced VersionService - CV-003', () => {
 
   describe('Version Metrics', () => {
     it('should calculate comprehensive metrics', async () => {
-      mockQuery.mockResolvedValueOnce({
+      mockPool.query.mockResolvedValueOnce({
         rows: [{
           total_versions: '25',
           draft_count: '5',
@@ -374,7 +386,7 @@ describe('Enhanced VersionService - CV-003', () => {
     });
 
     it('should use cache for subsequent requests', async () => {
-      mockQuery.mockResolvedValueOnce({
+      mockPool.query.mockResolvedValueOnce({
         rows: [{
           total_versions: '25',
           draft_count: '5',
@@ -395,7 +407,7 @@ describe('Enhanced VersionService - CV-003', () => {
       expect(result2.data).toEqual(result1.data);
 
       // Database should only be called once
-      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(mockPool.query).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -404,10 +416,15 @@ describe('Enhanced VersionService - CV-003', () => {
       const eventHandler = jest.fn();
       versionService.onVersionCreated(eventHandler);
 
-      // Mock successful version creation
-      mockQuery
+      // Mock pool queries for validateSiteAccess and getVersionCount
+      mockPool.query
         .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // validateSiteAccess
-        .mockResolvedValueOnce({ rows: [{ count: '5' }] }) // getVersionCount
+        .mockResolvedValueOnce({ rows: [{ count: '5' }] }); // getVersionCount
+
+      // Mock client queries for transaction operations
+      mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // SET TRANSACTION ISOLATION LEVEL
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
         .mockResolvedValueOnce({ rows: [{ version_number: 6 }] }) // get_next_version_number
         .mockResolvedValueOnce({ rows: [] }) // detectChangedFields
         .mockResolvedValueOnce({ // INSERT version
@@ -444,10 +461,15 @@ describe('Enhanced VersionService - CV-003', () => {
       const anyEventHandler = jest.fn();
       versionService.onAnyVersionEvent(anyEventHandler);
 
-      // Mock successful version creation
-      mockQuery
+      // Mock pool queries for validateSiteAccess and getVersionCount
+      mockPool.query
         .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // validateSiteAccess
-        .mockResolvedValueOnce({ rows: [{ count: '5' }] }) // getVersionCount
+        .mockResolvedValueOnce({ rows: [{ count: '5' }] }); // getVersionCount
+
+      // Mock client queries for transaction operations
+      mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // SET TRANSACTION ISOLATION LEVEL
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
         .mockResolvedValueOnce({ rows: [{ version_number: 6 }] }) // get_next_version_number
         .mockResolvedValueOnce({ rows: [] }) // detectChangedFields
         .mockResolvedValueOnce({
@@ -481,14 +503,14 @@ describe('Enhanced VersionService - CV-003', () => {
 
   describe('Performance Features', () => {
     it('should prune old auto-save versions', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 5 });
+      mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 5 });
 
       const result = await versionService.pruneOldAutoSaves(1, ContentType.POST, 1);
 
       expect(result.success).toBe(true);
       expect(result.data?.deleted_count).toBe(5);
 
-      expect(mockQuery).toHaveBeenCalledWith(
+      expect(mockPool.query).toHaveBeenCalledWith(
         expect.stringContaining('DELETE FROM content_versions'),
         expect.arrayContaining([1, 'post', 1])
       );
@@ -511,7 +533,8 @@ describe('Enhanced VersionService - CV-003', () => {
 
   describe('Error Handling', () => {
     it('should handle database connection errors', async () => {
-      (mockPool.connect as jest.Mock).mockRejectedValueOnce(new Error('Connection failed'));
+      // Mock validateSiteAccess to fail first (before connection attempt)
+      mockPool.query.mockRejectedValueOnce(new Error('Connection failed'));
 
       const input: CreateVersionInput = {
         site_id: 1,
@@ -523,13 +546,19 @@ describe('Enhanced VersionService - CV-003', () => {
       const result = await versionService.createVersion(input, 1);
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Connection failed');
+      expect(result.error).toContain('Failed to validate');
     });
 
     it('should rollback transactions on failure', async () => {
-      mockQuery
+      // Mock pool queries for validateSiteAccess and getVersionCount
+      mockPool.query
         .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // validateSiteAccess
-        .mockResolvedValueOnce({ rows: [{ count: '5' }] }) // getVersionCount
+        .mockResolvedValueOnce({ rows: [{ count: '5' }] }); // getVersionCount
+
+      // Mock client queries - fail on get_next_version_number
+      mockQuery
+        .mockResolvedValueOnce({ rows: [] }) // SET TRANSACTION ISOLATION LEVEL
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
         .mockRejectedValueOnce(new Error('Database error')); // get_next_version_number fails
 
       const input: CreateVersionInput = {
