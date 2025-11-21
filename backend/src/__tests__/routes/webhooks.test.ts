@@ -1,0 +1,424 @@
+import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import request from 'supertest';
+import express from 'express';
+
+// Create mock function instances with explicit 'any' type
+const mockPoolConnect: any = jest.fn();
+const mockPoolQuery: any = jest.fn();
+const mockClientQuery: any = jest.fn();
+const mockClientRelease: any = jest.fn();
+const mockStripeWebhooksConstructEvent: any = jest.fn();
+const mockStripeSubscriptionsRetrieve: any = jest.fn();
+
+// Mock Stripe
+jest.mock('../../config/stripe', () => ({
+  stripe: {
+    webhooks: {
+      constructEvent: mockStripeWebhooksConstructEvent,
+    },
+    subscriptions: {
+      retrieve: mockStripeSubscriptionsRetrieve,
+    },
+  },
+}));
+
+// Mock database
+jest.mock('../../utils/database', () => ({
+  pool: {
+    connect: mockPoolConnect,
+    query: mockPoolQuery,
+  },
+}));
+
+// Import webhook routes after mocks are defined
+import webhooksRoutes from '../../routes/webhooks';
+
+describe('Webhooks - Stripe Event Handler', () => {
+  let app: express.Application;
+
+  beforeEach(() => {
+    // Reset all mocks
+    jest.clearAllMocks();
+
+    // Setup Express app with webhook routes
+    app = express();
+    app.use(express.raw({ type: 'application/json' }));
+    app.use('/webhooks', webhooksRoutes);
+
+    // Setup mock client
+    const mockClient = {
+      query: mockClientQuery,
+      release: mockClientRelease,
+    };
+
+    mockPoolConnect.mockResolvedValue(mockClient);
+  });
+
+  describe('POST /webhooks/stripe', () => {
+    it('should reject webhook without signature header', async () => {
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .send({});
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain('Missing stripe-signature');
+    });
+
+    it('should reject webhook with invalid signature', async () => {
+      mockStripeWebhooksConstructEvent.mockImplementation(() => {
+        throw new Error('Invalid signature');
+      });
+
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .set('stripe-signature', 'invalid_sig')
+        .send({});
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain('Webhook Error');
+    });
+
+    it('should reject duplicate events (idempotency check)', async () => {
+      const mockEvent = {
+        id: 'evt_test123',
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_test123',
+            subscription: 'sub_test123',
+            customer: 'cus_test123',
+            metadata: {
+              organization_id: '1',
+              plan_tier: 'starter',
+              billing_cycle: 'monthly',
+            },
+          },
+        },
+      };
+
+      mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
+
+      // Mock idempotency check - no rows returned (duplicate)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .set('stripe-signature', 'valid_sig')
+        .send(mockEvent);
+
+      expect(response.status).toBe(200);
+      expect(response.body.duplicate).toBe(true);
+      expect(mockClientQuery).not.toHaveBeenCalled();
+    });
+
+    it('should handle checkout.session.completed event', async () => {
+      const mockEvent = {
+        id: 'evt_test123',
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_test123',
+            subscription: 'sub_test123',
+            customer: 'cus_test123',
+            metadata: {
+              organization_id: '1',
+              plan_tier: 'starter',
+              billing_cycle: 'monthly',
+            },
+          },
+        },
+      };
+
+      const mockSubscription = {
+        id: 'sub_test123',
+        status: 'active',
+        current_period_start: 1672531200,
+        current_period_end: 1675209600,
+        cancel_at_period_end: false,
+        items: {
+          data: [
+            {
+              price: {
+                id: 'price_test123',
+                unit_amount: 2900,
+              },
+            },
+          ],
+        },
+      };
+
+      mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
+
+      // Mock idempotency check - event is new
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+
+      // Mock Stripe subscription retrieve
+      mockStripeSubscriptionsRetrieve.mockResolvedValueOnce(mockSubscription);
+
+      // Mock transaction BEGIN
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock INSERT subscription
+      mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+
+      // Mock UPDATE subscription_events
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock COMMIT
+      mockClientQuery.mockResolvedValueOnce({});
+
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .set('stripe-signature', 'valid_sig')
+        .send(mockEvent);
+
+      expect(response.status).toBe(200);
+      expect(response.body.received).toBe(true);
+      expect(mockStripeSubscriptionsRetrieve).toHaveBeenCalledWith('sub_test123');
+    });
+
+    it('should handle customer.subscription.updated event', async () => {
+      const mockEvent = {
+        id: 'evt_test456',
+        type: 'customer.subscription.updated',
+        data: {
+          object: {
+            id: 'sub_test123',
+            status: 'active',
+            current_period_start: 1672531200,
+            current_period_end: 1675209600,
+            cancel_at_period_end: false,
+            canceled_at: null,
+          },
+        },
+      };
+
+      mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
+
+      // Mock idempotency check - event is new
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 2 }] });
+
+      // Mock transaction BEGIN
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock UPDATE subscription
+      mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, organization_id: 1 }] });
+
+      // Mock UPDATE subscription_events
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock COMMIT
+      mockClientQuery.mockResolvedValueOnce({});
+
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .set('stripe-signature', 'valid_sig')
+        .send(mockEvent);
+
+      expect(response.status).toBe(200);
+      expect(response.body.received).toBe(true);
+    });
+
+    it('should handle customer.subscription.deleted event', async () => {
+      const mockEvent = {
+        id: 'evt_test789',
+        type: 'customer.subscription.deleted',
+        data: {
+          object: {
+            id: 'sub_test123',
+            canceled_at: 1672531200,
+          },
+        },
+      };
+
+      mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
+
+      // Mock idempotency check - event is new
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 3 }] });
+
+      // Mock transaction BEGIN
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock UPDATE subscription to canceled
+      mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, organization_id: 1 }] });
+
+      // Mock UPDATE subscription_events
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock COMMIT
+      mockClientQuery.mockResolvedValueOnce({});
+
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .set('stripe-signature', 'valid_sig')
+        .send(mockEvent);
+
+      expect(response.status).toBe(200);
+      expect(response.body.received).toBe(true);
+    });
+
+    it('should handle invoice.payment_succeeded event', async () => {
+      const mockEvent = {
+        id: 'evt_test101',
+        type: 'invoice.payment_succeeded',
+        data: {
+          object: {
+            id: 'in_test123',
+            subscription: 'sub_test123',
+            customer: 'cus_test123',
+            amount_paid: 2900,
+            invoice_pdf: 'https://invoice.pdf',
+            hosted_invoice_url: 'https://invoice.url',
+          },
+        },
+      };
+
+      mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
+
+      // Mock idempotency check - event is new
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 4 }] });
+
+      // Mock transaction BEGIN
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock SELECT subscription
+      mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, organization_id: 1 }] });
+
+      // Mock INSERT invoice
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock UPDATE subscription_events
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock COMMIT
+      mockClientQuery.mockResolvedValueOnce({});
+
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .set('stripe-signature', 'valid_sig')
+        .send(mockEvent);
+
+      expect(response.status).toBe(200);
+      expect(response.body.received).toBe(true);
+    });
+
+    it('should handle invoice.payment_failed event', async () => {
+      const mockEvent = {
+        id: 'evt_test202',
+        type: 'invoice.payment_failed',
+        data: {
+          object: {
+            id: 'in_test456',
+            subscription: 'sub_test123',
+            customer: 'cus_test123',
+            amount_due: 2900,
+            invoice_pdf: 'https://invoice.pdf',
+            hosted_invoice_url: 'https://invoice.url',
+          },
+        },
+      };
+
+      mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
+
+      // Mock idempotency check - event is new
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 5 }] });
+
+      // Mock transaction BEGIN
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock SELECT subscription
+      mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, organization_id: 1 }] });
+
+      // Mock UPDATE subscription to past_due
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock INSERT invoice
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock UPDATE subscription_events
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock COMMIT
+      mockClientQuery.mockResolvedValueOnce({});
+
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .set('stripe-signature', 'valid_sig')
+        .send(mockEvent);
+
+      expect(response.status).toBe(200);
+      expect(response.body.received).toBe(true);
+    });
+
+    it('should handle unknown event types gracefully', async () => {
+      const mockEvent = {
+        id: 'evt_test303',
+        type: 'customer.created',
+        data: {
+          object: {
+            id: 'cus_test123',
+          },
+        },
+      };
+
+      mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
+
+      // Mock idempotency check - event is new
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 6 }] });
+
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .set('stripe-signature', 'valid_sig')
+        .send(mockEvent);
+
+      expect(response.status).toBe(200);
+      expect(response.body.received).toBe(true);
+    });
+
+    it('should log errors but still return 200 OK', async () => {
+      const mockEvent = {
+        id: 'evt_test404',
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_test123',
+            subscription: 'sub_test123',
+            customer: 'cus_test123',
+            metadata: {}, // Missing required metadata
+          },
+        },
+      };
+
+      mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
+
+      // Mock idempotency check - event is new
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 7 }] });
+
+      // Mock Stripe subscription retrieve
+      mockStripeSubscriptionsRetrieve.mockResolvedValueOnce({
+        id: 'sub_test123',
+      });
+
+      // Mock transaction BEGIN
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock will fail due to missing metadata
+      mockClientQuery.mockRejectedValueOnce(new Error('Missing required metadata'));
+
+      // Mock ROLLBACK
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock error logging
+      mockPoolQuery.mockResolvedValueOnce({});
+
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .set('stripe-signature', 'valid_sig')
+        .send(mockEvent);
+
+      // Should still return 200 to prevent Stripe retries
+      expect(response.status).toBe(200);
+      expect(response.body.error).toBeDefined();
+    });
+  });
+});
