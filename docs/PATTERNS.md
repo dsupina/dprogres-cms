@@ -882,3 +882,372 @@ PUT    /api/resources/:id       # Update
 DELETE /api/resources/:id       # Delete
 POST   /api/resources/:id/publish  # Action
 ```
+
+---
+
+## Multi-Tenant Data Isolation Pattern (SF-001)
+
+### Organization Context Middleware
+**Use Case**: Enforce organization-scoped queries automatically
+**Implementation**: Set PostgreSQL session variable per request
+
+```javascript
+// Middleware: Set organization context
+async function setOrganizationContext(req, res, next) {
+  if (!req.user || !req.user.organizationId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  // Set PostgreSQL session variable
+  await db.query(
+    'SET app.current_organization_id = $1',
+    [req.user.organizationId]
+  );
+
+  next();
+}
+
+// Apply to all protected routes
+app.use('/api/*', authenticateToken, setOrganizationContext);
+```
+
+**Benefits**:
+- Row-Level Security (RLS) automatically filters queries
+- No need to add `WHERE organization_id = ?` to every query
+- Defense-in-depth security (database-enforced)
+- Works with raw SQL, ORMs, and query builders
+
+**Row-Level Security Policy**:
+```sql
+CREATE POLICY org_isolation_sites ON sites
+  USING (organization_id = current_setting('app.current_organization_id', true)::int);
+```
+
+---
+
+## Atomic Quota Enforcement Pattern (SF-001)
+
+### Database-Level Quota Checking
+**Use Case**: Prevent quota bypass via race conditions
+**Implementation**: PostgreSQL function with row-level locking
+
+```javascript
+// Service layer
+async function createSite(organizationId, siteData) {
+  // Start transaction
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Check and increment quota atomically
+    const quotaResult = await client.query(
+      'SELECT check_and_increment_quota($1, $2, $3)',
+      [organizationId, 'sites', 1]
+    );
+
+    if (!quotaResult.rows[0].check_and_increment_quota) {
+      await client.query('ROLLBACK');
+      return {
+        success: false,
+        error: 'Site quota exceeded. Please upgrade your plan.',
+        code: 'QUOTA_EXCEEDED'
+      };
+    }
+
+    // Create site
+    const site = await client.query(
+      'INSERT INTO sites (name, organization_id) VALUES ($1, $2) RETURNING *',
+      [siteData.name, organizationId]
+    );
+
+    await client.query('COMMIT');
+    return { success: true, data: site.rows[0] };
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+```
+
+**PostgreSQL Function**:
+```sql
+CREATE FUNCTION check_and_increment_quota(
+  org_id INTEGER,
+  quota_dimension VARCHAR(50),
+  increment_amount BIGINT DEFAULT 1
+) RETURNS BOOLEAN AS $$
+DECLARE
+  current_val BIGINT;
+  limit_val BIGINT;
+BEGIN
+  -- Lock row for update (prevents race conditions)
+  SELECT current_usage, quota_limit INTO current_val, limit_val
+  FROM usage_quotas
+  WHERE organization_id = org_id AND dimension = quota_dimension
+  FOR UPDATE;
+
+  -- Check if within limit
+  IF current_val + increment_amount > limit_val THEN
+    RETURN FALSE;
+  END IF;
+
+  -- Increment usage atomically
+  UPDATE usage_quotas
+  SET current_usage = current_usage + increment_amount,
+      updated_at = NOW()
+  WHERE organization_id = org_id AND dimension = quota_dimension;
+
+  RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+**Key Features**:
+- `SELECT FOR UPDATE` locks the row
+- Atomic check + increment in single transaction
+- Returns boolean for easy handling
+- No race conditions possible
+
+**Error Handling**:
+```javascript
+// Client-side handling
+try {
+  const result = await createSite(orgId, siteData);
+  if (!result.success) {
+    if (result.code === 'QUOTA_EXCEEDED') {
+      // Show upgrade prompt
+      showUpgradeModal();
+    } else {
+      showError(result.error);
+    }
+  }
+} catch (error) {
+  showError('Failed to create site');
+}
+```
+
+---
+
+## RBAC Permission Check Pattern (SF-001)
+
+### Database-Level Permission Validation
+**Use Case**: Fast, consistent permission checking
+**Implementation**: PostgreSQL function with role hierarchy
+
+```javascript
+// Service layer
+async function checkPermission(organizationId, userId, permission) {
+  const result = await db.query(
+    'SELECT user_has_permission($1, $2, $3) AS allowed',
+    [organizationId, userId, permission]
+  );
+
+  return result.rows[0].allowed;
+}
+
+// Middleware
+async function requirePermission(permission) {
+  return async (req, res, next) => {
+    const allowed = await checkPermission(
+      req.user.organizationId,
+      req.user.id,
+      permission
+    );
+
+    if (!allowed) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        requiredPermission: permission
+      });
+    }
+
+    next();
+  };
+}
+
+// Usage
+app.post('/api/sites',
+  authenticateToken,
+  requirePermission('create_sites'),
+  createSite
+);
+```
+
+**PostgreSQL Function**:
+```sql
+CREATE FUNCTION user_has_permission(
+  org_id INTEGER,
+  user_id_param INTEGER,
+  required_permission VARCHAR(50)
+) RETURNS BOOLEAN AS $$
+DECLARE
+  user_role VARCHAR(50);
+BEGIN
+  -- Get user's role
+  SELECT role INTO user_role
+  FROM organization_members
+  WHERE organization_id = org_id AND user_id = user_id_param;
+
+  IF user_role IS NULL THEN
+    RETURN FALSE;
+  END IF;
+
+  -- Permission matrix (hierarchical)
+  CASE required_permission
+    WHEN 'manage_billing' THEN
+      RETURN user_role = 'owner';
+    WHEN 'invite_users' THEN
+      RETURN user_role IN ('owner', 'admin');
+    WHEN 'create_sites' THEN
+      RETURN user_role IN ('owner', 'admin');
+    WHEN 'create_posts' THEN
+      RETURN user_role IN ('owner', 'admin', 'editor');
+    WHEN 'publish_posts' THEN
+      RETURN user_role IN ('owner', 'admin', 'editor', 'publisher');
+    WHEN 'view_posts' THEN
+      RETURN TRUE; -- All roles can view
+    ELSE
+      RETURN FALSE;
+  END CASE;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+**Benefits**:
+- Single source of truth for permissions
+- Fast lookups (<5ms)
+- Hierarchical role model
+- Easy to extend with new permissions
+
+---
+
+## Foreign Key Cascade Pattern (SF-001)
+
+### Smart Cascade Rules for Multi-Tenant Data
+**Use Case**: Automatic cleanup without data loss
+**Implementation**: Different cascade rules per relationship type
+
+```sql
+-- CASCADE: Organization owns this data, delete it
+CREATE TABLE usage_quotas (
+  organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE
+);
+
+-- SET NULL: Keep audit record, remove reference
+CREATE TABLE subscription_events (
+  organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL
+);
+
+-- RESTRICT: Critical reference, prevent deletion
+CREATE TABLE organizations (
+  owner_id INTEGER REFERENCES users(id) ON DELETE RESTRICT
+);
+```
+
+**Decision Matrix**:
+| Data Type | Rule | Rationale |
+|-----------|------|-----------|
+| Quotas | CASCADE | Organization-owned, no value without org |
+| Members | CASCADE | Membership tied to organization |
+| Audit Logs | SET NULL | Keep history, anonymize org reference |
+| Owner | RESTRICT | Must transfer ownership before delete |
+
+**Usage Pattern**:
+```javascript
+// Delete organization
+async function deleteOrganization(organizationId, userId) {
+  try {
+    // Check if user is owner
+    const org = await db.query(
+      'SELECT owner_id FROM organizations WHERE id = $1',
+      [organizationId]
+    );
+
+    if (org.rows[0].owner_id !== userId) {
+      return { success: false, error: 'Only owner can delete organization' };
+    }
+
+    // Delete will CASCADE to quotas, members, etc.
+    // Will SET NULL on audit logs
+    // Will RESTRICT if owner_id referenced elsewhere
+    await db.query('DELETE FROM organizations WHERE id = $1', [organizationId]);
+
+    return { success: true };
+  } catch (error) {
+    if (error.code === '23503') { // Foreign key violation
+      return { success: false, error: 'Cannot delete: referenced by other records' };
+    }
+    throw error;
+  }
+}
+```
+
+---
+
+## Migration Versioning Pattern (SF-001)
+
+### Sequential, Reversible Database Migrations
+**Use Case**: Safe, trackable schema changes
+**Implementation**: Numbered SQL files with rollback
+
+**File Naming Convention**:
+```
+backend/migrations/
+├── 001_create_organizations.sql
+├── 002_create_subscriptions.sql
+├── 003_create_usage_quotas.sql
+├── 004_create_organization_members.sql
+└── 005_add_organization_id_to_content.sql
+```
+
+**Migration Template**:
+```sql
+-- Migration: 001_create_table.sql
+-- Epic: EPIC-003 SaaS Foundation (SF-001)
+-- Purpose: [Description]
+-- Created: [Date]
+
+-- Create table
+CREATE TABLE IF NOT EXISTS table_name (
+  id SERIAL PRIMARY KEY,
+  -- columns...
+);
+
+-- Add indexes
+CREATE INDEX IF NOT EXISTS idx_table_field ON table_name(field);
+
+-- Comments for documentation
+COMMENT ON TABLE table_name IS 'Purpose and usage';
+```
+
+**Rollback Script** (separate file):
+```sql
+-- Rollback: 001_rollback_create_table.sql
+DROP INDEX IF EXISTS idx_table_field;
+DROP TABLE IF EXISTS table_name CASCADE;
+```
+
+**Migration Runner**:
+```bash
+#!/bin/bash
+# run_migrations.sh
+migrations=(
+  "001_create_organizations.sql"
+  "002_create_subscriptions.sql"
+  # ...
+)
+
+for migration in "${migrations[@]}"; do
+  echo "Running: $migration"
+  psql -U postgres -d cms_db -f "$migration" || exit 1
+done
+```
+
+**Benefits**:
+- Sequential execution prevents dependency issues
+- IF NOT EXISTS allows idempotent reruns
+- Rollback scripts enable safe reversions
+- Comments document intent for future developers
