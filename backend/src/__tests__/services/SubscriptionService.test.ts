@@ -236,6 +236,11 @@ describe('SubscriptionService', () => {
 
   describe('getCustomerPortalUrl', () => {
     it('should generate customer portal URL', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ stripe_customer_id: 'cus_test123' }],
       });
@@ -244,37 +249,64 @@ describe('SubscriptionService', () => {
         url: 'https://billing.stripe.com/session/portal_test123',
       });
 
-      const result = await subscriptionService.getCustomerPortalUrl(1, 'http://localhost/return');
+      const result = await subscriptionService.getCustomerPortalUrl(1, 1, 'http://localhost/return');
 
       expect(result.success).toBe(true);
       expect(result.data?.portalUrl).toContain('billing.stripe.com');
     });
 
     it('should return error if no subscription found', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [],
       });
 
-      const result = await subscriptionService.getCustomerPortalUrl(1, 'http://localhost/return');
+      const result = await subscriptionService.getCustomerPortalUrl(1, 1, 'http://localhost/return');
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('No active subscription found');
     });
 
     it('should return error if customer ID missing', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ stripe_customer_id: null }],
       });
 
-      const result = await subscriptionService.getCustomerPortalUrl(1, 'http://localhost/return');
+      const result = await subscriptionService.getCustomerPortalUrl(1, 1, 'http://localhost/return');
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('No active subscription found');
+    });
+
+    it('should return error if user is not organization owner', async () => {
+      // Mock organization ownership check - user 2 is not owner (owner is user 1)
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      const result = await subscriptionService.getCustomerPortalUrl(1, 2, 'http://localhost/return');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('owner');
     });
   });
 
   describe('cancelSubscription', () => {
     it('should cancel subscription at period end', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ stripe_subscription_id: 'sub_test123' }],
       });
@@ -289,7 +321,7 @@ describe('SubscriptionService', () => {
         rows: [{ id: 1, cancel_at_period_end: true, status: 'active' }],
       });
 
-      const result = await subscriptionService.cancelSubscription(1, true);
+      const result = await subscriptionService.cancelSubscription(1, 1, true);
 
       expect(result.success).toBe(true);
       expect(result.data?.cancel_at_period_end).toBe(true);
@@ -299,6 +331,11 @@ describe('SubscriptionService', () => {
     });
 
     it('should cancel subscription immediately when specified', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ stripe_subscription_id: 'sub_test123' }],
       });
@@ -312,26 +349,48 @@ describe('SubscriptionService', () => {
         rows: [{ id: 1, status: 'canceled' }],
       });
 
-      const result = await subscriptionService.cancelSubscription(1, false);
+      const result = await subscriptionService.cancelSubscription(1, 1, false);
 
       expect(result.success).toBe(true);
       expect(mockStripeSubscriptionsCancel).toHaveBeenCalledWith('sub_test123');
     });
 
     it('should return error if no subscription found', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [],
       });
 
-      const result = await subscriptionService.cancelSubscription(1);
+      const result = await subscriptionService.cancelSubscription(1, 1);
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('No subscription found');
+    });
+
+    it('should return error if user is not organization owner', async () => {
+      // Mock organization ownership check - user 2 is not owner (owner is user 1)
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      const result = await subscriptionService.cancelSubscription(1, 2);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('owner');
     });
   });
 
   describe('upgradeSubscription', () => {
     it('should upgrade subscription from starter to pro', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ stripe_subscription_id: 'sub_test123', plan_tier: 'starter' }],
       });
@@ -351,35 +410,50 @@ describe('SubscriptionService', () => {
         rows: [{ id: 1, plan_tier: 'pro', billing_cycle: 'monthly' }],
       });
 
-      const result = await subscriptionService.upgradeSubscription(1, 'pro', 'monthly');
+      const result = await subscriptionService.upgradeSubscription(1, 1, 'pro', 'monthly');
 
       expect(result.success).toBe(true);
       expect(result.data?.plan_tier).toBe('pro');
     });
 
     it('should return error when attempting to downgrade with upgrade method', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ stripe_subscription_id: 'sub_test123', plan_tier: 'pro' }],
       });
 
-      const result = await subscriptionService.upgradeSubscription(1, 'starter', 'monthly');
+      const result = await subscriptionService.upgradeSubscription(1, 1, 'starter', 'monthly');
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Cannot downgrade');
     });
 
     it('should return error if no subscription found', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [],
       });
 
-      const result = await subscriptionService.upgradeSubscription(1, 'pro', 'monthly');
+      const result = await subscriptionService.upgradeSubscription(1, 1, 'pro', 'monthly');
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('No subscription found');
     });
 
     it('should use proration when upgrading', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ stripe_subscription_id: 'sub_test123', plan_tier: 'starter' }],
       });
@@ -399,7 +473,7 @@ describe('SubscriptionService', () => {
         rows: [{ id: 1, plan_tier: 'pro' }],
       });
 
-      await subscriptionService.upgradeSubscription(1, 'pro', 'monthly');
+      await subscriptionService.upgradeSubscription(1, 1, 'pro', 'monthly');
 
       expect(mockStripeSubscriptionsUpdate).toHaveBeenCalledWith(
         'sub_test123',
@@ -407,6 +481,18 @@ describe('SubscriptionService', () => {
           proration_behavior: 'always_invoice',
         })
       );
+    });
+
+    it('should return error if user is not organization owner', async () => {
+      // Mock organization ownership check - user 2 is not owner (owner is user 1)
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      const result = await subscriptionService.upgradeSubscription(1, 2, 'pro', 'monthly');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('owner');
     });
   });
 });

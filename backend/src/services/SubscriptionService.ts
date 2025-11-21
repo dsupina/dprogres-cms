@@ -38,6 +38,34 @@ export interface CreateCheckoutSessionResponse {
 
 export class SubscriptionService extends EventEmitter {
   /**
+   * Verify user is organization owner (private helper)
+   */
+  private async verifyOrganizationOwner(
+    organizationId: number,
+    userId: number
+  ): Promise<ServiceResponse<{ name: string; slug: string }>> {
+    const { rows: orgs } = await pool.query(
+      'SELECT id, name, slug, owner_id FROM organizations WHERE id = $1',
+      [organizationId]
+    );
+
+    if (orgs.length === 0) {
+      return { success: false, error: 'Organization not found' };
+    }
+
+    const organization = orgs[0];
+
+    if (organization.owner_id !== userId) {
+      return { success: false, error: 'Only organization owner can manage billing' };
+    }
+
+    return {
+      success: true,
+      data: { name: organization.name, slug: organization.slug },
+    };
+  }
+
+  /**
    * Create Stripe Checkout session for new subscription
    */
   async createCheckoutSession(
@@ -46,29 +74,24 @@ export class SubscriptionService extends EventEmitter {
     try {
       const { organizationId, planTier, billingCycle, userId, successUrl, cancelUrl, trialDays } = input;
 
-      // Get organization details
-      const { rows: orgs } = await pool.query(
-        'SELECT id, name, slug, owner_id FROM organizations WHERE id = $1',
-        [organizationId]
-      );
-
-      if (orgs.length === 0) {
-        return { success: false, error: 'Organization not found' };
-      }
-
-      const organization = orgs[0];
-
       // Verify user is organization owner
-      if (organization.owner_id !== userId) {
-        return { success: false, error: 'Only organization owner can manage billing' };
+      const ownerCheck = await this.verifyOrganizationOwner(organizationId, userId);
+      if (!ownerCheck.success) {
+        return { success: false, error: ownerCheck.error };
       }
+
+      const organization = ownerCheck.data!;
 
       // Get Stripe price ID
       const priceId = getStripePriceId(planTier, billingCycle);
 
-      // Create or get Stripe customer
+      // Create or get Stripe customer - filter for non-null and get latest
       const { rows: existingSubs } = await pool.query(
-        'SELECT stripe_customer_id FROM subscriptions WHERE organization_id = $1',
+        `SELECT stripe_customer_id FROM subscriptions
+         WHERE organization_id = $1
+         AND stripe_customer_id IS NOT NULL
+         ORDER BY created_at DESC
+         LIMIT 1`,
         [organizationId]
       );
 
@@ -174,9 +197,16 @@ export class SubscriptionService extends EventEmitter {
    */
   async getCustomerPortalUrl(
     organizationId: number,
+    userId: number,
     returnUrl: string
   ): Promise<ServiceResponse<{ portalUrl: string }>> {
     try {
+      // Verify user is organization owner
+      const ownerCheck = await this.verifyOrganizationOwner(organizationId, userId);
+      if (!ownerCheck.success) {
+        return { success: false, error: ownerCheck.error };
+      }
+
       // Get subscription with customer ID
       const { rows } = await pool.query(
         `SELECT stripe_customer_id FROM subscriptions
@@ -217,9 +247,16 @@ export class SubscriptionService extends EventEmitter {
    */
   async cancelSubscription(
     organizationId: number,
+    userId: number,
     cancelAtPeriodEnd: boolean = true
   ): Promise<ServiceResponse<Subscription>> {
     try {
+      // Verify user is organization owner
+      const ownerCheck = await this.verifyOrganizationOwner(organizationId, userId);
+      if (!ownerCheck.success) {
+        return { success: false, error: ownerCheck.error };
+      }
+
       // Get active subscription
       const { rows } = await pool.query(
         `SELECT stripe_subscription_id FROM subscriptions
@@ -288,10 +325,17 @@ export class SubscriptionService extends EventEmitter {
    */
   async upgradeSubscription(
     organizationId: number,
+    userId: number,
     newTier: 'starter' | 'pro',
     newBillingCycle: 'monthly' | 'annual'
   ): Promise<ServiceResponse<Subscription>> {
     try {
+      // Verify user is organization owner
+      const ownerCheck = await this.verifyOrganizationOwner(organizationId, userId);
+      if (!ownerCheck.success) {
+        return { success: false, error: ownerCheck.error };
+      }
+
       // Get current active subscription
       const { rows } = await pool.query(
         `SELECT stripe_subscription_id, plan_tier FROM subscriptions
