@@ -87,7 +87,7 @@ router.get('/', auth_1.authenticateToken, auth_1.requireAuthor, async (req, res)
         const totalCount = parseInt(countResult.rows[0].count);
         const totalPages = Math.ceil(totalCount / Number(limit));
         res.json({
-            data: mediaFiles,
+            mediaFiles: mediaFiles,
             pagination: {
                 page: Number(page),
                 limit: Number(limit),
@@ -267,7 +267,10 @@ router.get('/:id', auth_1.authenticateToken, auth_1.requireAuthor, async (req, r
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Media file not found' });
         }
-        res.json({ mediaFile: result.rows[0] });
+        res.json({
+            mediaFile: result.rows[0],
+            data: result.rows[0]
+        });
     }
     catch (error) {
         console.error('Get media file error:', error);
