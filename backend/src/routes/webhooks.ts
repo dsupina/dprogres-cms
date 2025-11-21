@@ -424,20 +424,29 @@ async function handleInvoicePaid(
     await client.query(
       `INSERT INTO invoices (
         organization_id, subscription_id, stripe_invoice_id,
-        stripe_customer_id, amount_cents, status, invoice_pdf_url, hosted_invoice_url
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        amount_cents, amount_paid_cents, currency, status,
+        invoice_pdf_url, hosted_invoice_url, billing_reason,
+        period_start, period_end, paid_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (stripe_invoice_id) DO UPDATE
       SET status = EXCLUDED.status,
+          amount_paid_cents = EXCLUDED.amount_paid_cents,
+          paid_at = EXCLUDED.paid_at,
           updated_at = NOW()`,
       [
         organizationId,
         dbSubscriptionId,
         invoice.id,
-        invoice.customer,
+        invoice.amount_due,
         invoice.amount_paid,
+        invoice.currency || 'usd',
         'paid',
         invoice.invoice_pdf,
         invoice.hosted_invoice_url,
+        invoice.billing_reason,
+        invoice.period_start ? new Date(invoice.period_start * 1000) : new Date(),
+        invoice.period_end ? new Date(invoice.period_end * 1000) : new Date(),
+        new Date(),
       ]
     );
 
@@ -511,8 +520,10 @@ async function handleInvoiceFailed(
     await client.query(
       `INSERT INTO invoices (
         organization_id, subscription_id, stripe_invoice_id,
-        stripe_customer_id, amount_cents, status, invoice_pdf_url, hosted_invoice_url
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        amount_cents, amount_paid_cents, currency, status,
+        invoice_pdf_url, hosted_invoice_url, billing_reason,
+        period_start, period_end
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       ON CONFLICT (stripe_invoice_id) DO UPDATE
       SET status = EXCLUDED.status,
           updated_at = NOW()`,
@@ -520,11 +531,15 @@ async function handleInvoiceFailed(
         organizationId,
         dbSubscriptionId,
         invoice.id,
-        invoice.customer,
         invoice.amount_due,
-        'failed',
+        invoice.amount_paid || 0,
+        invoice.currency || 'usd',
+        'open',
         invoice.invoice_pdf,
         invoice.hosted_invoice_url,
+        invoice.billing_reason,
+        invoice.period_start ? new Date(invoice.period_start * 1000) : new Date(),
+        invoice.period_end ? new Date(invoice.period_end * 1000) : new Date(),
       ]
     );
 
