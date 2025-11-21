@@ -286,10 +286,38 @@ CREATE FUNCTION check_and_increment_quota(
 
 ### Subscription Management
 
-#### Stripe Integration
+#### Stripe Integration (SF-002)
+**Status**: ✅ Completed (January 2025)
+
+**Configuration**:
 - **Payment Provider**: Stripe Checkout + Customer Portal
-- **Webhook Events**: subscription.created, invoice.paid, payment_method.attached
+- **API Version**: 2025-11-17.clover (latest Clover release)
+- **Configuration Location**: `backend/src/config/stripe.ts`
+- **Webhook Events**: subscription.created, subscription.updated, subscription.deleted, invoice.payment_succeeded, invoice.payment_failed, invoice.finalized, payment_method.attached, payment_method.detached, customer.updated
 - **Idempotency**: Unique `stripe_event_id` prevents duplicate processing
+
+**Pricing Tiers**:
+- **Free**: $0/mo (1 site, 20 posts, 500MB, no Stripe price needed)
+- **Starter**: $29/mo or $290/yr (3 sites, 100 posts, 5GB, save 16.7% annually)
+- **Pro**: $99/mo or $990/yr (10 sites, 1000 posts, 50GB, save 16.7% annually)
+- **Enterprise**: Custom pricing (unlimited resources)
+
+**Environment-Based Configuration**:
+```typescript
+// Automatically selects test vs production keys based on NODE_ENV
+const stripe = new Stripe(
+  process.env.NODE_ENV === 'production'
+    ? process.env.STRIPE_SECRET_KEY_LIVE
+    : process.env.STRIPE_SECRET_KEY_TEST,
+  { apiVersion: '2025-11-17.clover' }
+);
+```
+
+**Price ID Helper**:
+```typescript
+// Retrieves correct price ID for tier and billing cycle
+getStripePriceId('starter', 'monthly') // Returns test or prod price ID
+```
 
 #### Subscription Lifecycle
 ```
