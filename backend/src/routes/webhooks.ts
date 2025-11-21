@@ -43,25 +43,64 @@ router.post('/stripe', async (req: Request, res: Response) => {
   }
 
   try {
-    // Idempotency check: Try to insert event into subscription_events
+    // Idempotency check: Insert event with processed_at = NULL (not processed yet)
     const { rows } = await pool.query(
-      `INSERT INTO subscription_events (stripe_event_id, event_type, data)
-       VALUES ($1, $2, $3)
+      `INSERT INTO subscription_events (stripe_event_id, event_type, data, processed_at)
+       VALUES ($1, $2, $3, NULL)
        ON CONFLICT (stripe_event_id) DO NOTHING
        RETURNING id`,
       [event.id, event.type, JSON.stringify(event.data)]
     );
 
-    // If no rows returned, event was already processed
+    // If no rows returned, event was already inserted (check if it was processed)
     if (rows.length === 0) {
-      console.log(`Event ${event.id} already processed, skipping`);
-      return res.status(200).json({ received: true, duplicate: true });
+      const { rows: existingRows } = await pool.query(
+        `SELECT processed_at FROM subscription_events WHERE stripe_event_id = $1`,
+        [event.id]
+      );
+
+      if (existingRows.length > 0 && existingRows[0].processed_at) {
+        console.log(`Event ${event.id} already processed, skipping`);
+        return res.status(200).json({ received: true, duplicate: true });
+      }
+
+      // Event exists but wasn't processed (previous failure), retry processing
+      console.log(`Event ${event.id} exists but not processed, retrying`);
+      const { rows: retryRows } = await pool.query(
+        `SELECT id FROM subscription_events WHERE stripe_event_id = $1`,
+        [event.id]
+      );
+
+      if (retryRows.length === 0) {
+        throw new Error('Event record not found for retry');
+      }
+
+      const eventRecordId = retryRows[0].id;
+      await handleWebhookEvent(event, eventRecordId);
+
+      // Mark as successfully processed
+      await pool.query(
+        `UPDATE subscription_events
+         SET processed_at = NOW()
+         WHERE id = $1`,
+        [eventRecordId]
+      );
+
+      return res.status(200).json({ received: true, retried: true });
     }
 
     const eventRecordId = rows[0].id;
 
     // Route event to appropriate handler
     await handleWebhookEvent(event, eventRecordId);
+
+    // Mark as successfully processed
+    await pool.query(
+      `UPDATE subscription_events
+       SET processed_at = NOW()
+       WHERE id = $1`,
+      [eventRecordId]
+    );
 
     // Return 200 OK to acknowledge receipt
     return res.status(200).json({ received: true });
@@ -193,8 +232,8 @@ async function handleCheckoutCompleted(
 }
 
 /**
- * Handle customer.subscription.updated event
- * Updates subscription status and details
+ * Handle customer.subscription.created/updated events
+ * Creates or updates subscription record in database
  */
 async function handleSubscriptionUpdated(
   subscription: Stripe.Subscription,
@@ -205,26 +244,81 @@ async function handleSubscriptionUpdated(
   try {
     await client.query('BEGIN');
 
-    // Update subscription record
-    const { rows } = await client.query(
-      `UPDATE subscriptions
-       SET status = $1,
-           current_period_start = $2,
-           current_period_end = $3,
-           cancel_at_period_end = $4,
-           canceled_at = $5,
-           updated_at = NOW()
-       WHERE stripe_subscription_id = $6
-       RETURNING id, organization_id`,
-      [
-        subscription.status,
-        new Date((subscription as any).current_period_start * 1000),
-        new Date((subscription as any).current_period_end * 1000),
-        (subscription as any).cancel_at_period_end,
-        (subscription as any).canceled_at ? new Date((subscription as any).canceled_at * 1000) : null,
-        subscription.id,
-      ]
-    );
+    // Extract metadata for new subscriptions (may not exist for updates)
+    const organizationId = parseInt((subscription as any).metadata?.organization_id || '0');
+    const planTier = (subscription as any).metadata?.plan_tier as 'free' | 'starter' | 'pro' | 'enterprise' | undefined;
+    const billingCycle = (subscription as any).metadata?.billing_cycle as 'monthly' | 'annual' | undefined;
+
+    let rows;
+
+    // If we have full metadata, use UPSERT (handles both created and updated)
+    if (organizationId && planTier && billingCycle) {
+      const result = await client.query(
+        `INSERT INTO subscriptions (
+          organization_id, stripe_customer_id, stripe_subscription_id,
+          stripe_price_id, plan_tier, billing_cycle, status,
+          current_period_start, current_period_end, cancel_at_period_end,
+          canceled_at, amount_cents
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT (stripe_subscription_id) DO UPDATE
+        SET status = EXCLUDED.status,
+            current_period_start = EXCLUDED.current_period_start,
+            current_period_end = EXCLUDED.current_period_end,
+            cancel_at_period_end = EXCLUDED.cancel_at_period_end,
+            canceled_at = EXCLUDED.canceled_at,
+            amount_cents = EXCLUDED.amount_cents,
+            updated_at = NOW()
+        RETURNING id, organization_id`,
+        [
+          organizationId,
+          subscription.customer,
+          subscription.id,
+          subscription.items.data[0].price.id,
+          planTier,
+          billingCycle,
+          subscription.status,
+          new Date((subscription as any).current_period_start * 1000),
+          new Date((subscription as any).current_period_end * 1000),
+          (subscription as any).cancel_at_period_end,
+          (subscription as any).canceled_at ? new Date((subscription as any).canceled_at * 1000) : null,
+          subscription.items.data[0].price.unit_amount || 0,
+        ]
+      );
+      rows = result.rows;
+      console.log(`Subscription upserted: ${subscription.id}, status: ${subscription.status}`);
+    } else {
+      // Missing metadata, try UPDATE only (assumes row exists from checkout.session.completed)
+      const result = await client.query(
+        `UPDATE subscriptions
+         SET status = $1,
+             current_period_start = $2,
+             current_period_end = $3,
+             cancel_at_period_end = $4,
+             canceled_at = $5,
+             updated_at = NOW()
+         WHERE stripe_subscription_id = $6
+         RETURNING id, organization_id`,
+        [
+          subscription.status,
+          new Date((subscription as any).current_period_start * 1000),
+          new Date((subscription as any).current_period_end * 1000),
+          (subscription as any).cancel_at_period_end,
+          (subscription as any).canceled_at ? new Date((subscription as any).canceled_at * 1000) : null,
+          subscription.id,
+        ]
+      );
+      rows = result.rows;
+
+      if (rows.length === 0) {
+        console.warn(
+          `Subscription ${subscription.id} not found and missing metadata for creation. ` +
+          `Ensure checkout.session.completed event is processed first or subscription has metadata.`
+        );
+        throw new Error(`Cannot create subscription ${subscription.id} without metadata`);
+      }
+
+      console.log(`Subscription updated: ${subscription.id}, status: ${subscription.status}`);
+    }
 
     if (rows.length > 0) {
       // Link event to subscription and organization
@@ -237,8 +331,6 @@ async function handleSubscriptionUpdated(
     }
 
     await client.query('COMMIT');
-
-    console.log(`Subscription updated: ${subscription.id}, status: ${subscription.status}`);
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

@@ -101,6 +101,9 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock idempotency check - no rows returned (duplicate)
       mockPoolQuery.mockResolvedValueOnce({ rows: [] });
 
+      // Mock check for processed_at - event was processed
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ processed_at: new Date() }] });
+
       const response = await request(app)
         .post('/webhooks/stripe')
         .set('stripe-signature', 'valid_sig')
@@ -109,6 +112,81 @@ describe('Webhooks - Stripe Event Handler', () => {
       expect(response.status).toBe(200);
       expect(response.body.duplicate).toBe(true);
       expect(mockClientQuery).not.toHaveBeenCalled();
+    });
+
+    it('should retry events that failed previously (processed_at = NULL)', async () => {
+      const mockEvent = {
+        id: 'evt_test_retry',
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_test456',
+            subscription: 'sub_test456',
+            customer: 'cus_test456',
+            metadata: {
+              organization_id: '1',
+              plan_tier: 'starter',
+              billing_cycle: 'monthly',
+            },
+          },
+        },
+      };
+
+      const mockSubscription = {
+        id: 'sub_test456',
+        status: 'active',
+        current_period_start: 1672531200,
+        current_period_end: 1675209600,
+        cancel_at_period_end: false,
+        items: {
+          data: [
+            {
+              price: {
+                id: 'price_test456',
+                unit_amount: 2900,
+              },
+            },
+          ],
+        },
+      };
+
+      mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
+
+      // Mock idempotency check - no rows returned (duplicate event ID)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock check for processed_at - event exists but not processed (NULL)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ processed_at: null }] });
+
+      // Mock get event record ID for retry
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 10 }] });
+
+      // Mock Stripe subscription retrieve
+      mockStripeSubscriptionsRetrieve.mockResolvedValueOnce(mockSubscription);
+
+      // Mock transaction BEGIN
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock INSERT subscription
+      mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+
+      // Mock UPDATE subscription_events
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock COMMIT
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock final UPDATE to set processed_at
+      mockPoolQuery.mockResolvedValueOnce({});
+
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .set('stripe-signature', 'valid_sig')
+        .send(mockEvent);
+
+      expect(response.status).toBe(200);
+      expect(response.body.retried).toBe(true);
+      expect(mockStripeSubscriptionsRetrieve).toHaveBeenCalledWith('sub_test456');
     });
 
     it('should handle checkout.session.completed event', async () => {
@@ -167,6 +245,9 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock COMMIT
       mockClientQuery.mockResolvedValueOnce({});
 
+      // Mock final UPDATE to set processed_at
+      mockPoolQuery.mockResolvedValueOnce({});
+
       const response = await request(app)
         .post('/webhooks/stripe')
         .set('stripe-signature', 'valid_sig')
@@ -175,6 +256,67 @@ describe('Webhooks - Stripe Event Handler', () => {
       expect(response.status).toBe(200);
       expect(response.body.received).toBe(true);
       expect(mockStripeSubscriptionsRetrieve).toHaveBeenCalledWith('sub_test123');
+    });
+
+    it('should handle customer.subscription.created event with metadata', async () => {
+      const mockEvent = {
+        id: 'evt_test_created',
+        type: 'customer.subscription.created',
+        data: {
+          object: {
+            id: 'sub_test_new',
+            customer: 'cus_test123',
+            status: 'active',
+            current_period_start: 1672531200,
+            current_period_end: 1675209600,
+            cancel_at_period_end: false,
+            canceled_at: null,
+            metadata: {
+              organization_id: '1',
+              plan_tier: 'pro',
+              billing_cycle: 'annual',
+            },
+            items: {
+              data: [
+                {
+                  price: {
+                    id: 'price_test_annual',
+                    unit_amount: 9900,
+                  },
+                },
+              ],
+            },
+          },
+        },
+      };
+
+      mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
+
+      // Mock idempotency check - event is new
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 2 }] });
+
+      // Mock transaction BEGIN
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock INSERT subscription (UPSERT)
+      mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, organization_id: 1 }] });
+
+      // Mock UPDATE subscription_events
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock COMMIT
+      mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock final UPDATE to set processed_at
+      mockPoolQuery.mockResolvedValueOnce({});
+
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .set('stripe-signature', 'valid_sig')
+        .send(mockEvent);
+
+      expect(response.status).toBe(200);
+      expect(response.body.received).toBe(true);
     });
 
     it('should handle customer.subscription.updated event', async () => {
@@ -189,6 +331,16 @@ describe('Webhooks - Stripe Event Handler', () => {
             current_period_end: 1675209600,
             cancel_at_period_end: false,
             canceled_at: null,
+            items: {
+              data: [
+                {
+                  price: {
+                    id: 'price_test123',
+                    unit_amount: 2900,
+                  },
+                },
+              ],
+            },
           },
         },
       };
@@ -209,6 +361,9 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       // Mock COMMIT
       mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock final UPDATE to set processed_at
+      mockPoolQuery.mockResolvedValueOnce({});
 
       const response = await request(app)
         .post('/webhooks/stripe')
@@ -247,6 +402,9 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       // Mock COMMIT
       mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock final UPDATE to set processed_at
+      mockPoolQuery.mockResolvedValueOnce({});
 
       const response = await request(app)
         .post('/webhooks/stripe')
@@ -292,6 +450,9 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       // Mock COMMIT
       mockClientQuery.mockResolvedValueOnce({});
+
+      // Mock final UPDATE to set processed_at
+      mockPoolQuery.mockResolvedValueOnce({});
 
       const response = await request(app)
         .post('/webhooks/stripe')
@@ -341,6 +502,9 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock COMMIT
       mockClientQuery.mockResolvedValueOnce({});
 
+      // Mock final UPDATE to set processed_at
+      mockPoolQuery.mockResolvedValueOnce({});
+
       const response = await request(app)
         .post('/webhooks/stripe')
         .set('stripe-signature', 'valid_sig')
@@ -365,6 +529,9 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       // Mock idempotency check - event is new
       mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 6 }] });
+
+      // Mock final UPDATE to set processed_at
+      mockPoolQuery.mockResolvedValueOnce({});
 
       const response = await request(app)
         .post('/webhooks/stripe')
