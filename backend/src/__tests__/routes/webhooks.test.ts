@@ -101,8 +101,8 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock idempotency check - no rows returned (duplicate)
       mockPoolQuery.mockResolvedValueOnce({ rows: [] });
 
-      // Mock check for processed_at - event was processed
-      mockPoolQuery.mockResolvedValueOnce({ rows: [{ processed_at: new Date() }] });
+      // Mock SELECT FOR UPDATE SKIP LOCKED - event was already processed
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 1, processed_at: new Date() }] });
 
       const response = await request(app)
         .post('/webhooks/stripe')
@@ -111,6 +111,42 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       expect(response.status).toBe(200);
       expect(response.body.duplicate).toBe(true);
+      expect(mockClientQuery).not.toHaveBeenCalled();
+    });
+
+    it('should skip events being processed concurrently (SKIP LOCKED)', async () => {
+      const mockEvent = {
+        id: 'evt_concurrent',
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_concurrent',
+            subscription: 'sub_concurrent',
+            customer: 'cus_concurrent',
+            metadata: {
+              organization_id: '1',
+              plan_tier: 'starter',
+              billing_cycle: 'monthly',
+            },
+          },
+        },
+      };
+
+      mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
+
+      // Mock idempotency check - no rows returned (duplicate event ID)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock SELECT FOR UPDATE SKIP LOCKED - returns no rows (locked by another process)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      const response = await request(app)
+        .post('/webhooks/stripe')
+        .set('stripe-signature', 'valid_sig')
+        .send(mockEvent);
+
+      expect(response.status).toBe(200);
+      expect(response.body.concurrent).toBe(true);
       expect(mockClientQuery).not.toHaveBeenCalled();
     });
 
@@ -155,11 +191,8 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock idempotency check - no rows returned (duplicate event ID)
       mockPoolQuery.mockResolvedValueOnce({ rows: [] });
 
-      // Mock check for processed_at - event exists but not processed (NULL)
-      mockPoolQuery.mockResolvedValueOnce({ rows: [{ processed_at: null }] });
-
-      // Mock get event record ID for retry
-      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 10 }] });
+      // Mock SELECT FOR UPDATE SKIP LOCKED - returns row with processed_at = NULL
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 10, processed_at: null }] });
 
       // Mock Stripe subscription retrieve
       mockStripeSubscriptionsRetrieve.mockResolvedValueOnce(mockSubscription);

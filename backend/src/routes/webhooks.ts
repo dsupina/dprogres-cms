@@ -51,28 +51,33 @@ router.post('/stripe', async (req: Request, res: Response) => {
 
     // If no rows returned, event was already inserted (check if it was processed)
     if (rows.length === 0) {
+      // Use SELECT FOR UPDATE to prevent concurrent processing of the same event
       const { rows: existingRows } = await pool.query(
-        `SELECT processed_at FROM subscription_events WHERE stripe_event_id = $1`,
+        `SELECT id, processed_at FROM subscription_events
+         WHERE stripe_event_id = $1
+         FOR UPDATE SKIP LOCKED`,
         [event.id]
       );
 
-      if (existingRows.length > 0 && existingRows[0].processed_at) {
+      // If SKIP LOCKED returned no rows, another process is currently handling this event
+      if (existingRows.length === 0) {
+        console.log(`Event ${event.id} is being processed by another request, skipping`);
+        return res.status(200).json({ received: true, concurrent: true });
+      }
+
+      const existingEvent = existingRows[0];
+
+      // Check if already processed
+      if (existingEvent.processed_at) {
         console.log(`Event ${event.id} already processed, skipping`);
         return res.status(200).json({ received: true, duplicate: true });
       }
 
       // Event exists but wasn't processed (previous failure), retry processing
+      // We now hold the row lock, preventing concurrent processing
       console.log(`Event ${event.id} exists but not processed, retrying`);
-      const { rows: retryRows } = await pool.query(
-        `SELECT id FROM subscription_events WHERE stripe_event_id = $1`,
-        [event.id]
-      );
+      const eventRecordId = existingEvent.id;
 
-      if (retryRows.length === 0) {
-        throw new Error('Event record not found for retry');
-      }
-
-      const eventRecordId = retryRows[0].id;
       await handleWebhookEvent(event, eventRecordId);
 
       // Mark as successfully processed
