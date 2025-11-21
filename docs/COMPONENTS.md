@@ -357,6 +357,85 @@ domainService.getDomainsBysite(siteId)
 
 ---
 
+#### Subscription Service (SF-003)
+**Purpose**: Comprehensive subscription management and Stripe integration
+**Location**: `backend/src/services/SubscriptionService.ts`
+**Status**: ✅ Completed (January 2025)
+
+```typescript
+// Usage Example
+import { subscriptionService } from '../services/SubscriptionService';
+
+// Create checkout session for new subscription
+const checkout = await subscriptionService.createCheckoutSession({
+  organizationId: 1,
+  planTier: 'pro',
+  billingCycle: 'monthly',
+  userId: 1,
+  successUrl: 'https://app.example.com/success',
+  cancelUrl: 'https://app.example.com/cancel',
+  trialDays: 14, // Optional trial period
+});
+
+// Get current subscription
+const subscription = await subscriptionService.getCurrentSubscription(organizationId);
+
+// Generate customer portal URL
+const portal = await subscriptionService.getCustomerPortalUrl(
+  organizationId,
+  'https://app.example.com/settings'
+);
+
+// Cancel subscription
+const result = await subscriptionService.cancelSubscription(
+  organizationId,
+  true // Cancel at period end
+);
+
+// Upgrade subscription with proration
+const upgrade = await subscriptionService.upgradeSubscription(
+  organizationId,
+  'enterprise',
+  'annual'
+);
+```
+
+**Key Features**:
+- **Event-Driven Architecture**: Extends EventEmitter for lifecycle events
+- **Owner Validation**: Enforces organization ownership for billing operations
+- **Customer Reuse**: Automatically reuses existing Stripe customers
+- **Proration Support**: Handles prorated charges for subscription upgrades
+- **Trial Periods**: Optional trial period support (customizable duration)
+- **ServiceResponse Pattern**: Consistent error handling with success/error states
+- **Type Safety**: Full TypeScript coverage with exported interfaces
+
+**Service Methods**:
+1. `createCheckoutSession(input)` - Create Stripe Checkout session for new subscriptions
+2. `getCurrentSubscription(organizationId)` - Retrieve active subscription
+3. `getCustomerPortalUrl(organizationId, returnUrl)` - Generate self-service portal URL
+4. `cancelSubscription(organizationId, cancelAtPeriodEnd)` - Cancel subscription
+5. `upgradeSubscription(organizationId, newTier, newBillingCycle)` - Upgrade with automatic proration
+
+**Lifecycle Events**:
+- `checkout:session_created` - Fired when checkout session is created
+- `subscription:canceled` - Fired when subscription is canceled
+- `subscription:upgraded` - Fired when subscription tier is upgraded
+
+**Exported Interfaces**:
+- `Subscription` - Complete subscription data model
+- `CreateCheckoutSessionInput` - Input parameters for checkout
+- `CreateCheckoutSessionResponse` - Checkout session result
+
+**Integration Points**:
+- Integrates with Stripe SDK v20.0.0 (SF-002)
+- Uses SF-001 database schema (organizations, subscriptions tables)
+- Validates organization ownership via organizations.owner_id
+- Consumes getStripePriceId() helper from stripe config
+
+**Tests**: `backend/src/__tests__/services/SubscriptionService.test.ts` (18 tests, 100% passing)
+
+---
+
 ## Database Components
 
 ### Core Tables
