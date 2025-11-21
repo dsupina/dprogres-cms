@@ -1,12 +1,9 @@
 import { Router, Request, Response } from 'express';
-import { stripe } from '../config/stripe';
+import { stripe, STRIPE_WEBHOOK_SECRET } from '../config/stripe';
 import { pool } from '../utils/database';
 import type Stripe from 'stripe';
 
 const router = Router();
-
-// Webhook signing secret from environment
-const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 
 /**
  * Stripe Webhook Endpoint
@@ -31,11 +28,11 @@ router.post('/stripe', async (req: Request, res: Response) => {
   let event: Stripe.Event;
 
   try {
-    // Verify webhook signature
+    // Verify webhook signature (STRIPE_WEBHOOK_SECRET is validated at startup)
     event = stripe.webhooks.constructEvent(
       req.body,
       sig,
-      WEBHOOK_SECRET
+      STRIPE_WEBHOOK_SECRET!
     );
   } catch (err: any) {
     console.error('Webhook signature verification failed:', err.message);
