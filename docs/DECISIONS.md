@@ -873,3 +873,157 @@ describe('Stripe Configuration', () => {
 - **No Tests**: Fast but risky, configuration errors found in production
 - **Integration Tests**: More comprehensive but slower and requires Stripe API access
 - **Partial Coverage**: Faster but misses edge cases
+
+---
+
+## SF-003: SubscriptionService Implementation Decisions
+
+### Decision: Service Layer Pattern with EventEmitter
+
+**Context**: Need to implement subscription management that integrates with Stripe while remaining decoupled from HTTP layer and providing extensibility for future features (webhooks, analytics, notifications).
+
+**Decision**: Implement `SubscriptionService` as a class extending `EventEmitter` with all business logic encapsulated in service methods.
+
+**Rationale**:
+1. **Separation of Concerns**: Business logic separated from HTTP routes
+2. **Testability**: Easy to mock and unit test without HTTP infrastructure
+3. **Extensibility**: Event system allows future features to hook into subscription lifecycle
+4. **Reusability**: Service can be used from routes, webhooks, background jobs, etc.
+
+**Benefits**:
+- Clean separation between HTTP and business logic layers
+- Easy to add event listeners for webhooks, email notifications, analytics
+- Testable with simple mocks (no HTTP mocking needed)
+- Consistent with existing services (VersionService, PreviewService)
+
+**Trade-offs**:
+- Additional abstraction layer adds slight complexity
+- EventEmitter pattern requires understanding of async event flows
+- Events are fire-and-forget (no guaranteed delivery)
+
+**Alternatives Considered**:
+- **Route Handlers with Inline Logic**: Simpler but harder to test and reuse
+- **Static Utility Functions**: No state management, harder to extend
+- **Message Queue Pattern**: Over-engineered for current needs, adds infrastructure
+
+---
+
+### Decision: Organization Ownership Validation in Service Layer
+
+**Context**: Subscription management should only be performed by organization owners to prevent unauthorized billing changes.
+
+**Decision**: Validate `organization.owner_id === userId` within SubscriptionService methods before performing Stripe operations.
+
+**Rationale**:
+1. **Security**: Prevents non-owners from creating subscriptions or canceling
+2. **Defense in Depth**: Validation at service layer even if route auth fails
+3. **Clear Error Messages**: Specific error for ownership violations
+4. **Database-Level Truth**: Uses database as source of truth for ownership
+
+**Benefits**:
+- Prevents privilege escalation attacks
+- Works even if called outside HTTP context (webhooks, jobs)
+- Clear audit trail of who attempted operations
+- Consistent with RBAC requirements from SF-001
+
+**Trade-offs**:
+- Extra database query for every operation
+- Ownership validation repeated across methods
+- Doesn't support delegation to admins (future enhancement)
+
+**Alternatives Considered**:
+- **Route-Level Auth Only**: Vulnerable if service used elsewhere
+- **Role-Based**: More flexible but complex for billing (decided owner-only)
+- **Permission Helper**: Considered but ownership is simpler for billing
+
+---
+
+### Decision: Stripe Customer Reuse Logic
+
+**Context**: Organizations may have existing Stripe customers from previous subscriptions. Creating duplicate customers leads to fragmentation and billing issues.
+
+**Decision**: Check for existing `stripe_customer_id` in subscriptions table before creating new Stripe customer.
+
+**Rationale**:
+1. **Data Consistency**: One Stripe customer per organization
+2. **Billing Continuity**: Preserve customer history and payment methods
+3. **Cost Efficiency**: Avoid Stripe fees for duplicate customer records
+4. **User Experience**: Customers see unified billing history
+
+**Benefits**:
+- Payment methods persist across subscription changes
+- Billing history remains intact
+- Reduces Stripe Customer object count
+- Simpler for users (one billing portal, one invoice history)
+
+**Trade-offs**:
+- Extra database query before customer creation
+- Assumes one-to-one organization-customer mapping
+- Doesn't handle customer deletion edge case (acceptable)
+
+**Alternatives Considered**:
+- **Always Create New**: Simpler but causes fragmentation
+- **Separate Customers Table**: More normalized but over-engineered
+- **Cache Customer ID**: Faster but adds cache invalidation complexity
+
+---
+
+### Decision: Explicit `any` Typing for Jest Mocks
+
+**Context**: TypeScript strict mode causes Jest mocks to infer `never` type, leading to compilation errors when setting mock return values.
+
+**Decision**: Declare Jest mock functions with explicit `any` type annotation to bypass TypeScript strict checking in test files.
+
+**Rationale**:
+1. **Pragmatism**: Tests need flexibility that strict typing doesn't provide
+2. **Jest Compatibility**: Jest mock system designed for JavaScript flexibility
+3. **Test Focus**: Test behavior, not TypeScript type correctness
+4. **Common Pattern**: Widely accepted in Jest + TypeScript projects
+
+**Benefits**:
+- Tests compile without TypeScript errors
+- Mock setup remains concise and readable
+- Follows established Jest + TypeScript patterns
+- No impact on production code typing
+
+**Trade-offs**:
+- Loses type safety within test file
+- Potential for test bugs if mock data shape incorrect
+- IDE autocomplete less helpful in tests
+
+**Alternatives Considered**:
+- **`@ts-ignore` Comments**: Works but less explicit
+- **`as jest.Mock` Casting**: Verbose and still has typing issues
+- **Manual Type Declarations**: Over-engineered for test code
+- **Relaxed TSConfig for Tests**: Affects all test files, not targeted
+
+---
+
+### Decision: Trial Period as Optional Parameter
+
+**Context**: Some subscription checkout flows should include trial periods, others should not. Need flexibility without creating separate methods.
+
+**Decision**: Add optional `trialDays?: number` parameter to `createCheckoutSession()` input.
+
+**Rationale**:
+1. **Flexibility**: Same method supports trial and non-trial flows
+2. **Simplicity**: Avoids method explosion (createCheckoutSessionWithTrial, etc.)
+3. **Stripe Native**: Maps directly to Stripe's `subscription_data.trial_period_days`
+4. **Testability**: Easy to test both scenarios
+
+**Benefits**:
+- One method handles all checkout flows
+- API routes can choose trial behavior
+- Future A/B testing of trial durations easy
+- Clear intent in method signature
+
+**Trade-offs**:
+- Could be misused (accidentally omit trial when expected)
+- No type-level enforcement of trial rules (e.g., "free plan can't have trial")
+- Trial duration validation left to Stripe (not enforced in service)
+
+**Alternatives Considered**:
+- **Separate Method**: `createCheckoutSessionWithTrial()` - more explicit but redundant
+- **Config Object**: More parameters as optional fields - considered but trial is common
+- **Builder Pattern**: Over-engineered for 7 parameters
+- **Always Include Trial**: Too rigid, business may not want trials for all plans
