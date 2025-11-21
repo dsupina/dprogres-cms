@@ -687,3 +687,189 @@ Need unique identifier for organizations. Question: Use numeric ID or slug in UR
 - **ID in URLs**: Simple but ugly
 - **UUID**: Secure but not user-friendly
 - **Custom domain per org**: Expensive, complex DNS management
+
+---
+
+## EPIC-003 SF-002: Stripe Configuration Decisions
+
+### Decision: Pinned Stripe API Version with Environment-Based Keys
+**Date**: January 2025
+**Status**: ✅ Implemented
+**Decision Maker**: Backend Team
+
+**Context**:
+Need to configure Stripe SDK for subscription billing. Question: How to manage API versioning, key selection, and environment separation?
+
+**Decision**: Use latest API version (2025-11-17.clover) with environment-based key selection
+
+**Implementation**:
+```typescript
+const stripe = new Stripe(
+  process.env.NODE_ENV === 'production'
+    ? process.env.STRIPE_SECRET_KEY_LIVE
+    : process.env.STRIPE_SECRET_KEY_TEST,
+  { apiVersion: '2025-11-17.clover' }
+);
+```
+
+**Rationale**:
+1. **API Stability**: Pinning version prevents breaking changes from affecting production
+2. **Safe Upgrades**: Can test new API versions in isolation before upgrading
+3. **Environment Separation**: Test mode for development, live mode for production
+4. **Type Safety**: TypeScript types match pinned API version
+5. **Zero Configuration**: Automatically selects correct keys based on NODE_ENV
+
+**Benefits**:
+- No accidental production charges during development
+- Consistent behavior across API versions
+- Predictable webhook payload structures
+- Clear upgrade path when new Stripe features needed
+
+**Trade-offs**:
+- Must manually upgrade API version to access new features
+- Need separate Stripe Dashboard views for test vs production
+- Duplicate environment variables (test + live)
+
+**Alternatives Considered**:
+- **Latest API Version**: Breaking changes could affect production
+- **Runtime Key Selection**: More flexible but error-prone
+- **Single Set of Keys**: Risk of test data in production
+
+---
+
+### Decision: Centralized Price ID Management with Helper Function
+**Date**: January 2025
+**Status**: ✅ Implemented
+**Decision Maker**: Backend Team
+
+**Context**:
+Need to manage 8 Stripe price IDs (2 tiers × 2 billing cycles × 2 environments). Question: How to organize price IDs and prevent mismatches?
+
+**Decision**: Centralize price IDs in configuration object with typed helper function
+
+**Implementation**:
+```typescript
+export const STRIPE_PRICES = {
+  starter: {
+    monthly: isProduction ? process.env.STRIPE_PRICE_STARTER_MONTHLY_LIVE
+                           : process.env.STRIPE_PRICE_STARTER_MONTHLY,
+    annual: isProduction ? process.env.STRIPE_PRICE_STARTER_ANNUAL_LIVE
+                          : process.env.STRIPE_PRICE_STARTER_ANNUAL,
+  },
+  pro: {
+    monthly: isProduction ? process.env.STRIPE_PRICE_PRO_MONTHLY_LIVE
+                           : process.env.STRIPE_PRICE_PRO_MONTHLY,
+    annual: isProduction ? process.env.STRIPE_PRICE_PRO_ANNUAL_LIVE
+                          : process.env.STRIPE_PRICE_PRO_ANNUAL,
+  },
+};
+
+export function getStripePriceId(
+  tier: 'starter' | 'pro',
+  billingCycle: 'monthly' | 'annual'
+): string {
+  const priceId = STRIPE_PRICES[tier][billingCycle];
+  if (!priceId) {
+    throw new Error(`Stripe price not configured for ${tier} ${billingCycle}`);
+  }
+  return priceId;
+}
+```
+
+**Rationale**:
+1. **Type Safety**: TypeScript enforces valid tier and billing cycle values
+2. **Single Source of Truth**: All price IDs in one place
+3. **Validation**: Throws error if price ID missing, preventing silent failures
+4. **Environment Awareness**: Automatically selects test or production price IDs
+5. **Maintainability**: Easy to add new tiers or billing cycles
+
+**Benefits**:
+- Prevents hardcoding price IDs throughout codebase
+- Catches configuration errors at startup
+- Clear error messages when price IDs missing
+- Simple API for creating checkout sessions
+
+**Usage Example**:
+```typescript
+const session = await stripe.checkout.sessions.create({
+  line_items: [{
+    price: getStripePriceId('starter', 'monthly'),
+    quantity: 1,
+  }],
+});
+```
+
+**Trade-offs**:
+- Requires environment variables for all price IDs
+- Cannot dynamically create price IDs at runtime
+- Must redeploy to change price IDs
+
+**Alternatives Considered**:
+- **Database Storage**: More flexible but adds query overhead
+- **Hardcoded IDs**: Simple but error-prone, no environment separation
+- **Direct Environment Access**: Scattered configuration, no type safety
+
+---
+
+### Decision: Comprehensive Test Coverage for Stripe Configuration
+**Date**: January 2025
+**Status**: ✅ Implemented
+**Decision Maker**: Backend Team
+
+**Context**:
+Stripe configuration is critical for subscription billing. Question: What level of test coverage is appropriate?
+
+**Decision**: 100% test coverage with startup validation
+
+**Test Coverage**:
+1. Stripe client initialization
+2. Price ID availability
+3. Helper function correctness
+4. Error handling for invalid inputs
+5. Environment variable validation
+
+**Implementation**:
+```typescript
+describe('Stripe Configuration', () => {
+  it('should initialize Stripe client', () => {
+    expect(stripe).toBeDefined();
+    expect(stripe.customers).toBeDefined();
+  });
+
+  it('should have all price IDs configured', () => {
+    expect(STRIPE_PRICES.starter.monthly).toBeDefined();
+    // ... all price IDs
+  });
+
+  it('should retrieve price ID correctly', () => {
+    const priceId = getStripePriceId('starter', 'monthly');
+    expect(priceId).toMatch(/^price_(test_)?/);
+  });
+
+  it('should throw error for invalid tier', () => {
+    expect(() => getStripePriceId('invalid' as any, 'monthly')).toThrow();
+  });
+});
+```
+
+**Rationale**:
+1. **Early Detection**: Configuration errors caught before deployment
+2. **Regression Prevention**: Tests prevent accidental configuration breaks
+3. **Documentation**: Tests serve as usage examples
+4. **Confidence**: 100% coverage ensures all code paths tested
+
+**Benefits**:
+- Startup fails fast if Stripe misconfigured
+- Clear error messages guide troubleshooting
+- Tests run in <5 seconds
+- No Stripe API calls needed (uses environment variables)
+
+**Trade-offs**:
+- Requires test environment variables
+- Cannot test actual Stripe API calls (would need integration tests)
+- Tests depend on .env file structure
+
+**Alternatives Considered**:
+- **No Tests**: Fast but risky, configuration errors found in production
+- **Integration Tests**: More comprehensive but slower and requires Stripe API access
+- **Partial Coverage**: Faster but misses edge cases

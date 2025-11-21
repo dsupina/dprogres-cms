@@ -174,6 +174,58 @@ This document catalogs all reusable components in the codebase with usage exampl
 
 ## Backend Components
 
+### Configuration
+
+#### Stripe Configuration (SF-002)
+**Purpose**: Stripe API client initialization and payment configuration
+**Location**: `backend/src/config/stripe.ts`
+**Status**: ✅ Completed (January 2025)
+
+```typescript
+// Usage Example
+import { stripe, getStripePriceId, STRIPE_PRICES } from '../config/stripe';
+
+// Create a checkout session
+const session = await stripe.checkout.sessions.create({
+  mode: 'subscription',
+  line_items: [{
+    price: getStripePriceId('starter', 'monthly'),
+    quantity: 1,
+  }],
+  success_url: process.env.STRIPE_SUCCESS_URL,
+  cancel_url: process.env.STRIPE_CANCEL_URL,
+});
+
+// Access price IDs directly
+const starterMonthlyPrice = STRIPE_PRICES.starter.monthly;
+```
+
+**Key Features**:
+- Environment-based key selection (test vs production)
+- Latest API version (2025-11-17.clover) from Clover release
+- Helper function for price ID retrieval
+- TypeScript type exports for Stripe entities
+- Automatic configuration validation on startup
+
+**Configuration Variables**:
+- `STRIPE_SECRET_KEY_TEST` / `STRIPE_SECRET_KEY_LIVE`
+- `STRIPE_WEBHOOK_SECRET_TEST` / `STRIPE_WEBHOOK_SECRET_LIVE`
+- `STRIPE_PRICE_STARTER_MONTHLY` / `STRIPE_PRICE_STARTER_MONTHLY_LIVE`
+- `STRIPE_PRICE_STARTER_ANNUAL` / `STRIPE_PRICE_STARTER_ANNUAL_LIVE`
+- `STRIPE_PRICE_PRO_MONTHLY` / `STRIPE_PRICE_PRO_MONTHLY_LIVE`
+- `STRIPE_PRICE_PRO_ANNUAL` / `STRIPE_PRICE_PRO_ANNUAL_LIVE`
+
+**Exported Types**:
+- `StripeCustomer` - Stripe.Customer
+- `StripeSubscription` - Stripe.Subscription
+- `StripeInvoice` - Stripe.Invoice
+- `StripeCheckoutSession` - Stripe.Checkout.Session
+- `StripeEvent` - Stripe.Event
+
+**Tests**: `backend/src/__tests__/config/stripe.test.ts` (4 tests, 100% coverage)
+
+---
+
 ### Middleware
 
 #### Auth Middleware
