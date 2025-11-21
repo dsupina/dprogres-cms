@@ -150,6 +150,7 @@ export class SubscriptionService extends EventEmitter {
       const { rows } = await pool.query<Subscription>(
         `SELECT * FROM subscriptions
          WHERE organization_id = $1
+         AND status IN ('active', 'trialing', 'past_due')
          ORDER BY created_at DESC
          LIMIT 1`,
         [organizationId]
@@ -178,7 +179,11 @@ export class SubscriptionService extends EventEmitter {
     try {
       // Get subscription with customer ID
       const { rows } = await pool.query(
-        'SELECT stripe_customer_id FROM subscriptions WHERE organization_id = $1',
+        `SELECT stripe_customer_id FROM subscriptions
+         WHERE organization_id = $1
+         AND status IN ('active', 'trialing', 'past_due')
+         ORDER BY created_at DESC
+         LIMIT 1`,
         [organizationId]
       );
 
@@ -215,9 +220,13 @@ export class SubscriptionService extends EventEmitter {
     cancelAtPeriodEnd: boolean = true
   ): Promise<ServiceResponse<Subscription>> {
     try {
-      // Get subscription
+      // Get active subscription
       const { rows } = await pool.query(
-        'SELECT stripe_subscription_id FROM subscriptions WHERE organization_id = $1',
+        `SELECT stripe_subscription_id FROM subscriptions
+         WHERE organization_id = $1
+         AND status IN ('active', 'trialing', 'past_due')
+         ORDER BY created_at DESC
+         LIMIT 1`,
         [organizationId]
       );
 
@@ -237,20 +246,20 @@ export class SubscriptionService extends EventEmitter {
         stripeSubscription = await stripe.subscriptions.cancel(stripeSubscriptionId);
       }
 
-      // Update database
+      // Update database - target specific subscription by stripe_subscription_id
       const { rows: updated } = await pool.query<Subscription>(
         `UPDATE subscriptions
          SET cancel_at_period_end = $1,
              canceled_at = $2,
              status = $3,
              updated_at = NOW()
-         WHERE organization_id = $4
+         WHERE stripe_subscription_id = $4
          RETURNING *`,
         [
           cancelAtPeriodEnd,
           cancelAtPeriodEnd ? null : new Date(),
           stripeSubscription.status,
-          organizationId,
+          stripeSubscriptionId,
         ]
       );
 
@@ -283,9 +292,13 @@ export class SubscriptionService extends EventEmitter {
     newBillingCycle: 'monthly' | 'annual'
   ): Promise<ServiceResponse<Subscription>> {
     try {
-      // Get current subscription
+      // Get current active subscription
       const { rows } = await pool.query(
-        'SELECT stripe_subscription_id, plan_tier FROM subscriptions WHERE organization_id = $1',
+        `SELECT stripe_subscription_id, plan_tier FROM subscriptions
+         WHERE organization_id = $1
+         AND status IN ('active', 'trialing', 'past_due')
+         ORDER BY created_at DESC
+         LIMIT 1`,
         [organizationId]
       );
 
@@ -316,16 +329,16 @@ export class SubscriptionService extends EventEmitter {
         proration_behavior: 'always_invoice', // Charge prorated amount immediately
       });
 
-      // Update database (webhook will sync final state)
+      // Update database (webhook will sync final state) - target specific subscription
       const { rows: updated } = await pool.query<Subscription>(
         `UPDATE subscriptions
          SET plan_tier = $1,
              billing_cycle = $2,
              stripe_price_id = $3,
              updated_at = NOW()
-         WHERE organization_id = $4
+         WHERE stripe_subscription_id = $4
          RETURNING *`,
-        [newTier, newBillingCycle, newPriceId, organizationId]
+        [newTier, newBillingCycle, newPriceId, stripeSubscriptionId]
       );
 
       // Emit event
