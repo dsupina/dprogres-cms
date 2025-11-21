@@ -111,11 +111,24 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_tags_organization ON tags(organization_id);
 
 -- Enable Row-Level Security (RLS) for defense-in-depth
+-- FORCE ensures RLS applies even to table owner (important for testing)
 ALTER TABLE sites ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sites FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE posts FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE pages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pages FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE media_files ENABLE ROW LEVEL SECURITY;
+ALTER TABLE media_files FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE categories FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tags FORCE ROW LEVEL SECURITY;
 
 -- Create RLS policies (enforced when app sets current_organization_id)
 DROP POLICY IF EXISTS org_isolation_sites ON sites;
@@ -136,6 +149,10 @@ CREATE POLICY org_isolation_media ON media_files
 
 DROP POLICY IF EXISTS org_isolation_categories ON categories;
 CREATE POLICY org_isolation_categories ON categories
+  USING (organization_id = current_setting('app.current_organization_id', true)::int);
+
+DROP POLICY IF EXISTS org_isolation_tags ON tags;
+CREATE POLICY org_isolation_tags ON tags
   USING (organization_id = current_setting('app.current_organization_id', true)::int);
 
 -- Comments

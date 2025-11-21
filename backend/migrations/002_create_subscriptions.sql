@@ -26,8 +26,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   CONSTRAINT valid_plan_tier CHECK (plan_tier IN ('free', 'starter', 'pro', 'enterprise')),
   CONSTRAINT valid_billing_cycle CHECK (billing_cycle IN ('monthly', 'annual')),
   CONSTRAINT valid_status CHECK (status IN ('active', 'past_due', 'canceled', 'trialing', 'incomplete', 'incomplete_expired', 'unpaid')),
-  CONSTRAINT valid_amount CHECK (amount_cents >= 0),
-  UNIQUE(organization_id) -- One active subscription per organization
+  CONSTRAINT valid_amount CHECK (amount_cents >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_subscriptions_org ON subscriptions(organization_id);
@@ -35,6 +34,12 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_customer ON subscriptions(st
 CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_subscription ON subscriptions(stripe_subscription_id);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_period_end ON subscriptions(current_period_end);
+
+-- Partial unique index: Only one active subscription per organization
+-- Allows keeping subscription history for canceled/expired subscriptions
+CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_org_active_unique
+  ON subscriptions(organization_id)
+  WHERE status NOT IN ('canceled', 'incomplete_expired');
 
 -- Invoices table
 CREATE TABLE IF NOT EXISTS invoices (

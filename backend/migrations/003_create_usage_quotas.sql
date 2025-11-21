@@ -41,6 +41,11 @@ BEGIN
   WHERE organization_id = org_id AND dimension = quota_dimension
   FOR UPDATE;
 
+  -- Check if quota record exists
+  IF current_val IS NULL THEN
+    RETURN FALSE; -- No quota record = deny operation
+  END IF;
+
   -- Check if within limit
   IF current_val + increment_amount > limit_val THEN
     RETURN FALSE;
