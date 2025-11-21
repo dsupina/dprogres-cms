@@ -19,7 +19,7 @@
     "@dnd-kit/utilities": "^3.2.1",
     "@tanstack/react-query": "^5.90.2",
     "@tanstack/react-query-devtools": "^5.90.2",
-    "axios": "^1.4.0",
+    "axios": "^1.12.0",
     "clsx": "^2.0.0",
     "date-fns": "^2.30.0",
     "framer-motion": "^10.16.0",
