@@ -57,6 +57,9 @@ describe('SubscriptionService', () => {
         rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
       });
 
+      // Mock active subscription check (no active subscription)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
       // Mock database query (no existing subscription)
       mockPoolQuery.mockResolvedValueOnce({ rows: [] });
 
@@ -127,6 +130,9 @@ describe('SubscriptionService', () => {
         rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
       });
 
+      // Mock active subscription check (no active subscription)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
       // Mock database query (existing subscription with customer)
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ stripe_customer_id: 'cus_existing123' }],
@@ -162,6 +168,9 @@ describe('SubscriptionService', () => {
         rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
       });
 
+      // Mock active subscription check (no active subscription)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
       // Mock database query (no existing subscription)
       mockPoolQuery.mockResolvedValueOnce({ rows: [] });
 
@@ -193,6 +202,31 @@ describe('SubscriptionService', () => {
           }),
         })
       );
+    });
+
+    it('should return error if organization already has active subscription', async () => {
+      // Mock database query (organization)
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      // Mock active subscription check (existing active subscription)
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, status: 'active', plan_tier: 'starter' }],
+      });
+
+      const result = await subscriptionService.createCheckoutSession({
+        organizationId: 1,
+        planTier: 'pro',
+        billingCycle: 'monthly',
+        userId: 1,
+        successUrl: 'http://localhost/success',
+        cancelUrl: 'http://localhost/cancel',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('already has an active subscription');
+      expect(mockStripeCheckoutSessionsCreate).not.toHaveBeenCalled();
     });
   });
 

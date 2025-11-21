@@ -82,6 +82,23 @@ export class SubscriptionService extends EventEmitter {
 
       const organization = ownerCheck.data!;
 
+      // Check if organization already has an active subscription
+      const { rows: activeSubs } = await pool.query(
+        `SELECT id, status, plan_tier FROM subscriptions
+         WHERE organization_id = $1
+         AND status IN ('active', 'trialing', 'past_due', 'incomplete', 'unpaid')
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [organizationId]
+      );
+
+      if (activeSubs.length > 0) {
+        return {
+          success: false,
+          error: `Organization already has an ${activeSubs[0].status} subscription on ${activeSubs[0].plan_tier} tier. Use upgrade/downgrade methods instead.`,
+        };
+      }
+
       // Get Stripe price ID
       const priceId = getStripePriceId(planTier, billingCycle);
 
@@ -173,7 +190,7 @@ export class SubscriptionService extends EventEmitter {
       const { rows } = await pool.query<Subscription>(
         `SELECT * FROM subscriptions
          WHERE organization_id = $1
-         AND status IN ('active', 'trialing', 'past_due')
+         AND status IN ('active', 'trialing', 'past_due', 'incomplete', 'unpaid')
          ORDER BY created_at DESC
          LIMIT 1`,
         [organizationId]
@@ -211,7 +228,7 @@ export class SubscriptionService extends EventEmitter {
       const { rows } = await pool.query(
         `SELECT stripe_customer_id FROM subscriptions
          WHERE organization_id = $1
-         AND status IN ('active', 'trialing', 'past_due')
+         AND status IN ('active', 'trialing', 'past_due', 'incomplete', 'unpaid')
          ORDER BY created_at DESC
          LIMIT 1`,
         [organizationId]
@@ -261,7 +278,7 @@ export class SubscriptionService extends EventEmitter {
       const { rows } = await pool.query(
         `SELECT stripe_subscription_id FROM subscriptions
          WHERE organization_id = $1
-         AND status IN ('active', 'trialing', 'past_due')
+         AND status IN ('active', 'trialing', 'past_due', 'incomplete', 'unpaid')
          ORDER BY created_at DESC
          LIMIT 1`,
         [organizationId]
@@ -340,7 +357,7 @@ export class SubscriptionService extends EventEmitter {
       const { rows } = await pool.query(
         `SELECT stripe_subscription_id, plan_tier FROM subscriptions
          WHERE organization_id = $1
-         AND status IN ('active', 'trialing', 'past_due')
+         AND status IN ('active', 'trialing', 'past_due', 'incomplete', 'unpaid')
          ORDER BY created_at DESC
          LIMIT 1`,
         [organizationId]
