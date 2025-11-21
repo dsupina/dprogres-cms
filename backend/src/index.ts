@@ -1,3 +1,7 @@
+// Load environment variables FIRST (before any imports that need them)
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -5,9 +9,8 @@ import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
-import dotenv from 'dotenv';
 
-// Import routes
+// Import routes (webhooksRoutes loads config/stripe which validates env vars)
 import authRoutes from './routes/auth';
 import postsRoutes from './routes/posts';
 import categoriesRoutes from './routes/categories';
@@ -30,9 +33,6 @@ import { siteResolver } from './middleware/siteResolver';
 
 // Import database pool
 import pool from './utils/database';
-
-// Load environment variables
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
