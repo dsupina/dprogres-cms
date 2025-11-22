@@ -66,13 +66,14 @@
 - ✅ 5 hierarchical organization roles (owner > admin > editor > publisher > viewer)
 - ✅ RBAC middleware with 3 enforcement modes (single, any, all permissions)
 - ✅ In-memory permission caching with 5-minute TTL
-- ✅ Automatic cache cleanup every 60 seconds
+- ✅ Automatic cache cleanup every 60 seconds (unref'd to prevent event loop blocking)
 - ✅ JWT payload extended with organizationId for organization context
 - ✅ Integration with OrganizationService for role resolution
 - ✅ Performance target achieved: <20ms per permission check
-- ✅ Comprehensive test coverage (60 tests, 100% pass rate)
+- ✅ Comprehensive test coverage (72 tests, 100% pass rate)
 - ✅ Documentation updated (COMPONENTS, PATTERNS, MILESTONES)
 - ✅ Redis migration path documented for future scaling
+- ✅ **Security Hardened**: 4 P1 issues resolved post-implementation
 
 **Permissions Matrix**:
 - **Billing & Organization** (2): `MANAGE_BILLING`, `MANAGE_ORGANIZATION` (owner only)
@@ -105,7 +106,7 @@ requireAllPermissions([Permission.MANAGE_ORGANIZATION, Permission.MANAGE_BILLING
   - Permission matrix validation for all 14 permissions ✅
   - Role hierarchy enforcement (OWNER > ADMIN > EDITOR > PUBLISHER > VIEWER) ✅
   - Helper functions (hasPermission, getRolePermissions, getPermissionsTable) ✅
-- **RBAC Middleware** (31 tests):
+- **RBAC Middleware** (35 tests):
   - checkPermission with caching ✅
   - requirePermission with edge cases ✅
   - requireAnyPermission (OR logic) ✅
@@ -113,6 +114,16 @@ requireAllPermissions([Permission.MANAGE_ORGANIZATION, Permission.MANAGE_BILLING
   - Permission cache (get, set, invalidate, TTL) ✅
   - Performance verification ✅
   - Real-world scenarios for all roles ✅
+  - **Security**: Soft-deleted member filtering ✅
+  - **Security**: Timer management with .unref() ✅
+- **MemberService Cache Invalidation** (5 tests):
+  - Role update cache invalidation ✅
+  - Member removal cache invalidation ✅
+  - Invite acceptance cache invalidation ✅
+  - Security: Prevent stale permission windows ✅
+- **OrganizationService Cache Invalidation** (3 tests):
+  - Ownership transfer dual cache invalidation ✅
+  - Prevent stale owner permissions ✅
 
 **Code Quality**:
 - Type-safe permission definitions with TypeScript enums
@@ -131,9 +142,56 @@ requireAllPermissions([Permission.MANAGE_ORGANIZATION, Permission.MANAGE_BILLING
 - Clear permission matrix makes role management intuitive
 - Type-safe enums prevent typos in permission strings
 - Middleware factory pattern allows flexible permission enforcement
-- Cache invalidation strategy is critical when roles change
+- **Cache invalidation strategy is critical when roles change** - automated code review caught 3 cache-related security issues
+- **Timer cleanup with .unref() prevents test hanging** - important for Jest to exit cleanly
+- **Soft-delete filtering must be explicit** - prevents removed users from regaining access
 - Performance monitoring helps identify bottlenecks early
 - Comprehensive tests catch edge cases before production
+- **Automated security review is invaluable** - caught 4 P1 issues before production deployment
+
+**Security Hardening** (Post-Implementation):
+
+After initial implementation, automated code review identified 4 Priority 1 security issues. All were resolved with additional commits:
+
+**Issue #1: Role demotions ignored until cache TTL expires**
+- **Impact**: Demoted users retain old permissions for up to 5 minutes
+- **Fix**: Added `permissionCache.invalidate()` in MemberService:
+  - `updateMemberRole()` - invalidate after role change
+  - `removeMember()` - invalidate after member removal
+  - `acceptInvite()` - invalidate on re-activation (handles role changes)
+- **Tests**: 5 tests in `MemberService.cache.test.ts`
+- **Commit**: `ab289be2`
+
+**Issue #2: Soft-deleted members still pass RBAC checks**
+- **Impact**: Removed users could regain access after cache invalidation
+- **Attack Vector**: Remove user → cache expires → getMemberRole returns soft-deleted row → permissions re-cached
+- **Fix**: Added `AND deleted_at IS NULL` filter to `OrganizationService.getMemberRole()` query
+- **Tests**: 2 additional tests in `rbac.test.ts` for soft-deleted member scenarios
+- **Commit**: `f9bc3a71`
+
+**Issue #3: Invalidate permission cache after ownership transfer**
+- **Impact**: Old owner retains owner permissions, new owner denied for up to 5 minutes
+- **Fix**: Added dual cache invalidation in `OrganizationService.transferOwnership()`:
+  - Invalidate old owner (now admin)
+  - Invalidate new owner (now owner)
+- **Tests**: 3 tests in `OrganizationService.cache.test.ts`
+- **Commit**: `f4e8b259`
+
+**Issue #4: Stop leaking RBAC cache cleanup interval**
+- **Impact**: setInterval timer prevents Jest from exiting cleanly, shows "did not exit" warnings
+- **Fix**: Modified `PermissionCache` class:
+  - Stored timer reference in `cleanupTimer` property
+  - Added `.unref()` to allow process exit
+  - Added `destroy()` method for explicit cleanup
+- **Tests**: 2 tests for timer management in `rbac.test.ts`
+- **Commit**: `9b127865`
+
+**Security Review Results**:
+- All 4 P1 issues resolved before production deployment
+- Total commits: 8 (3 initial + 4 security fixes + 1 test fix)
+- Final test count: 72 tests (up from initial 60)
+- Test execution: 3.3s (clean exit, no hanging)
+- **PR merged with full security approval**
 
 **Known Considerations**:
 - Current implementation uses in-memory cache (single instance only)
