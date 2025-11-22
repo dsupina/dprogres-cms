@@ -268,6 +268,90 @@ router.post('/api/posts',
 
 ---
 
+#### RBAC Middleware (SF-007)
+**Purpose**: Role-based access control for organization-scoped resources
+**Location**: `backend/src/middleware/rbac.ts`
+**Config**: `backend/src/config/permissions.ts`
+**Status**: ✅ Completed (January 2025)
+
+```typescript
+// Usage Examples
+import { requirePermission, requireAnyPermission, requireAllPermissions } from '../middleware/rbac';
+import { Permission } from '../config/permissions';
+
+// Single permission check
+router.post('/sites',
+  authenticateToken,
+  requirePermission(Permission.CREATE_SITES),
+  createSiteHandler
+);
+
+// OR logic - user needs ANY of the permissions
+router.get('/content',
+  authenticateToken,
+  requireAnyPermission([Permission.EDIT_POSTS, Permission.VIEW_POSTS]),
+  getContentHandler
+);
+
+// AND logic - user needs ALL of the permissions
+router.delete('/organization',
+  authenticateToken,
+  requireAllPermissions([Permission.MANAGE_ORGANIZATION, Permission.MANAGE_BILLING]),
+  deleteOrgHandler
+);
+```
+
+**Key Features**:
+- 14 permissions across 5 categories (billing, members, sites, content, analytics/data, read)
+- 5 hierarchical roles (owner > admin > editor > publisher > viewer)
+- In-memory permission caching with 5-minute TTL
+- Automatic cache cleanup every 60 seconds
+- Performance target: <20ms per check
+- Site isolation for multi-tenant data security
+- Organization context from JWT token
+
+**Permissions Matrix**:
+- **Billing & Organization**: `MANAGE_BILLING`, `MANAGE_ORGANIZATION` (owner only)
+- **Member Management**: `INVITE_USERS`, `MANAGE_MEMBERS` (owner, admin)
+- **Site Management**: `CREATE_SITES`, `MANAGE_SITES` (owner, admin)
+- **Content Management**: `CREATE_POSTS`, `EDIT_POSTS`, `PUBLISH_POSTS`, `DELETE_POSTS`
+- **Analytics & Data**: `VIEW_ANALYTICS`, `EXPORT_DATA`
+- **Read Access**: `VIEW_POSTS`, `VIEW_SETTINGS` (all roles)
+
+**Cache Methods**:
+```typescript
+import { permissionCache } from '../middleware/rbac';
+
+// Invalidate specific user-org combination
+permissionCache.invalidate(organizationId, userId);
+
+// Invalidate all cache entries for an organization
+permissionCache.invalidateOrganization(organizationId);
+
+// Clear entire cache
+permissionCache.clear();
+
+// Get cache statistics
+const stats = permissionCache.getStats(); // { size: number, ttl: number }
+```
+
+**Integration**:
+- Works with `OrganizationService.getMemberRole()` for role resolution
+- Requires `organizationId` in req, params, or body
+- Extends Express Request with `req.organizationId`
+- Returns 401 (unauthenticated), 400 (missing org), or 403 (denied)
+
+**Redis Migration Path**: Documented in code for future distributed caching:
+```typescript
+// Future Redis implementation
+// Key format: rbac:${organizationId}:${userId} => role
+// TTL: 300 seconds
+```
+
+**Tests**: `backend/src/__tests__/middleware/rbac.test.ts` (31 tests) + `backend/src/__tests__/config/permissions.test.ts` (29 tests) = 60 tests total, 100% pass rate
+
+---
+
 ### Services
 
 #### Version Service (CV-003)

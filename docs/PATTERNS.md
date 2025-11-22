@@ -1251,3 +1251,274 @@ done
 - IF NOT EXISTS allows idempotent reruns
 - Rollback scripts enable safe reversions
 - Comments document intent for future developers
+
+## RBAC Pattern (SF-007)
+
+### Permission-Based Access Control
+**Role-based access control for organization-scoped resources**
+
+```typescript
+// 1. Define permissions and roles
+export enum Permission {
+  MANAGE_BILLING = 'manage_billing',
+  CREATE_POSTS = 'create_posts',
+  // ... more permissions
+}
+
+export enum OrganizationRole {
+  OWNER = 'owner',
+  ADMIN = 'admin',
+  EDITOR = 'editor',
+  // ... more roles
+}
+
+// 2. Define permissions matrix
+export const PERMISSIONS_MATRIX: Record<Permission, Set<OrganizationRole>> = {
+  [Permission.MANAGE_BILLING]: new Set([OrganizationRole.OWNER]),
+  [Permission.CREATE_POSTS]: new Set([
+    OrganizationRole.OWNER,
+    OrganizationRole.ADMIN,
+    OrganizationRole.EDITOR,
+  ]),
+  // ... more mappings
+};
+
+// 3. Helper function for permission checks
+export function hasPermission(role: OrganizationRole, permission: Permission): boolean {
+  const allowedRoles = PERMISSIONS_MATRIX[permission];
+  return allowedRoles ? allowedRoles.has(role) : false;
+}
+```
+
+### Middleware Usage
+**Three enforcement modes: single, any, all**
+
+```typescript
+import { requirePermission, requireAnyPermission, requireAllPermissions } from '../middleware/rbac';
+import { Permission } from '../config/permissions';
+
+// Single permission - user must have this exact permission
+router.post('/sites',
+  authenticateToken,
+  requirePermission(Permission.CREATE_SITES),
+  createSiteHandler
+);
+
+// OR logic - user needs ANY of the permissions
+router.get('/content',
+  authenticateToken,
+  requireAnyPermission([Permission.EDIT_POSTS, Permission.VIEW_POSTS]),
+  getContentHandler
+);
+
+// AND logic - user needs ALL of the permissions
+router.delete('/organization',
+  authenticateToken,
+  requireAllPermissions([Permission.MANAGE_ORGANIZATION, Permission.MANAGE_BILLING]),
+  deleteOrgHandler
+);
+```
+
+### Organization Context Resolution
+**Priority: req.organizationId > params.organizationId > body.organizationId**
+
+```typescript
+export function requirePermission(permission: Permission) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    // 1. Check authentication
+    if (!req.user) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    // 2. Resolve organization ID with priority chain
+    const organizationId =
+      req.organizationId ||
+      parseInt(req.params.organizationId) ||
+      parseInt(req.body.organizationId);
+
+    if (!organizationId || isNaN(organizationId)) {
+      return res.status(400).json({ error: 'Organization ID required' });
+    }
+
+    // 3. Check permission
+    const hasAccess = await checkPermission(organizationId, req.user.userId, permission);
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        error: 'Permission denied',
+        required: permission,
+      });
+    }
+
+    // 4. Attach organizationId to request for downstream handlers
+    req.organizationId = organizationId;
+
+    next();
+  };
+}
+```
+
+### Permission Caching Pattern
+**In-memory cache with TTL and automatic cleanup**
+
+```typescript
+class PermissionCache {
+  private cache: Map<string, CacheEntry>;
+  private readonly TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+  constructor() {
+    this.cache = new Map();
+    // Cleanup expired entries every minute
+    setInterval(() => this.cleanup(), 60 * 1000);
+  }
+
+  get(organizationId: number, userId: number): OrganizationRole | null {
+    const key = `${organizationId}:${userId}`;
+    const entry = this.cache.get(key);
+
+    if (!entry || Date.now() - entry.timestamp > this.TTL_MS) {
+      this.cache.delete(key);
+      return null;
+    }
+
+    return entry.role;
+  }
+
+  set(organizationId: number, userId: number, role: OrganizationRole): void {
+    const key = `${organizationId}:${userId}`;
+    this.cache.set(key, {
+      role,
+      timestamp: Date.now(),
+    });
+  }
+
+  // Invalidation methods for cache management
+  invalidate(organizationId: number, userId: number): void {
+    const key = `${organizationId}:${userId}`;
+    this.cache.delete(key);
+  }
+
+  invalidateOrganization(organizationId: number): void {
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(`${organizationId}:`)) {
+        this.cache.delete(key);
+      }
+    }
+  }
+}
+```
+
+### Cache Invalidation Strategy
+**Invalidate cache when roles change**
+
+```typescript
+// In MemberService after updating member role
+async updateMemberRole(input: UpdateMemberRoleInput): Promise<ServiceResponse<OrganizationMember>> {
+  // ... update role in database ...
+
+  // Invalidate permission cache for this user
+  permissionCache.invalidate(input.organizationId, targetMember.user_id);
+
+  // Emit event for external handlers
+  this.emit('member:role_updated', {
+    memberId,
+    organizationId,
+    userId: targetMember.user_id,
+    oldRole: targetMember.role,
+    newRole,
+    updatedBy: actorId,
+  });
+
+  return { success: true, data: updated };
+}
+```
+
+### Performance Monitoring
+**Track slow permission checks**
+
+```typescript
+export async function checkPermission(
+  organizationId: number,
+  userId: number,
+  permission: Permission
+): Promise<boolean> {
+  const startTime = Date.now();
+
+  try {
+    // ... permission check logic ...
+
+    // Log performance (target: <20ms)
+    const duration = Date.now() - startTime;
+    if (duration > 20) {
+      console.warn(
+        `[RBAC] Slow permission check: ${duration}ms (orgId: ${organizationId}, userId: ${userId}, permission: ${permission})`
+      );
+    }
+
+    return hasAccess;
+  } catch (error) {
+    console.error('[RBAC] Error checking permission:', error);
+    return false;
+  }
+}
+```
+
+### JWT Integration
+**Include organizationId in JWT payload**
+
+```typescript
+export interface JWTPayload {
+  userId: number;
+  email: string;
+  role: string;
+  organizationId?: number; // Optional organization context
+}
+
+// Generate token with organization context
+const token = generateToken({
+  userId: user.id,
+  email: user.email,
+  role: user.role,
+  organizationId: user.active_organization_id, // Include if user has active org
+});
+```
+
+### Testing Pattern
+**Mock OrganizationService for isolated tests**
+
+```typescript
+jest.mock('../../services/OrganizationService', () => ({
+  organizationService: {
+    getMemberRole: jest.fn(),
+  },
+}));
+
+describe('RBAC Middleware', () => {
+  beforeEach(() => {
+    // Clear cache before each test
+    permissionCache.clear();
+    jest.clearAllMocks();
+  });
+
+  it('should allow access when user has permission', async () => {
+    (organizationService.getMemberRole as jest.Mock).mockResolvedValue({
+      success: true,
+      data: OrganizationRole.ADMIN,
+    });
+
+    const middleware = requirePermission(Permission.MANAGE_MEMBERS);
+    await middleware(mockRequest, mockResponse, nextFunction);
+
+    expect(nextFunction).toHaveBeenCalled();
+  });
+});
+```
+
+**Benefits**:
+- Centralized permission management
+- Type-safe permission definitions
+- Performance-optimized with caching
+- Clear separation of concerns
+- Easily testable with mocks
+- Scalable to Redis for distributed systems
+- Comprehensive audit trail via events
