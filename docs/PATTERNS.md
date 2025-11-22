@@ -1365,11 +1365,14 @@ export function requirePermission(permission: Permission) {
 class PermissionCache {
   private cache: Map<string, CacheEntry>;
   private readonly TTL_MS = 5 * 60 * 1000; // 5 minutes
+  private cleanupTimer?: NodeJS.Timeout;
 
   constructor() {
     this.cache = new Map();
     // Cleanup expired entries every minute
-    setInterval(() => this.cleanup(), 60 * 1000);
+    // Use unref() so timer doesn't prevent process exit (important for tests)
+    this.cleanupTimer = setInterval(() => this.cleanup(), 60 * 1000);
+    this.cleanupTimer.unref();
   }
 
   get(organizationId: number, userId: number): OrganizationRole | null {
@@ -1405,18 +1408,31 @@ class PermissionCache {
       }
     }
   }
+
+  // Stop the cleanup timer and clear cache
+  // Call this in test teardown to prevent event loop hanging
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+    }
+    this.cache.clear();
+  }
 }
 ```
 
+**Important**: The `unref()` call on the cleanup timer is critical to prevent Jest from hanging. Without it, the timer keeps the Node.js event loop active, causing tests to never exit.
+
 ### Cache Invalidation Strategy
-**Invalidate cache when roles change**
+**Invalidate cache when roles change to prevent stale permissions**
 
 ```typescript
 // In MemberService after updating member role
 async updateMemberRole(input: UpdateMemberRoleInput): Promise<ServiceResponse<OrganizationMember>> {
   // ... update role in database ...
+  await client.query('COMMIT');
 
-  // Invalidate permission cache for this user
+  // CRITICAL: Invalidate permission cache for this user (security: prevent stale permissions)
   permissionCache.invalidate(input.organizationId, targetMember.user_id);
 
   // Emit event for external handlers
@@ -1431,7 +1447,36 @@ async updateMemberRole(input: UpdateMemberRoleInput): Promise<ServiceResponse<Or
 
   return { success: true, data: updated };
 }
+
+// In MemberService after removing member
+async removeMember(organizationId: number, memberId: number, actorId: number): Promise<ServiceResponse<void>> {
+  // ... soft delete member ...
+  await client.query('COMMIT');
+
+  // Invalidate permission cache for this user (security: prevent stale permissions)
+  permissionCache.invalidate(organizationId, targetMember.user_id);
+
+  return { success: true };
+}
+
+// In OrganizationService after ownership transfer
+async transferOwnership(
+  organizationId: number,
+  newOwnerId: number,
+  currentOwnerId: number
+): Promise<ServiceResponse<Organization>> {
+  // ... update owner_id and member roles ...
+  await client.query('COMMIT');
+
+  // Invalidate permission cache for both users (security: prevent stale roles)
+  permissionCache.invalidate(organizationId, currentOwnerId); // Old owner now admin
+  permissionCache.invalidate(organizationId, newOwnerId);     // New owner now owner
+
+  return { success: true, data: updated };
+}
 ```
+
+**Security Note**: Cache invalidation must happen immediately after role changes are committed to prevent unauthorized access windows. Without invalidation, demoted users retain elevated permissions until the 5-minute TTL expires.
 
 ### Performance Monitoring
 **Track slow permission checks**

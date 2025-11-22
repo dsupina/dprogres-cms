@@ -305,10 +305,11 @@ router.delete('/organization',
 - 14 permissions across 5 categories (billing, members, sites, content, analytics/data, read)
 - 5 hierarchical roles (owner > admin > editor > publisher > viewer)
 - In-memory permission caching with 5-minute TTL
-- Automatic cache cleanup every 60 seconds
+- Automatic cache cleanup every 60 seconds (unref'd to prevent event loop blocking)
 - Performance target: <20ms per check
 - Site isolation for multi-tenant data security
 - Organization context from JWT token
+- **Security Hardened**: Automatic cache invalidation on role changes, soft-delete filtering
 
 **Permissions Matrix**:
 - **Billing & Organization**: `MANAGE_BILLING`, `MANAGE_ORGANIZATION` (owner only)
@@ -322,7 +323,7 @@ router.delete('/organization',
 ```typescript
 import { permissionCache } from '../middleware/rbac';
 
-// Invalidate specific user-org combination
+// Invalidate specific user-org combination (automatic on role changes)
 permissionCache.invalidate(organizationId, userId);
 
 // Invalidate all cache entries for an organization
@@ -331,12 +332,24 @@ permissionCache.invalidateOrganization(organizationId);
 // Clear entire cache
 permissionCache.clear();
 
+// Stop cleanup timer and clear cache (use in test teardown)
+permissionCache.destroy();
+
 // Get cache statistics
 const stats = permissionCache.getStats(); // { size: number, ttl: number }
 ```
 
+**Automatic Cache Invalidation**: Cache is automatically invalidated when:
+- Member role is updated (`MemberService.updateMemberRole`)
+- Member is removed (`MemberService.removeMember`)
+- Member re-joins organization (`MemberService.acceptInvite`)
+- Ownership is transferred (`OrganizationService.transferOwnership`)
+
+This prevents stale permissions and ensures immediate security enforcement.
+
 **Integration**:
 - Works with `OrganizationService.getMemberRole()` for role resolution
+- **Security**: getMemberRole filters `deleted_at IS NULL` to exclude soft-deleted members
 - Requires `organizationId` in req, params, or body
 - Extends Express Request with `req.organizationId`
 - Returns 401 (unauthenticated), 400 (missing org), or 403 (denied)
@@ -348,7 +361,18 @@ const stats = permissionCache.getStats(); // { size: number, ttl: number }
 // TTL: 300 seconds
 ```
 
-**Tests**: `backend/src/__tests__/middleware/rbac.test.ts` (31 tests) + `backend/src/__tests__/config/permissions.test.ts` (29 tests) = 60 tests total, 100% pass rate
+**Tests**:
+- `backend/src/__tests__/middleware/rbac.test.ts` (35 tests - includes timer management & soft-delete tests)
+- `backend/src/__tests__/config/permissions.test.ts` (29 tests)
+- `backend/src/__tests__/services/MemberService.cache.test.ts` (5 tests - cache invalidation)
+- `backend/src/__tests__/services/OrganizationService.cache.test.ts` (3 tests - ownership transfer)
+- **Total**: 72 tests, 100% pass rate
+
+**Security Hardening** (4 P1 issues resolved):
+1. ✅ Cache invalidation on role changes (prevents stale permissions)
+2. ✅ Soft-delete filtering in getMemberRole (prevents removed users from regaining access)
+3. ✅ Dual cache invalidation on ownership transfer (old owner + new owner)
+4. ✅ Timer leak prevention with .unref() (prevents event loop blocking in tests)
 
 ---
 
