@@ -59,6 +59,7 @@ describe('MemberService', () => {
       }); // inviter role check
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // existing member check
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // pending invite check
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // DELETE old invites (expired/accepted)
       mockClientQuery.mockResolvedValueOnce({
         rows: [{ id: 1, organization_id: 1, email: 'newuser@example.com', role: 'editor' }],
       }); // INSERT invite
@@ -199,6 +200,45 @@ describe('MemberService', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBe('An active invitation for this email already exists');
       expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
+    });
+
+    it('should allow re-inviting a user whose previous invite was accepted', async () => {
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // BEGIN
+      mockClientQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org' }],
+      }); // organization check
+      mockClientQuery.mockResolvedValueOnce({
+        rows: [{ role: 'admin' }],
+      }); // inviter role check
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // existing member check (user left org)
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // no active pending invite
+      mockClientQuery.mockResolvedValueOnce({ rowCount: 1 }); // DELETE old accepted invite
+      mockClientQuery.mockResolvedValueOnce({
+        rows: [{ id: 2, organization_id: 1, email: 'newuser@example.com', role: 'editor' }],
+      }); // INSERT new invite
+      (jwt.sign as jest.Mock).mockReturnValue('test-token-456');
+      mockClientQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 2,
+            organization_id: 1,
+            email: 'newuser@example.com',
+            role: 'editor',
+            invite_token: 'test-token-456',
+          },
+        ],
+      }); // UPDATE invite with token
+      mockClientQuery.mockResolvedValueOnce({
+        rows: [{ email: 'admin@example.com', name: 'Admin User' }],
+      }); // inviter details
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+      const result = await memberService.inviteMember(validInput);
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBeDefined();
+      expect(result.data?.id).toBe(2); // New invite ID
+      expect(mockClientQuery).toHaveBeenCalledWith('COMMIT');
     });
   });
 
