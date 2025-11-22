@@ -437,17 +437,24 @@ async function handleSubscriptionUpdated(
       console.log(`Subscription upserted: ${subscription.id}, status: ${subscription.status}`);
     } else {
       // Missing metadata, try UPDATE only (assumes row exists from checkout.session.completed)
+      // This path handles dashboard upgrades/downgrades, so we must update pricing fields too
       const result = await client.query(
         `UPDATE subscriptions
-         SET status = $1,
-             current_period_start = $2,
-             current_period_end = $3,
-             cancel_at_period_end = $4,
-             canceled_at = $5,
+         SET stripe_price_id = $1,
+             amount_cents = $2,
+             currency = $3,
+             status = $4,
+             current_period_start = $5,
+             current_period_end = $6,
+             cancel_at_period_end = $7,
+             canceled_at = $8,
              updated_at = NOW()
-         WHERE stripe_subscription_id = $6
+         WHERE stripe_subscription_id = $9
          RETURNING id, organization_id`,
         [
+          subscription.items.data[0].price.id,
+          amountCents,
+          currency,
           subscription.status,
           new Date((subscription as any).current_period_start * 1000),
           new Date((subscription as any).current_period_end * 1000),
