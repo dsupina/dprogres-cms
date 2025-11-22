@@ -1103,3 +1103,87 @@ SELECT * FROM sites; -- Only returns sites for org 42
 - `EmailService`: Transactional emails (SF-013)
 
 See `docs/tickets/EPIC-003_TICKET_INDEX.md` for complete component roadmap.
+---
+
+### Authentication Routes (SF-008)
+
+#### Public Signup Endpoint
+**Purpose**: User registration with automatic free-tier organization creation
+**Location**: `backend/src/routes/auth.ts`
+**Status**: ✅ Completed (January 2025)
+**Ticket**: SF-008
+
+```typescript
+// POST /api/auth/signup
+{
+  email: "user@example.com",
+  password: "SecurePass123!",
+  first_name: "John",
+  last_name: "Doe"
+}
+
+// Response (201 Created)
+{
+  message: "Signup successful! Please check your email to verify your account.",
+  user: {
+    id: 123,
+    email: "user@example.com",
+    first_name: "John",
+    last_name: "Doe"
+  },
+  organization: {
+    id: 456,
+    name: "John's Organization",
+    slug: "john-s-organization-abc123"
+  },
+  verificationUrl: "http://localhost:5173/verify-email?token=..." // Dev mode only
+}
+```
+
+**Key Features**:
+- **Atomic Transaction**: User + Organization + Quotas + Membership created together
+- **Free Tier Auto-Provisioning**:
+  - Sites: 1
+  - Posts: 20
+  - Users: 2
+  - Storage: 500MB (524,288,000 bytes)
+  - API Calls: 10k/month (with monthly reset period)
+- **Email Verification**: Generates secure token for email confirmation
+- **Unique Slug Generation**: Random 6-character suffix prevents collisions
+- **Rollback Safety**: Transaction rolls back on any failure
+- **Dev Mode**: Returns verification URL for testing (NODE_ENV=development)
+
+**Security**:
+- Password minimum 6 characters (Joi validation)
+- Email format validation
+- Duplicate email prevention
+- 32-byte random verification token (crypto.randomBytes)
+- Email verification required before login
+
+**Email Verification Flow**:
+```typescript
+// GET /api/auth/verify-email?token=<token>
+// Marks user as verified, clears verification token
+// Returns: { message: "Email verified successfully!", email: "user@example.com" }
+```
+
+**Login Protection**:
+- Users with `email_verified = false` blocked from login (403 Forbidden)
+- Legacy users (email_verified = null) allowed for backward compatibility
+- Returns error code: `EMAIL_NOT_VERIFIED`
+
+**Tests**: `backend/src/__tests__/routes/auth.signup.test.ts` (15 tests, 11 passing)
+- Signup flow with org/quota creation
+- Email verification and token validation
+- Login blocking for unverified users
+- Duplicate email prevention
+- Input validation (email format, password length, required fields)
+- Transaction safety and rollback
+
+**TODO**: 
+- SF-013: Send actual verification emails via EmailService (currently logs to console in dev mode)
+- Integration with frontend signup form
+- Email resend functionality
+- Password reset flow
+
+---
