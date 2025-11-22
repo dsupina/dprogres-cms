@@ -129,6 +129,11 @@ describe('QuotaService', () => {
 
   describe('incrementQuota', () => {
     it('should increment quota successfully when within limit', async () => {
+      // Mock quota existence check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 50, quota_limit: 100 }],
+      });
+
       // Mock database function call
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ allowed: true }],
@@ -162,7 +167,28 @@ describe('QuotaService', () => {
       expect(eventSpy).toHaveBeenCalled();
     });
 
+    it('should return error when quota record does not exist', async () => {
+      // Mock quota existence check returning empty
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [],
+      });
+
+      const result = await quotaService.incrementQuota({
+        organizationId: 999,
+        dimension: 'sites',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('No quota record found');
+      expect(result.error).toContain('Quota may not be initialized');
+    });
+
     it('should return error when quota exceeded', async () => {
+      // Mock quota existence check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 99, quota_limit: 100 }],
+      });
+
       // Mock database function returning false
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ allowed: false }],
@@ -188,6 +214,11 @@ describe('QuotaService', () => {
     });
 
     it('should emit approaching_limit event at 80% threshold', async () => {
+      // Mock quota existence check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 80, quota_limit: 100 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ allowed: true }],
       });
@@ -222,6 +253,11 @@ describe('QuotaService', () => {
     });
 
     it('should emit approaching_limit event at 90% threshold', async () => {
+      // Mock quota existence check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 90, quota_limit: 100 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ allowed: true }],
       });
@@ -256,6 +292,11 @@ describe('QuotaService', () => {
     });
 
     it('should emit approaching_limit event at 95% threshold', async () => {
+      // Mock quota existence check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 95, quota_limit: 100 }],
+      });
+
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ allowed: true }],
       });
@@ -285,6 +326,47 @@ describe('QuotaService', () => {
         expect.objectContaining({
           percentage: 95,
           dimension: 'posts',
+        })
+      );
+    });
+
+    it('should emit limit_reached event at exactly 100% usage', async () => {
+      // Mock quota existence check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 99, quota_limit: 100 }],
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ allowed: true }],
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            dimension: 'posts',
+            current_usage: 100,
+            quota_limit: 100,
+            period_start: new Date(),
+            period_end: null,
+            last_reset_at: null,
+          },
+        ],
+      });
+
+      const eventSpy = jest.fn();
+      quotaService.on('quota:limit_reached', eventSpy);
+
+      await quotaService.incrementQuota({
+        organizationId: 1,
+        dimension: 'posts',
+      });
+
+      expect(eventSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: 1,
+          dimension: 'posts',
+          current: 100,
+          limit: 100,
         })
       );
     });

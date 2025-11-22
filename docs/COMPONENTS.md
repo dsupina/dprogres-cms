@@ -622,7 +622,8 @@ const rowsUpdated = await quotaService.resetAllMonthlyQuotas();
 
 **Lifecycle Events**:
 - `quota:approaching_limit` - Fired at 80%, 90%, 95% thresholds
-- `quota:exceeded` - Fired when quota limit reached (100%)
+- `quota:limit_reached` - Fired when usage reaches exactly 100% (NEW)
+- `quota:exceeded` - Fired when increment attempt is rejected (over limit)
 - `quota:reset` - Fired when monthly quotas are reset
 - `quota:override_set` - Fired when quota limit is manually changed
 - `quota:incremented` - Fired when usage is incremented

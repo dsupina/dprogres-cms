@@ -374,9 +374,34 @@ quotaService.on('quota:approaching_limit', (event) => {
 });
 ```
 
+### quota:limit_reached
+
+Fired when usage reaches exactly 100% of quota limit (limit fully consumed).
+
+**Event Payload**:
+```typescript
+{
+  organizationId: number;
+  dimension: QuotaDimension;
+  current: number;
+  limit: number;
+  timestamp: Date;
+}
+```
+
+**Usage**:
+```typescript
+quotaService.on('quota:limit_reached', (event) => {
+  // Alert that quota is fully consumed
+  emailService.sendQuotaFullyConsumed(event.organizationId, event);
+});
+```
+
+**Note**: This event fires when an increment brings usage to exactly 100%. The next increment attempt will fail with `quota:exceeded`.
+
 ### quota:exceeded
 
-Fired when usage reaches 100% of quota limit.
+Fired when an increment attempt is rejected because quota limit would be exceeded.
 
 **Event Payload**:
 ```typescript

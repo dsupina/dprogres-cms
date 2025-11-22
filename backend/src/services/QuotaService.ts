@@ -146,6 +146,19 @@ export class QuotaService extends EventEmitter {
     try {
       const { organizationId, dimension, amount = 1 } = input;
 
+      // First, check if quota record exists to distinguish from quota exceeded
+      const { rows: checkRows } = await pool.query(
+        'SELECT current_usage, quota_limit FROM usage_quotas WHERE organization_id = $1 AND dimension = $2',
+        [organizationId, dimension]
+      );
+
+      if (checkRows.length === 0) {
+        return {
+          success: false,
+          error: `No quota record found for organization ${organizationId} and dimension ${dimension}. Quota may not be initialized.`,
+        };
+      }
+
       // Use database function for atomic check-and-increment
       const { rows } = await pool.query(
         'SELECT check_and_increment_quota($1, $2, $3) as allowed',
@@ -174,8 +187,18 @@ export class QuotaService extends EventEmitter {
       if (statusResult.success && statusResult.data) {
         const percentageUsed = statusResult.data.percentage_used;
 
+        // Emit event at exactly 100% (limit fully consumed)
+        if (percentageUsed === 100) {
+          this.emit('quota:limit_reached', {
+            organizationId,
+            dimension,
+            current: statusResult.data.current_usage,
+            limit: statusResult.data.quota_limit,
+            timestamp: new Date(),
+          });
+        }
         // Emit approaching limit events at thresholds
-        if (percentageUsed >= 95) {
+        else if (percentageUsed >= 95) {
           this.emit('quota:approaching_limit', {
             organizationId,
             dimension,
