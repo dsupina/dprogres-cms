@@ -599,6 +599,15 @@ async function handleInvoicePaid(
     // Stripe value. Currency-aware display should be handled by frontend/reporting.
     const currency = invoice.currency || 'usd';
 
+    // Restore subscription to active if it was past_due (payment retry succeeded)
+    await client.query(
+      `UPDATE subscriptions
+       SET status = 'active',
+           updated_at = NOW()
+       WHERE id = $1 AND status = 'past_due'`,
+      [dbSubscriptionId]
+    );
+
     // Create invoice record
     await client.query(
       `INSERT INTO invoices (
