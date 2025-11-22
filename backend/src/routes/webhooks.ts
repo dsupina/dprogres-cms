@@ -40,6 +40,17 @@ function isTransientError(error: any): boolean {
     return true;
   }
 
+  // Event ordering issues - subscription/invoice not yet created (transient)
+  // These errors explicitly say "Event will be retried" in the error message
+  if (message.includes('event will be retried')) {
+    return true;
+  }
+
+  // Missing metadata errors - need to wait for subscription.created with metadata (transient)
+  if (message.includes('cannot create subscription') && message.includes('without metadata')) {
+    return true;
+  }
+
   // All other errors are permanent (validation, missing data, constraint violations)
   return false;
 }
