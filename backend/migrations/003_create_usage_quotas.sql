@@ -70,6 +70,7 @@ BEGIN
   SET current_usage = 0,
       last_reset_at = NOW(),
       period_start = NOW(),
+      period_end = period_end + INTERVAL '1 month',
       updated_at = NOW()
   WHERE dimension = 'api_calls'
     AND period_end IS NOT NULL
@@ -79,6 +80,30 @@ BEGIN
   RETURN rows_updated;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Backfill quota records for existing organizations
+-- This ensures all organizations (created before this migration) get default Free tier quotas
+INSERT INTO usage_quotas (organization_id, dimension, current_usage, quota_limit, period_start, period_end)
+SELECT
+  o.id,
+  dim.dimension,
+  0 AS current_usage,
+  dim.quota_limit,
+  NOW() AS period_start,
+  CASE
+    WHEN dim.dimension = 'api_calls' THEN NOW() + INTERVAL '1 month'
+    ELSE NULL
+  END AS period_end
+FROM organizations o
+CROSS JOIN (
+  VALUES
+    ('sites', 1),              -- Free tier: 1 site
+    ('posts', 100),            -- Free tier: 100 posts
+    ('users', 1),              -- Free tier: 1 user
+    ('storage_bytes', 1073741824),  -- Free tier: 1GB (1024^3 bytes)
+    ('api_calls', 10000)       -- Free tier: 10,000 API calls/month
+) AS dim(dimension, quota_limit)
+ON CONFLICT (organization_id, dimension) DO NOTHING;
 
 -- Comments
 COMMENT ON TABLE usage_quotas IS 'Usage tracking per organization per dimension';

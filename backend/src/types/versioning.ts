@@ -362,12 +362,30 @@ export function isVersionComment(obj: any): obj is VersionComment {
 // ============================================
 
 /**
+ * Error codes for service responses
+ */
+export enum ServiceErrorCode {
+  // Client errors (4xx)
+  VALIDATION_ERROR = 'VALIDATION_ERROR',           // 400
+  NOT_FOUND = 'NOT_FOUND',                         // 404
+  QUOTA_EXCEEDED = 'QUOTA_EXCEEDED',               // 403
+  UNAUTHORIZED = 'UNAUTHORIZED',                   // 401
+  FORBIDDEN = 'FORBIDDEN',                         // 403
+
+  // Server errors (5xx)
+  INTERNAL_ERROR = 'INTERNAL_ERROR',               // 500
+  DATABASE_ERROR = 'DATABASE_ERROR',               // 500
+  SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE',     // 503
+}
+
+/**
  * Standard service response wrapper
  */
 export interface ServiceResponse<T> {
   success: boolean;
   data?: T;
   error?: string;
+  errorCode?: ServiceErrorCode;
   metadata?: Record<string, any>;
 }
 

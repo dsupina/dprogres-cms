@@ -102,6 +102,194 @@ class PreviewService {
 }
 ```
 
+## Atomic Quota Management Pattern (SF-009)
+
+### Check-Then-Act with Atomic Operations
+**Prevent race conditions in multi-tenant quota enforcement**
+
+```typescript
+// CORRECT PATTERN: Check then increment atomically
+async function createPost(data: PostInput, organizationId: number): Promise<ServiceResponse<Post>> {
+  // 1. Check quota availability (does NOT increment)
+  const quotaCheck = await quotaService.checkQuota({
+    organizationId,
+    dimension: 'posts',
+    amount: 1,
+  });
+
+  if (!quotaCheck.success || !quotaCheck.data?.allowed) {
+    return {
+      success: false,
+      error: 'Post quota exceeded. Please upgrade your plan.',
+    };
+  }
+
+  // 2. Perform the actual operation
+  const post = await pool.query(
+    'INSERT INTO posts (...) VALUES (...) RETURNING *',
+    [data.title, data.content]
+  );
+
+  // 3. Increment quota atomically (uses database function with SELECT FOR UPDATE)
+  const incrementResult = await quotaService.incrementQuota({
+    organizationId,
+    dimension: 'posts',
+  });
+
+  if (!incrementResult.success) {
+    // Rollback: delete the post if quota increment failed
+    await pool.query('DELETE FROM posts WHERE id = $1', [post.rows[0].id]);
+    return {
+      success: false,
+      error: 'Failed to update quota. Please try again.',
+    };
+  }
+
+  return {
+    success: true,
+    data: post.rows[0],
+  };
+}
+
+// Decrement quota on deletion
+async function deletePost(postId: number, organizationId: number): Promise<ServiceResponse<void>> {
+  // 1. Delete the resource
+  await pool.query('DELETE FROM posts WHERE id = $1', [postId]);
+
+  // 2. Decrement quota (uses transaction with SELECT FOR UPDATE)
+  await quotaService.decrementQuota({
+    organizationId,
+    dimension: 'posts',
+  });
+
+  return { success: true };
+}
+```
+
+### Database-Level Atomicity
+**PostgreSQL function for check-and-increment**
+
+```sql
+-- Atomic check and increment with row-level locking
+CREATE OR REPLACE FUNCTION check_and_increment_quota(
+  org_id INTEGER,
+  quota_dimension VARCHAR(50),
+  increment_amount BIGINT DEFAULT 1
+) RETURNS BOOLEAN AS $$
+DECLARE
+  current_val BIGINT;
+  limit_val BIGINT;
+BEGIN
+  -- Lock row for update to prevent race conditions
+  SELECT current_usage, quota_limit INTO current_val, limit_val
+  FROM usage_quotas
+  WHERE organization_id = org_id AND dimension = quota_dimension
+  FOR UPDATE;
+
+  -- Check if within limit
+  IF current_val + increment_amount > limit_val THEN
+    RETURN FALSE;
+  END IF;
+
+  -- Increment usage
+  UPDATE usage_quotas
+  SET current_usage = current_usage + increment_amount,
+      updated_at = NOW()
+  WHERE organization_id = org_id AND dimension = quota_dimension;
+
+  RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+### Event-Driven Quota Monitoring
+**Proactive threshold notifications**
+
+```typescript
+// Listen for quota threshold events
+quotaService.on('quota:approaching_limit', async (event) => {
+  const { organizationId, dimension, percentage, current, limit } = event;
+
+  // Send warning email to organization owner
+  await emailService.sendQuotaWarning({
+    organizationId,
+    subject: `${dimension} quota at ${percentage}%`,
+    message: `You've used ${current} of ${limit} ${dimension}. Consider upgrading your plan.`,
+  });
+
+  // Log for analytics
+  await analytics.track('quota_threshold_reached', {
+    organization_id: organizationId,
+    dimension,
+    percentage,
+  });
+});
+
+quotaService.on('quota:exceeded', async (event) => {
+  const { organizationId, dimension } = event;
+
+  // Alert owner immediately
+  await emailService.sendQuotaExceeded({
+    organizationId,
+    dimension,
+  });
+
+  // Create support ticket if Enterprise
+  const org = await getOrganization(organizationId);
+  if (org.plan_tier === 'enterprise') {
+    await supportService.createTicket({
+      organizationId,
+      subject: `Quota exceeded: ${dimension}`,
+      priority: 'high',
+    });
+  }
+});
+```
+
+### Quota Dimensions and Reset Policies
+**Differentiate permanent vs. resetting quotas**
+
+```typescript
+// Permanent quotas (never reset)
+const PERMANENT_QUOTAS: QuotaDimension[] = ['sites', 'posts', 'users', 'storage_bytes'];
+
+// Resetting quotas (monthly)
+const MONTHLY_QUOTAS: QuotaDimension[] = ['api_calls'];
+
+// Scheduled job to reset monthly quotas (run on 1st of each month)
+async function resetMonthlyQuotasJob(): Promise<void> {
+  const result = await quotaService.resetAllMonthlyQuotas();
+  console.log(`Reset ${result.data} monthly quotas`);
+
+  // Emit event for monitoring
+  await analytics.track('monthly_quota_reset', {
+    quotas_reset: result.data,
+    timestamp: new Date(),
+  });
+}
+```
+
+### Anti-Patterns to Avoid
+
+```typescript
+// ❌ WRONG: Check and increment separately (race condition)
+const quotaCheck = await quotaService.checkQuota({...});
+if (quotaCheck.data?.allowed) {
+  await createPost(data); // Another request might increment here!
+  await quotaService.incrementQuota({...}); // Might exceed quota
+}
+
+// ❌ WRONG: Increment without checking
+await quotaService.incrementQuota({...}); // Will fail at limit, but action already performed
+await createPost(data);
+
+// ✅ CORRECT: Check, act, then atomically increment
+const quotaCheck = await quotaService.checkQuota({...});
+if (!quotaCheck.data?.allowed) return error;
+const post = await createPost(data);
+await quotaService.incrementQuota({...});
+```
+
 ## Database Partitioning Pattern (CV-006)
 
 ### Time-Based Table Partitioning
