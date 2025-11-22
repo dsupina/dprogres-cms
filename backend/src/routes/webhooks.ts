@@ -5,6 +5,9 @@ import type Stripe from 'stripe';
 
 const router = Router();
 
+// PostgreSQL INTEGER max value (2^31 - 1)
+const MAX_INT = 2147483647;
+
 /**
  * Stripe Webhook Endpoint
  *
@@ -109,9 +112,6 @@ router.post('/stripe', async (req: Request, res: Response) => {
     } finally {
       client.release();
     }
-
-    // Return 200 OK to acknowledge receipt
-    return res.status(200).json({ received: true });
   } catch (error: any) {
     console.error('Error processing webhook event:', error);
 
@@ -176,6 +176,23 @@ async function handleCheckoutCompleted(
   eventRecordId: number,
   providedClient?: any
 ): Promise<void> {
+  // Validate session has required fields
+  if (!session.subscription) {
+    throw new Error(`Checkout session ${session.id} missing subscription ID`);
+  }
+  if (!session.customer) {
+    throw new Error(`Checkout session ${session.id} missing customer ID`);
+  }
+
+  // Get subscription details from Stripe (BEFORE starting transaction to avoid holding locks during API call)
+  const subscriptionId = session.subscription as string;
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+  // Validate subscription has price information
+  if (!subscription.items?.data?.[0]?.price?.id) {
+    throw new Error(`Subscription ${subscription.id} has no price information`);
+  }
+
   // Use provided client (from outer transaction) or create new one
   const client = providedClient || await pool.connect();
   const useTransaction = !providedClient;
@@ -185,17 +202,19 @@ async function handleCheckoutCompleted(
       await client.query('BEGIN');
     }
 
-    // Get subscription details from Stripe
-    const subscriptionId = session.subscription as string;
-    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-
     // Extract metadata from session
     const organizationId = parseInt(session.metadata?.organization_id || '0');
     const planTier = session.metadata?.plan_tier as 'free' | 'starter' | 'pro' | 'enterprise';
     const billingCycle = session.metadata?.billing_cycle as 'monthly' | 'annual';
 
-    if (!organizationId || !planTier || !billingCycle) {
+    if (!organizationId || isNaN(organizationId) || !planTier || !billingCycle) {
       throw new Error('Missing required metadata in checkout session');
+    }
+
+    // Validate amount doesn't exceed PostgreSQL INTEGER max
+    const amountCents = subscription.items.data[0].price.unit_amount || 0;
+    if (amountCents > MAX_INT) {
+      throw new Error(`Subscription amount ${amountCents} exceeds max integer value`);
     }
 
     // Create subscription record
@@ -223,7 +242,7 @@ async function handleCheckoutCompleted(
         new Date((subscription as any).current_period_start * 1000),
         new Date((subscription as any).current_period_end * 1000),
         (subscription as any).cancel_at_period_end,
-        subscription.items.data[0].price.unit_amount || 0,
+        amountCents,
       ]
     );
 
@@ -272,6 +291,11 @@ async function handleSubscriptionUpdated(
       await client.query('BEGIN');
     }
 
+    // Validate subscription has price information
+    if (!subscription.items?.data?.[0]?.price?.id) {
+      throw new Error(`Subscription ${subscription.id} has no price information`);
+    }
+
     // Extract metadata for new subscriptions (may not exist for updates)
     const organizationId = parseInt((subscription as any).metadata?.organization_id || '0');
     const planTier = (subscription as any).metadata?.plan_tier as 'free' | 'starter' | 'pro' | 'enterprise' | undefined;
@@ -279,8 +303,14 @@ async function handleSubscriptionUpdated(
 
     let rows;
 
+    // Validate amount doesn't exceed PostgreSQL INTEGER max
+    const amountCents = subscription.items.data[0].price.unit_amount || 0;
+    if (amountCents > MAX_INT) {
+      throw new Error(`Subscription amount ${amountCents} exceeds max integer value`);
+    }
+
     // If we have full metadata, use UPSERT (handles both created and updated)
-    if (organizationId && planTier && billingCycle) {
+    if (organizationId && !isNaN(organizationId) && planTier && billingCycle) {
       const result = await client.query(
         `INSERT INTO subscriptions (
           organization_id, stripe_customer_id, stripe_subscription_id,
@@ -312,7 +342,7 @@ async function handleSubscriptionUpdated(
           new Date((subscription as any).current_period_end * 1000),
           (subscription as any).cancel_at_period_end,
           (subscription as any).canceled_at ? new Date((subscription as any).canceled_at * 1000) : null,
-          subscription.items.data[0].price.unit_amount || 0,
+          amountCents,
         ]
       );
       rows = result.rows;
@@ -456,8 +486,8 @@ async function handleInvoicePaid(
     // Find subscription in our database
     const stripeSubId = typeof (invoice as any).subscription === 'string' ? (invoice as any).subscription : (invoice as any).subscription?.id;
 
-    if (!stripeSubId) {
-      throw new Error(`No subscription ID found for invoice ${invoice.id}. Event will be retried.`);
+    if (!stripeSubId || stripeSubId.trim() === '') {
+      throw new Error(`No valid subscription ID found for invoice ${invoice.id}. Event will be retried.`);
     }
 
     const { rows: subRows } = await client.query(
@@ -474,6 +504,11 @@ async function handleInvoicePaid(
     }
 
     const { id: dbSubscriptionId, organization_id: organizationId } = subRows[0];
+
+    // Validate amounts don't exceed PostgreSQL INTEGER max
+    if (invoice.amount_due > MAX_INT || invoice.amount_paid > MAX_INT) {
+      throw new Error(`Invoice amounts exceed max integer value: due=${invoice.amount_due}, paid=${invoice.amount_paid}`);
+    }
 
     // Create invoice record
     await client.query(
@@ -499,8 +534,12 @@ async function handleInvoicePaid(
         invoice.invoice_pdf,
         invoice.hosted_invoice_url,
         invoice.billing_reason,
-        invoice.period_start ? new Date(invoice.period_start * 1000) : new Date(),
-        invoice.period_end ? new Date(invoice.period_end * 1000) : new Date(),
+        invoice.period_start !== null && invoice.period_start !== undefined
+          ? new Date(invoice.period_start * 1000)
+          : new Date(),
+        invoice.period_end !== null && invoice.period_end !== undefined
+          ? new Date(invoice.period_end * 1000)
+          : new Date(),
         new Date(),
       ]
     );
@@ -553,8 +592,8 @@ async function handleInvoiceFailed(
     // Find subscription in our database
     const stripeSubId = typeof (invoice as any).subscription === 'string' ? (invoice as any).subscription : (invoice as any).subscription?.id;
 
-    if (!stripeSubId) {
-      throw new Error(`No subscription ID found for failed invoice ${invoice.id}. Event will be retried.`);
+    if (!stripeSubId || stripeSubId.trim() === '') {
+      throw new Error(`No valid subscription ID found for failed invoice ${invoice.id}. Event will be retried.`);
     }
 
     const { rows: subRows } = await client.query(
@@ -571,6 +610,12 @@ async function handleInvoiceFailed(
     }
 
     const { id: dbSubscriptionId, organization_id: organizationId } = subRows[0];
+
+    // Validate amounts don't exceed PostgreSQL INTEGER max
+    const amountPaid = invoice.amount_paid || 0;
+    if (invoice.amount_due > MAX_INT || amountPaid > MAX_INT) {
+      throw new Error(`Invoice amounts exceed max integer value: due=${invoice.amount_due}, paid=${amountPaid}`);
+    }
 
     // Update subscription status to past_due
     await client.query(
@@ -597,14 +642,18 @@ async function handleInvoiceFailed(
         dbSubscriptionId,
         invoice.id,
         invoice.amount_due,
-        invoice.amount_paid || 0,
+        amountPaid,
         invoice.currency || 'usd',
         'open',
         invoice.invoice_pdf,
         invoice.hosted_invoice_url,
         invoice.billing_reason,
-        invoice.period_start ? new Date(invoice.period_start * 1000) : new Date(),
-        invoice.period_end ? new Date(invoice.period_end * 1000) : new Date(),
+        invoice.period_start !== null && invoice.period_start !== undefined
+          ? new Date(invoice.period_start * 1000)
+          : new Date(),
+        invoice.period_end !== null && invoice.period_end !== undefined
+          ? new Date(invoice.period_end * 1000)
+          : new Date(),
       ]
     );
 
