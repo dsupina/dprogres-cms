@@ -166,10 +166,13 @@ router.post('/stripe', async (req: Request, res: Response) => {
     const isRetryable = isTransientError(error);
 
     // Log error to subscription_events table (use INSERT...ON CONFLICT to handle race condition)
+    // CRITICAL: Must explicitly set processed_at = NULL to allow retries
+    // If initial INSERT failed (transient error), this creates new row. Schema has DEFAULT NOW()
+    // for processed_at, which would mark event as processed and prevent retries.
     try {
       await pool.query(
-        `INSERT INTO subscription_events (stripe_event_id, event_type, data, processing_error)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO subscription_events (stripe_event_id, event_type, data, processing_error, processed_at)
+         VALUES ($1, $2, $3, $4, NULL)
          ON CONFLICT (stripe_event_id) DO UPDATE
          SET processing_error = EXCLUDED.processing_error`,
         [event.id, event.type, JSON.stringify(event.data), error.message]
@@ -275,9 +278,10 @@ async function handleCheckoutCompleted(
       throw new Error('Missing required metadata in checkout session');
     }
 
-    // Calculate total amount from all subscription items (handles add-ons, metered billing)
+    // Calculate total amount from all subscription items (handles add-ons, metered billing, quantities)
+    // For seat-based billing: 5 users × $10/seat = $50, not $10
     const amountCents = subscription.items.data.reduce(
-      (sum, item) => sum + (item.price.unit_amount || 0),
+      (sum, item) => sum + ((item.price.unit_amount || 0) * (item.quantity || 1)),
       0
     );
 
@@ -372,9 +376,10 @@ async function handleSubscriptionUpdated(
 
     let rows;
 
-    // Calculate total amount from all subscription items (handles add-ons, metered billing)
+    // Calculate total amount from all subscription items (handles add-ons, metered billing, quantities)
+    // For seat-based billing: 5 users × $10/seat = $50, not $10
     const amountCents = subscription.items.data.reduce(
-      (sum, item) => sum + (item.price.unit_amount || 0),
+      (sum, item) => sum + ((item.price.unit_amount || 0) * (item.quantity || 1)),
       0
     );
 
