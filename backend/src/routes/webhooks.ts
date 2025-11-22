@@ -49,76 +49,65 @@ router.post('/stripe', async (req: Request, res: Response) => {
       [event.id, event.type, JSON.stringify(event.data)]
     );
 
-    // If no rows returned, event was already inserted (check if it was processed)
-    if (rows.length === 0) {
-      // Use transaction with SELECT FOR UPDATE to hold lock during processing
-      const client = await pool.connect();
+    // Always use transaction with locking to prevent concurrent processing
+    // This handles both first-time inserts and retries
+    const client = await pool.connect();
 
-      try {
-        await client.query('BEGIN');
+    try {
+      await client.query('BEGIN');
 
-        // Use SELECT FOR UPDATE to prevent concurrent processing of the same event
-        const { rows: existingRows } = await client.query(
-          `SELECT id, processed_at FROM subscription_events
-           WHERE stripe_event_id = $1
-           FOR UPDATE SKIP LOCKED`,
-          [event.id]
-        );
+      // Use SELECT FOR UPDATE to prevent concurrent processing of the same event
+      const { rows: existingRows } = await client.query(
+        `SELECT id, processed_at FROM subscription_events
+         WHERE stripe_event_id = $1
+         FOR UPDATE SKIP LOCKED`,
+        [event.id]
+      );
 
-        // If SKIP LOCKED returned no rows, another process is currently handling this event
-        if (existingRows.length === 0) {
-          await client.query('COMMIT');
-          console.log(`Event ${event.id} is being processed by another request, skipping`);
-          return res.status(200).json({ received: true, concurrent: true });
-        }
-
-        const existingEvent = existingRows[0];
-
-        // Check if already processed
-        if (existingEvent.processed_at) {
-          await client.query('COMMIT');
-          console.log(`Event ${event.id} already processed, skipping`);
-          return res.status(200).json({ received: true, duplicate: true });
-        }
-
-        // Event exists but wasn't processed (previous failure), retry processing
-        // We now hold the row lock (held until COMMIT), preventing concurrent processing
-        console.log(`Event ${event.id} exists but not processed, retrying`);
-        const eventRecordId = existingEvent.id;
-
-        await handleWebhookEvent(event, eventRecordId);
-
-        // Mark as successfully processed
-        await client.query(
-          `UPDATE subscription_events
-           SET processed_at = NOW()
-           WHERE id = $1`,
-          [eventRecordId]
-        );
-
+      // If SKIP LOCKED returned no rows, another process is currently handling this event
+      if (existingRows.length === 0) {
         await client.query('COMMIT');
-
-        return res.status(200).json({ received: true, retried: true });
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-      } finally {
-        client.release();
+        console.log(`Event ${event.id} is being processed by another request, skipping`);
+        return res.status(200).json({ received: true, concurrent: true });
       }
+
+      const existingEvent = existingRows[0];
+
+      // Check if already processed
+      if (existingEvent.processed_at) {
+        await client.query('COMMIT');
+        console.log(`Event ${event.id} already processed, skipping`);
+        return res.status(200).json({ received: true, duplicate: true });
+      }
+
+      // Process event (lock held until COMMIT)
+      // This handles both first-time events and retries
+      const isRetry = rows.length === 0;
+      if (isRetry) {
+        console.log(`Event ${event.id} exists but not processed, retrying`);
+      }
+
+      const eventRecordId = existingEvent.id;
+
+      await handleWebhookEvent(event, eventRecordId);
+
+      // Mark as successfully processed
+      await client.query(
+        `UPDATE subscription_events
+         SET processed_at = NOW()
+         WHERE id = $1`,
+        [eventRecordId]
+      );
+
+      await client.query('COMMIT');
+
+      return res.status(200).json({ received: true, retried: isRetry });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    const eventRecordId = rows[0].id;
-
-    // Route event to appropriate handler
-    await handleWebhookEvent(event, eventRecordId);
-
-    // Mark as successfully processed
-    await pool.query(
-      `UPDATE subscription_events
-       SET processed_at = NOW()
-       WHERE id = $1`,
-      [eventRecordId]
-    );
 
     // Return 200 OK to acknowledge receipt
     return res.status(200).json({ received: true });
