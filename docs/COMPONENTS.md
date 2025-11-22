@@ -574,6 +574,8 @@ const pendingInvites = await memberService.listPendingInvites(organizationId, us
 - **JWT Token Invites**: Secure 7-day expiration tokens with separate JWT_INVITE_SECRET
 - **Email Delivery**: AWS SES integration with branded HTML/text templates
 - **Custom Messages**: Inviters can include personal welcome messages
+- **Re-Invitation Support**: Can re-invite users who previously accepted and left organization
+- **Member Re-Activation**: UPSERT logic reactivates soft-deleted members instead of creating duplicates
 - **Duplicate Prevention**: Checks both existing members and pending invites
 - **Role-Based Access**: Only owner/admin can invite, update roles, remove members
 - **Email Verification**: Accept invite validates user email matches invite recipient
@@ -616,11 +618,17 @@ const pendingInvites = await memberService.listPendingInvites(organizationId, us
 **Integration Points**:
 - Uses SF-001 database schema (organization_invites, organization_members tables)
 - Requires deleted_at column on organization_members (migration 007)
+- Requires partial unique indexes for re-invitation support (migrations 008, 009)
 - Requires JWT_INVITE_SECRET environment variable
 - Requires AWS SES configuration (AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SES_SENDER_EMAIL)
 - Email templates in `backend/src/utils/email.ts`
 - JWT token generation/validation (7-day expiration)
 - Role hierarchy: owner → admin → editor → publisher → viewer
+
+**Database Migrations**:
+- **Migration 007**: Add deleted_at to organization_members
+- **Migration 008**: Partial unique index on organization_members (WHERE deleted_at IS NULL)
+- **Migration 009**: Partial unique index on organization_invites (WHERE accepted_at IS NULL)
 
 **GDPR/CCPA Compliance**:
 - Soft delete with `deleted_at` timestamp (not hard delete)
@@ -637,7 +645,10 @@ const pendingInvites = await memberService.listPendingInvites(organizationId, us
 - Role badge display
 - Fallback link for broken buttons
 
-**Tests**: `backend/src/__tests__/services/MemberService.test.ts` (33 tests, 100% passing)
+**Tests**: `backend/src/__tests__/services/MemberService.test.ts` (35 tests, 100% passing)
+- 33 original tests covering all service methods
+- 1 test for re-activating soft-deleted members (P1 fix)
+- 1 test for re-inviting users with accepted invites (P1 fix)
 
 ---
 

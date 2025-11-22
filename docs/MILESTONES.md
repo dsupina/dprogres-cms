@@ -189,11 +189,13 @@
 - ✅ JWT-based invite tokens with 7-day expiration (separate JWT_INVITE_SECRET)
 - ✅ AWS SES email integration with branded HTML/text templates
 - ✅ Custom welcome message support from inviters
+- ✅ Re-invitation support for users who previously accepted and left
+- ✅ UPSERT logic to re-activate soft-deleted members instead of duplicates
 - ✅ GDPR/CCPA compliant soft delete with 30-day retention policy
-- ✅ Comprehensive unit test suite (33 tests, 100% passing)
+- ✅ Comprehensive unit test suite (35 tests, 100% passing)
 - ✅ Role-based access control (owner/admin for management operations)
 - ✅ Email utility service with template generation
-- ✅ Database migration for soft delete on organization_members
+- ✅ Database migrations for soft delete + partial unique indexes (007, 008, 009)
 
 **Service Methods**:
 1. `inviteMember(input)` - Create invite, generate JWT, send email via AWS SES (owner/admin only)
@@ -208,6 +210,8 @@
 - **JWT Token Invites**: Secure 7-day expiration with type verification (separate secret from auth tokens)
 - **Email Delivery**: AWS SES with branded HTML emails + plain text fallback
 - **Custom Messages**: Inviters can include personal welcome messages in invites
+- **Re-Invitation Support**: Can re-invite users who previously accepted and left organization (P1 fix)
+- **Member Re-Activation**: UPSERT logic reactivates soft-deleted members instead of creating duplicates (P1 fix)
 - **Duplicate Prevention**: Checks both existing members AND pending invites
 - **Email Verification**: Accept invite validates user email matches invite recipient
 - **Role-Based Access**: Only owner/admin can invite, update roles, remove members
@@ -233,16 +237,18 @@
 - Dependencies: @aws-sdk/client-ses (AWS SES SDK v3)
 - Integration: Extends EventEmitter, returns ServiceResponse<T>
 
-**Test Coverage** (All 33 Tests Passing):
+**Test Coverage** (All 35 Tests Passing):
 
-**inviteMember (8 tests)**:
+**inviteMember (9 tests)**:
+- ✅ Allow re-inviting users with accepted invites (P1 fix)
 - ✅ Successful invite with email delivery
 - ✅ Invalid email/role validation
 - ✅ Organization/inviter verification
 - ✅ Duplicate member/invite prevention
 - ✅ Permission checks (owner/admin only)
 
-**acceptInvite (9 tests)**:
+**acceptInvite (10 tests)**:
+- ✅ Re-activate soft-deleted membership when accepting invite (P1 fix)
 - ✅ Successful invite acceptance
 - ✅ Token validation (invalid, expired, wrong type)
 - ✅ Email verification matches invite
@@ -300,7 +306,9 @@
 - GDPR/CCPA compliant data retention policy
 
 **Database Changes**:
-- Added `deleted_at` TIMESTAMP column to organization_members table (migration 007)
+- **Migration 007**: Added `deleted_at` TIMESTAMP column to organization_members table
+- **Migration 008**: Partial unique index on organization_members (WHERE deleted_at IS NULL) - Allows re-inviting removed members (P1 fix)
+- **Migration 009**: Partial unique index on organization_invites (WHERE accepted_at IS NULL) - Allows re-inviting users with accepted invites (P1 fix)
 - Added partial index `idx_organization_members_deleted_at` for active member queries
 - Added partial index `idx_organization_members_retention` for GDPR retention queries
 - Soft delete maintains foreign key relationships for audit compliance
@@ -324,6 +332,26 @@ AWS_SES_SENDER_NAME=DProgres CMS
 - AWS SES for production email delivery (development uses placeholder credentials)
 - JWT token generation with separate secret for security isolation
 - Events can be consumed by audit logging system, notification system
+
+**P1 Fixes (Post-Review)**:
+
+After automated code review, two P1 issues were identified and fixed:
+
+**Issue 1: Re-inviting soft-deleted members**
+- **Problem**: UNIQUE constraint on `(organization_id, user_id)` prevented re-inviting users who were previously removed
+- **Solution**:
+  - Migration 008: Replaced UNIQUE constraint with partial unique index `WHERE deleted_at IS NULL`
+  - Service: Added UPSERT logic in `acceptInvite()` to re-activate soft-deleted members
+- **Impact**: Users who leave and rejoin organizations now reuse existing member record instead of failing with duplicate key error
+
+**Issue 2: Re-inviting users with accepted invites**
+- **Problem**: UNIQUE constraint on `(organization_id, email)` in organization_invites prevented re-inviting users whose previous invite was accepted
+- **Solution**:
+  - Migration 009: Replaced UNIQUE constraint with partial unique index `WHERE accepted_at IS NULL`
+  - Service: Added DELETE query in `inviteMember()` to clean up old accepted/expired invites
+- **Impact**: Users can be re-invited after accepting and leaving, enabling rehire/rejoin workflows
+
+Both fixes use the **partial unique index pattern** to enforce uniqueness only on active records, allowing historical records to remain for audit purposes.
 
 **GDPR/CCPA Compliance Implementation**:
 - Soft delete with `deleted_at` timestamp (not hard delete)
