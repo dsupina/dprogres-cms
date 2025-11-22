@@ -377,14 +377,14 @@ export class MemberService extends EventEmitter {
         };
       }
 
-      // Check if user is already a member (in case they were added directly)
-      const { rows: existingMembers } = await client.query(
+      // Check if user is already an active member
+      const { rows: activeMembers } = await client.query(
         `SELECT id FROM organization_members
          WHERE organization_id = $1 AND user_id = $2 AND deleted_at IS NULL`,
         [invite.organization_id, userId]
       );
 
-      if (existingMembers.length > 0) {
+      if (activeMembers.length > 0) {
         await client.query('ROLLBACK');
         return {
           success: false,
@@ -392,14 +392,36 @@ export class MemberService extends EventEmitter {
         };
       }
 
-      // Create organization membership
-      const { rows: [member] } = await client.query<OrganizationMember>(
-        `INSERT INTO organization_members
-         (organization_id, user_id, role, invited_by)
-         VALUES ($1, $2, $3, $4)
-         RETURNING *`,
-        [invite.organization_id, userId, invite.role, invite.invited_by]
+      // Check for soft-deleted membership (user was previously removed)
+      const { rows: deletedMembers } = await client.query<OrganizationMember>(
+        `SELECT id FROM organization_members
+         WHERE organization_id = $1 AND user_id = $2 AND deleted_at IS NOT NULL`,
+        [invite.organization_id, userId]
       );
+
+      let member: OrganizationMember;
+
+      if (deletedMembers.length > 0) {
+        // Re-activate soft-deleted membership (UPSERT pattern)
+        const { rows: [reactivated] } = await client.query<OrganizationMember>(
+          `UPDATE organization_members
+           SET deleted_at = NULL, role = $1, invited_by = $2, joined_at = NOW()
+           WHERE organization_id = $3 AND user_id = $4
+           RETURNING *`,
+          [invite.role, invite.invited_by, invite.organization_id, userId]
+        );
+        member = reactivated;
+      } else {
+        // Create new organization membership
+        const { rows: [created] } = await client.query<OrganizationMember>(
+          `INSERT INTO organization_members
+           (organization_id, user_id, role, invited_by)
+           VALUES ($1, $2, $3, $4)
+           RETURNING *`,
+          [invite.organization_id, userId, invite.role, invite.invited_by]
+        );
+        member = created;
+      }
 
       // Mark invite as accepted
       await client.query(
