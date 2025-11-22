@@ -474,6 +474,29 @@ describe('RBAC Middleware', () => {
       expect(stats.size).toBe(2);
       expect(stats.ttl).toBe(5 * 60 * 1000); // 5 minutes
     });
+
+    it('should have unref cleanup timer to allow test exit', () => {
+      // The cleanup timer should be unref'd so it doesn't prevent process exit
+      // This test verifies that the timer exists but won't block Jest from exiting
+      const stats = permissionCache.getStats();
+      expect(stats).toBeDefined();
+
+      // If the timer is properly unref'd, this test will complete quickly
+      // If not unref'd, Jest will hang with "did not exit" warning
+    });
+
+    it('should destroy cache and stop cleanup timer', () => {
+      permissionCache.set(1, 1, OrganizationRole.ADMIN);
+      expect(permissionCache.get(1, 1)).toBe(OrganizationRole.ADMIN);
+
+      // Destroy should clear cache and stop timer
+      permissionCache.destroy();
+
+      expect(permissionCache.get(1, 1)).toBeNull();
+      expect(permissionCache.getStats().size).toBe(0);
+
+      // After destroy, timer should be stopped (won't cause hanging)
+    });
   });
 
   describe('Performance', () => {

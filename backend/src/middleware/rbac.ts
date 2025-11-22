@@ -49,11 +49,14 @@ interface CacheEntry {
 class PermissionCache {
   private cache: Map<string, CacheEntry>;
   private readonly TTL_MS = 5 * 60 * 1000; // 5 minutes
+  private cleanupTimer?: NodeJS.Timeout;
 
   constructor() {
     this.cache = new Map();
     // Cleanup expired entries every minute
-    setInterval(() => this.cleanup(), 60 * 1000);
+    // Use unref() so timer doesn't prevent process exit (important for tests)
+    this.cleanupTimer = setInterval(() => this.cleanup(), 60 * 1000);
+    this.cleanupTimer.unref();
   }
 
   /**
@@ -140,6 +143,18 @@ class PermissionCache {
    * Clear all cache (for testing)
    */
   clear(): void {
+    this.cache.clear();
+  }
+
+  /**
+   * Stop the cleanup timer and clear cache
+   * Call this in test teardown to prevent event loop hanging
+   */
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+    }
     this.cache.clear();
   }
 }
