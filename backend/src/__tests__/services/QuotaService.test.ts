@@ -444,6 +444,22 @@ describe('QuotaService', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('No quota record found');
     });
+
+    it('should handle connection failure gracefully (P1)', async () => {
+      // Simulate pool exhausted / DB unavailable
+      mockPoolConnect.mockRejectedValueOnce(new Error('Connection pool exhausted'));
+
+      const result = await quotaService.decrementQuota({
+        organizationId: 1,
+        dimension: 'sites',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('INTERNAL_ERROR');
+      expect(result.error).toContain('Connection pool exhausted');
+      // Should NOT call release since client was never acquired
+      expect(mockClientRelease).not.toHaveBeenCalled();
+    });
   });
 
   describe('getQuotaStatus', () => {

@@ -261,11 +261,13 @@ export class QuotaService extends EventEmitter {
    * Uses SELECT FOR UPDATE to prevent race conditions
    */
   async decrementQuota(input: DecrementQuotaInput): Promise<ServiceResponse<boolean>> {
-    const client = await pool.connect();
+    let client;
 
     try {
       const { organizationId, dimension, amount = 1 } = input;
 
+      // Acquire connection inside try block to handle connection failures
+      client = await pool.connect();
       await client.query('BEGIN');
 
       // Lock row and get current usage
@@ -314,7 +316,14 @@ export class QuotaService extends EventEmitter {
         data: true,
       };
     } catch (error: any) {
-      await client.query('ROLLBACK');
+      if (client) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          // Rollback may fail if connection was lost
+          console.error('Error rolling back transaction:', rollbackError);
+        }
+      }
       console.error('Error decrementing quota:', error);
       return {
         success: false,
@@ -322,7 +331,9 @@ export class QuotaService extends EventEmitter {
         errorCode: ServiceErrorCode.INTERNAL_ERROR,
       };
     } finally {
-      client.release();
+      if (client) {
+        client.release();
+      }
     }
   }
 
