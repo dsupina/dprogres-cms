@@ -91,6 +91,9 @@ describe('OrganizationService', () => {
     });
 
     it('should return error if name is empty', async () => {
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // BEGIN
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
       const result = await organizationService.createOrganization({
         name: '',
         ownerId: 1,
@@ -98,11 +101,13 @@ describe('OrganizationService', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Organization name is required');
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
     });
 
     it('should return error if owner does not exist', async () => {
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // BEGIN
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // user not found
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
       const result = await organizationService.createOrganization({
         name: 'Test Org',
@@ -111,6 +116,7 @@ describe('OrganizationService', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Owner user not found');
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
     });
 
     it('should return error if slug generation fails after retries', async () => {
@@ -119,6 +125,7 @@ describe('OrganizationService', () => {
       mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] }); // attempt 1 fail
       mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 2 }] }); // attempt 2 fail
       mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 3 }] }); // attempt 3 fail
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
       const result = await organizationService.createOrganization({
         name: 'Test Org',
@@ -127,6 +134,7 @@ describe('OrganizationService', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Failed to generate unique slug');
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
     });
   });
 
@@ -338,16 +346,29 @@ describe('OrganizationService', () => {
       expect(result.data?.owner_id).toBe(2);
     });
 
+    it('should return error if attempting self-transfer', async () => {
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // BEGIN
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+      const result = await organizationService.transferOwnership(1, 1, 1);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Cannot transfer ownership to yourself');
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
+    });
+
     it('should return error if user is not current owner', async () => {
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // BEGIN
       mockClientQuery.mockResolvedValueOnce({
         rows: [{ id: 1, owner_id: 2 }],
       });
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
       const result = await organizationService.transferOwnership(1, 3, 1);
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Only current owner can transfer ownership');
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
     });
 
     it('should return error if new owner is not a member', async () => {
@@ -356,21 +377,25 @@ describe('OrganizationService', () => {
         rows: [{ id: 1, owner_id: 1 }],
       });
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // not a member
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
       const result = await organizationService.transferOwnership(1, 999, 1);
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('New owner must be an existing organization member');
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
     });
 
     it('should return error if organization not found', async () => {
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // BEGIN
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // org not found
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
       const result = await organizationService.transferOwnership(999, 2, 1);
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Organization not found');
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
     });
   });
 

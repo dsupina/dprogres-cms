@@ -131,10 +131,12 @@ export class OrganizationService extends EventEmitter {
 
       // Validate inputs
       if (!name || name.trim().length === 0) {
+        await client.query('ROLLBACK');
         return { success: false, error: 'Organization name is required' };
       }
 
       if (!ownerId) {
+        await client.query('ROLLBACK');
         return { success: false, error: 'Owner ID is required' };
       }
 
@@ -145,12 +147,14 @@ export class OrganizationService extends EventEmitter {
       );
 
       if (users.length === 0) {
+        await client.query('ROLLBACK');
         return { success: false, error: 'Owner user not found' };
       }
 
       // Generate unique slug
       const slugResult = await this.generateUniqueSlug(name);
       if (!slugResult.success) {
+        await client.query('ROLLBACK');
         return { success: false, error: slugResult.error };
       }
 
@@ -397,6 +401,15 @@ export class OrganizationService extends EventEmitter {
     try {
       await client.query('BEGIN');
 
+      // Prevent self-transfer (would downgrade owner to admin)
+      if (newOwnerId === currentOwnerId) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          error: 'Cannot transfer ownership to yourself',
+        };
+      }
+
       // Verify current user is owner
       const { rows: orgs } = await client.query(
         `SELECT id, owner_id FROM organizations
@@ -405,12 +418,14 @@ export class OrganizationService extends EventEmitter {
       );
 
       if (orgs.length === 0) {
+        await client.query('ROLLBACK');
         return { success: false, error: 'Organization not found' };
       }
 
       const organization = orgs[0];
 
       if (organization.owner_id !== currentOwnerId) {
+        await client.query('ROLLBACK');
         return {
           success: false,
           error: 'Only current owner can transfer ownership',
@@ -425,6 +440,7 @@ export class OrganizationService extends EventEmitter {
       );
 
       if (members.length === 0) {
+        await client.query('ROLLBACK');
         return {
           success: false,
           error: 'New owner must be an existing organization member',
