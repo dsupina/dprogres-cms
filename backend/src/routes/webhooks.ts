@@ -92,10 +92,10 @@ router.post('/stripe', async (req: Request, res: Response) => {
       // Pass client to handlers to avoid deadlock (outer transaction holds row lock)
       await handleWebhookEvent(event, eventRecordId, client);
 
-      // Mark as successfully processed
+      // Mark as successfully processed (clear any prior error from failed attempts)
       await client.query(
         `UPDATE subscription_events
-         SET processed_at = NOW()
+         SET processed_at = NOW(), processing_error = NULL
          WHERE id = $1`,
         [eventRecordId]
       );
