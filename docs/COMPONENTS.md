@@ -436,6 +436,96 @@ const upgrade = await subscriptionService.upgradeSubscription(
 
 ---
 
+#### Organization Service (SF-005)
+**Purpose**: Organization management with ownership, membership, and access control
+**Location**: `backend/src/services/OrganizationService.ts`
+**Status**: ✅ Completed (January 2025)
+
+```typescript
+// Usage Example
+import { organizationService } from '../services/OrganizationService';
+
+// Create organization with auto-generated unique slug
+const org = await organizationService.createOrganization({
+  name: 'Acme Corporation',
+  ownerId: 1,
+  logoUrl: 'https://example.com/logo.png', // Optional
+});
+
+// Get organization with member count
+const orgWithMembers = await organizationService.getOrganization(orgId, userId);
+
+// Update organization details (owner only)
+const updated = await organizationService.updateOrganization(
+  orgId,
+  { name: 'New Name', logoUrl: 'https://example.com/new-logo.png' },
+  userId
+);
+
+// Soft delete organization (owner only, sets deleted_at)
+await organizationService.deleteOrganization(orgId, userId);
+
+// Transfer ownership (updates roles: new owner→owner, old owner→admin)
+const transferred = await organizationService.transferOwnership(
+  orgId,
+  newOwnerId,
+  currentOwnerId
+);
+
+// List all organizations where user is a member
+const userOrgs = await organizationService.listUserOrganizations(userId);
+
+// Validate user access (checks membership)
+const hasAccess = await organizationService.validateAccess(orgId, userId);
+
+// Get member's role
+const role = await organizationService.getMemberRole(orgId, userId);
+```
+
+**Key Features**:
+- **Auto-Slug Generation**: URL-safe slugs with 6-char random suffix (retry up to 3 times on collision)
+- **Owner Auto-Membership**: Automatically adds owner as member with "owner" role on creation
+- **Soft Delete**: Uses `deleted_at` timestamp for audit trail (not hard delete)
+- **Ownership Transfer**: Validates new owner is existing member, updates roles atomically
+- **Member Counting**: Separate query for performance on large member lists
+- **Event-Driven Architecture**: Extends EventEmitter for lifecycle hooks
+- **ServiceResponse Pattern**: Consistent error handling with success/error states
+- **Transaction Support**: Uses database transactions for atomic multi-step operations
+- **Site Isolation**: All operations validate organization membership
+
+**Service Methods**:
+1. `createOrganization(input)` - Create organization with unique slug + add owner as member
+2. `getOrganization(orgId, userId)` - Get organization with member count (access check)
+3. `updateOrganization(orgId, updates, userId)` - Update name/logo (owner only)
+4. `deleteOrganization(orgId, userId)` - Soft delete with timestamp (owner only)
+5. `transferOwnership(orgId, newOwnerId, currentOwnerId)` - Transfer ownership + update roles
+6. `listUserOrganizations(userId)` - List all organizations where user is member
+7. `validateAccess(orgId, userId)` - Check if user has access to organization
+8. `getMemberRole(orgId, userId)` - Get member's role in organization
+
+**Lifecycle Events**:
+- `organization:created` - Fired when organization is created
+- `organization:updated` - Fired when organization details are updated
+- `organization:deleted` - Fired when organization is soft deleted
+- `organization:ownership_transferred` - Fired when ownership is transferred
+
+**Exported Interfaces**:
+- `Organization` - Complete organization data model
+- `OrganizationWithMembers` - Organization with member count
+- `OrganizationMember` - Member entity with role
+- `CreateOrganizationInput` - Input parameters for creation
+- `UpdateOrganizationInput` - Input parameters for updates
+
+**Integration Points**:
+- Uses SF-001 database schema (organizations, organization_members tables)
+- Requires deleted_at column (added in migration 006)
+- Foreign key cascades handle content deletion
+- Role hierarchy: owner → admin → editor → publisher → viewer
+
+**Tests**: `backend/src/__tests__/services/OrganizationService.test.ts` (31 tests, 100% passing)
+
+---
+
 ## Database Components
 
 ### Core Tables
