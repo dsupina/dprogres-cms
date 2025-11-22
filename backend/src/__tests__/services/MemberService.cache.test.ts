@@ -258,8 +258,8 @@ describe('MemberService Cache Invalidation', () => {
       const organizationId = 1;
       const userId = 10;
 
-      // User exists in cache as OWNER
-      permissionCache.set(organizationId, userId, OrganizationRole.OWNER);
+      // User exists in cache as ADMIN (using ADMIN instead of OWNER since owners cannot be removed)
+      permissionCache.set(organizationId, userId, OrganizationRole.ADMIN);
 
       // Mock successful removal
       const mockClient = {
@@ -280,7 +280,7 @@ describe('MemberService Cache Invalidation', () => {
               sql.includes('id = $1') &&
               params && params[0] === 1) {
             return Promise.resolve({
-              rows: [{ id: 1, role: 'owner', user_id: userId }],
+              rows: [{ id: 1, role: 'admin', user_id: userId }], // Changed from 'owner' to 'admin'
             });
           }
 
