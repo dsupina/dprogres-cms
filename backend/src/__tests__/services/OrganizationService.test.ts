@@ -164,23 +164,33 @@ describe('OrganizationService', () => {
       expect(result.data?.member_count).toBe(5);
     });
 
-    it('should return error if user has no access', async () => {
-      mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // no access
-
-      const result = await organizationService.getOrganization(1, 999);
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('User does not have access to this organization');
-    });
-
     it('should return error if organization not found', async () => {
-      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] }); // access ok
       mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // org not found
 
       const result = await organizationService.getOrganization(999, 1);
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Organization not found');
+    });
+
+    it('should return error if user has no access', async () => {
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{
+          id: 1,
+          name: 'Test Org',
+          slug: 'test-org',
+          owner_id: 1,
+          plan_tier: 'free',
+          created_at: new Date(),
+          updated_at: new Date(),
+        }],
+      }); // org exists
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // no access
+
+      const result = await organizationService.getOrganization(1, 999);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('User does not have access to this organization');
     });
   });
 

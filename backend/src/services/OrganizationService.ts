@@ -208,13 +208,7 @@ export class OrganizationService extends EventEmitter {
     userId: number
   ): Promise<ServiceResponse<OrganizationWithMembers>> {
     try {
-      // Validate access
-      const accessResult = await this.validateAccess(organizationId, userId);
-      if (!accessResult.success) {
-        return { success: false, error: accessResult.error };
-      }
-
-      // Get organization
+      // Check organization exists first (better error messages)
       const { rows: orgs } = await pool.query<Organization>(
         `SELECT * FROM organizations
          WHERE id = $1 AND deleted_at IS NULL`,
@@ -226,6 +220,12 @@ export class OrganizationService extends EventEmitter {
       }
 
       const organization = orgs[0];
+
+      // Validate access
+      const accessResult = await this.validateAccess(organizationId, userId);
+      if (!accessResult.success) {
+        return { success: false, error: accessResult.error };
+      }
 
       // Get member count (separate query for performance)
       const { rows: [{ count }] } = await pool.query<{ count: string }>(
