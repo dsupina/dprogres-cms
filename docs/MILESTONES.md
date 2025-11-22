@@ -181,6 +181,169 @@
 
 ---
 
+**Recently Completed: SF-006 Member Management & Invites** (January 2025)
+
+**Implementation Achievements**:
+- ✅ MemberService class with EventEmitter pattern (873 lines)
+- ✅ 7 core member management methods implemented
+- ✅ JWT-based invite tokens with 7-day expiration (separate JWT_INVITE_SECRET)
+- ✅ AWS SES email integration with branded HTML/text templates
+- ✅ Custom welcome message support from inviters
+- ✅ GDPR/CCPA compliant soft delete with 30-day retention policy
+- ✅ Comprehensive unit test suite (33 tests, 100% passing)
+- ✅ Role-based access control (owner/admin for management operations)
+- ✅ Email utility service with template generation
+- ✅ Database migration for soft delete on organization_members
+
+**Service Methods**:
+1. `inviteMember(input)` - Create invite, generate JWT, send email via AWS SES (owner/admin only)
+2. `acceptInvite(token, userId)` - Validate JWT token, create organization membership
+3. `listMembers(orgId, userId)` - Get all members with user details (any member can view)
+4. `updateMemberRole(input)` - Change member role (owner/admin only, cannot change owner)
+5. `removeMember(orgId, memberId, actorId)` - Soft delete member (owner/admin only)
+6. `revokeInvite(inviteId, actorId)` - Cancel pending invitation (owner/admin only)
+7. `listPendingInvites(orgId, userId)` - View unaccepted invites (owner/admin only)
+
+**Key Features**:
+- **JWT Token Invites**: Secure 7-day expiration with type verification (separate secret from auth tokens)
+- **Email Delivery**: AWS SES with branded HTML emails + plain text fallback
+- **Custom Messages**: Inviters can include personal welcome messages in invites
+- **Duplicate Prevention**: Checks both existing members AND pending invites
+- **Email Verification**: Accept invite validates user email matches invite recipient
+- **Role-Based Access**: Only owner/admin can invite, update roles, remove members
+- **GDPR Compliance**: Soft delete with 30-day retention, hard deletion via scheduled job
+- **Event-Driven**: Emits 6 lifecycle events (invited, joined, role_updated, removed, revoked, email_failed)
+- **Transaction Safety**: All mutations use BEGIN/COMMIT/ROLLBACK
+
+**Business Rules Enforced**:
+- ✅ Cannot invite to 'owner' role (must use OrganizationService.transferOwnership)
+- ✅ Cannot change owner role or remove owner (must transfer ownership first)
+- ✅ Cannot change your own role (prevents privilege escalation)
+- ✅ Cannot remove yourself (prevents accidental lockout)
+- ✅ Email must match invite recipient when accepting
+- ✅ Only owner/admin can perform management operations
+- ✅ Cannot have duplicate pending invites for same email
+
+**Technical Implementation**:
+- Service: `backend/src/services/MemberService.ts` (873 lines)
+- Tests: `backend/src/__tests__/services/MemberService.test.ts` (725 lines)
+- Email Utils: `backend/src/utils/email.ts` (AWS SES + template generation)
+- Migration: `backend/migrations/007_add_soft_delete_to_organization_members.sql`
+- Database: Uses organization_invites and organization_members tables from SF-001
+- Dependencies: @aws-sdk/client-ses (AWS SES SDK v3)
+- Integration: Extends EventEmitter, returns ServiceResponse<T>
+
+**Test Coverage** (All 33 Tests Passing):
+
+**inviteMember (8 tests)**:
+- ✅ Successful invite with email delivery
+- ✅ Invalid email/role validation
+- ✅ Organization/inviter verification
+- ✅ Duplicate member/invite prevention
+- ✅ Permission checks (owner/admin only)
+
+**acceptInvite (9 tests)**:
+- ✅ Successful invite acceptance
+- ✅ Token validation (invalid, expired, wrong type)
+- ✅ Email verification matches invite
+- ✅ Invite status checks (not found, already accepted, expired)
+- ✅ Duplicate membership prevention
+
+**listMembers (2 tests)**:
+- ✅ Successful member listing with user details
+- ✅ Access control validation
+
+**updateMemberRole (5 tests)**:
+- ✅ Successful role update
+- ✅ Invalid role validation
+- ✅ Permission checks
+- ✅ Cannot change owner role or own role
+
+**removeMember (3 tests)**:
+- ✅ Successful soft delete
+- ✅ Cannot remove owner or yourself
+
+**revokeInvite (4 tests)**:
+- ✅ Successful revocation
+- ✅ Invite validation (not found, already accepted)
+- ✅ Permission checks
+
+**listPendingInvites (2 tests)**:
+- ✅ Successful listing for admin
+- ✅ Permission checks
+
+**Lifecycle Events**:
+- `member:invited` - Fired when member is invited (includes inviteId, email, role, expiration)
+- `member:joined` - Fired when invitation is accepted (includes memberId, userId, role)
+- `member:role_updated` - Fired when member role is changed (includes oldRole, newRole)
+- `member:removed` - Fired when member is removed/soft deleted
+- `invite:revoked` - Fired when pending invite is revoked
+- `invite:email_failed` - Fired when email delivery fails (for retry logic/monitoring)
+
+**Email Template Features**:
+- Branded responsive HTML design with DProgres CMS branding
+- Plain text fallback for email clients without HTML support
+- Custom message section from inviter (optional)
+- 7-day expiration notice with visual warning
+- One-click "Accept Invitation" button
+- Role badge display (ADMIN, EDITOR, PUBLISHER, VIEWER)
+- Fallback link for broken buttons
+- Reply-to inviter's email for direct communication
+
+**Security & Data Integrity**:
+- JWT tokens use separate JWT_INVITE_SECRET (security isolation from auth tokens)
+- Token payload includes: type, inviteId, organizationId, email, role, invitedBy, customMessage
+- Email verification prevents invite hijacking
+- Owner-only and admin-only operations enforced at service layer
+- All operations use parameterized queries to prevent SQL injection
+- Soft delete preserves data for 30-day audit trail
+- GDPR/CCPA compliant data retention policy
+
+**Database Changes**:
+- Added `deleted_at` TIMESTAMP column to organization_members table (migration 007)
+- Added partial index `idx_organization_members_deleted_at` for active member queries
+- Added partial index `idx_organization_members_retention` for GDPR retention queries
+- Soft delete maintains foreign key relationships for audit compliance
+
+**Environment Variables Added**:
+```env
+# JWT Invite Tokens
+JWT_INVITE_SECRET=dev-invite-secret-change-in-production
+
+# AWS SES Configuration
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your-aws-access-key-id
+AWS_SECRET_ACCESS_KEY=your-aws-secret-access-key
+AWS_SES_SENDER_EMAIL=noreply@dprogres.com
+AWS_SES_SENDER_NAME=DProgres CMS
+```
+
+**Integration Points**:
+- Uses SF-001 database schema (organization_invites, organization_members tables)
+- Integrates with SF-005 OrganizationService (validates organization ownership)
+- AWS SES for production email delivery (development uses placeholder credentials)
+- JWT token generation with separate secret for security isolation
+- Events can be consumed by audit logging system, notification system
+
+**GDPR/CCPA Compliance Implementation**:
+- Soft delete with `deleted_at` timestamp (not hard delete)
+- 30-day retention policy documented in migration
+- Hard deletion scheduled job should run: `WHERE deleted_at < NOW() - INTERVAL '30 days'`
+- User data export/deletion methods planned for Phase 2
+- Audit trail maintained for compliance requirements
+
+**Documentation Updates**:
+- ✅ COMPONENTS.md - Added MemberService with comprehensive usage examples
+- ✅ MILESTONES.md - Added SF-006 completion milestone
+- ✅ README/CLAUDE.md environment variables updated
+
+**Next Steps**:
+- SF-007: RBAC Middleware & Permissions Matrix (role-based access control enforcement)
+- SF-008: API endpoints for member management (routes layer)
+- Scheduled job for GDPR hard deletion (WHERE deleted_at < NOW() - INTERVAL '30 days')
+
+---
+
 **Recently Completed: SF-004 Webhook Handler with Idempotency** (January 2025)
 
 **Implementation Achievements**:

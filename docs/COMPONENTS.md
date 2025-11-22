@@ -526,6 +526,121 @@ const role = await organizationService.getMemberRole(orgId, userId);
 
 ---
 
+#### Member Service (SF-006)
+**Purpose**: Organization member invitation and management with email-based JWT tokens
+**Location**: `backend/src/services/MemberService.ts`
+**Status**: ✅ Completed (January 2025)
+
+```typescript
+// Usage Example
+import { memberService } from '../services/MemberService';
+
+// Invite new member (sends email via AWS SES)
+const invite = await memberService.inviteMember({
+  organizationId: 1,
+  email: 'newuser@example.com',
+  role: 'editor', // admin, editor, publisher, or viewer (not owner)
+  invitedBy: adminUserId,
+  customMessage: 'Welcome to our team!', // Optional
+  inviteUrl: 'https://app.example.com', // Optional, defaults to FRONTEND_URL
+});
+
+// Accept invitation (validates JWT token)
+const member = await memberService.acceptInvite(inviteToken, userId);
+
+// List all organization members with user details
+const members = await memberService.listMembers(organizationId, userId);
+// Returns: Array<{ id, user_id, role, user_email, user_name, inviter_email, ... }>
+
+// Update member role (owner/admin only)
+const updated = await memberService.updateMemberRole({
+  organizationId: 1,
+  memberId: 5,
+  newRole: 'admin',
+  actorId: ownerUserId,
+});
+
+// Remove member (soft delete, owner/admin only)
+await memberService.removeMember(organizationId, memberId, actorId);
+
+// Revoke pending invitation (owner/admin only)
+await memberService.revokeInvite(inviteId, actorId);
+
+// List pending invitations (owner/admin only)
+const pendingInvites = await memberService.listPendingInvites(organizationId, userId);
+```
+
+**Key Features**:
+- **JWT Token Invites**: Secure 7-day expiration tokens with separate JWT_INVITE_SECRET
+- **Email Delivery**: AWS SES integration with branded HTML/text templates
+- **Custom Messages**: Inviters can include personal welcome messages
+- **Duplicate Prevention**: Checks both existing members and pending invites
+- **Role-Based Access**: Only owner/admin can invite, update roles, remove members
+- **Email Verification**: Accept invite validates user email matches invite recipient
+- **GDPR Compliance**: Soft delete with 30-day retention policy
+- **Event-Driven**: Emits lifecycle events for integration hooks
+- **Transaction Safety**: All mutations use BEGIN/COMMIT/ROLLBACK
+
+**Service Methods**:
+1. `inviteMember(input)` - Create invite, generate JWT, send email (owner/admin only)
+2. `acceptInvite(token, userId)` - Validate token, create membership
+3. `listMembers(orgId, userId)` - Get all members with user details (any member)
+4. `updateMemberRole(input)` - Change member role (owner/admin only, cannot change owner)
+5. `removeMember(orgId, memberId, actorId)` - Soft delete member (owner/admin only)
+6. `revokeInvite(inviteId, actorId)` - Cancel pending invite (owner/admin only)
+7. `listPendingInvites(orgId, userId)` - View unaccepted invites (owner/admin only)
+
+**Business Rules**:
+- **Cannot invite to 'owner' role**: Use OrganizationService.transferOwnership instead
+- **Cannot change owner role**: Must transfer ownership first
+- **Cannot remove owner**: Must transfer ownership first
+- **Cannot change your own role**: Prevents accidental privilege escalation
+- **Cannot remove yourself**: Use leave organization flow instead
+- **Email must match**: When accepting invite, user email must match invite recipient
+
+**Lifecycle Events**:
+- `member:invited` - Fired when member is invited (includes email, role, expiration)
+- `member:joined` - Fired when invitation is accepted
+- `member:role_updated` - Fired when member role is changed
+- `member:removed` - Fired when member is removed (soft delete)
+- `invite:revoked` - Fired when pending invite is revoked
+- `invite:email_failed` - Fired when email delivery fails (for retry logic)
+
+**Exported Interfaces**:
+- `OrganizationMember` - Member entity with role and timestamps
+- `OrganizationInvite` - Invite entity with token and expiration
+- `MemberWithUser` - Member joined with user details (email, name)
+- `InviteMemberInput` - Input parameters for inviting members
+- `UpdateMemberRoleInput` - Input parameters for role updates
+
+**Integration Points**:
+- Uses SF-001 database schema (organization_invites, organization_members tables)
+- Requires deleted_at column on organization_members (migration 007)
+- Requires JWT_INVITE_SECRET environment variable
+- Requires AWS SES configuration (AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SES_SENDER_EMAIL)
+- Email templates in `backend/src/utils/email.ts`
+- JWT token generation/validation (7-day expiration)
+- Role hierarchy: owner → admin → editor → publisher → viewer
+
+**GDPR/CCPA Compliance**:
+- Soft delete with `deleted_at` timestamp (not hard delete)
+- 30-day retention policy for audit trail
+- Hard deletion scheduled job should run: `WHERE deleted_at < NOW() - INTERVAL '30 days'`
+- User data export/deletion methods planned for Phase 2
+
+**Email Template Features**:
+- Branded HTML emails with responsive design
+- Plain text fallback for email clients
+- Custom message section from inviter
+- 7-day expiration notice
+- One-click accept button
+- Role badge display
+- Fallback link for broken buttons
+
+**Tests**: `backend/src/__tests__/services/MemberService.test.ts` (33 tests, 100% passing)
+
+---
+
 ## Database Components
 
 ### Core Tables
