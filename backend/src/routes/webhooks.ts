@@ -13,6 +13,30 @@ const MAX_INT = 2147483647;
 const ZERO_DECIMAL_CURRENCIES = ['jpy', 'krw', 'vnd', 'clp', 'pyg', 'xaf', 'xof', 'xpf', 'bif', 'djf', 'gnf', 'kmf', 'mga', 'rwf', 'ugx'];
 
 /**
+ * Convert Stripe Unix timestamp (seconds since epoch) to JavaScript Date in UTC
+ * @param unixTimestamp - Unix timestamp in seconds (Stripe format)
+ * @returns Date object in UTC timezone
+ */
+function fromUnixTimestamp(unixTimestamp: number | null | undefined): Date | null {
+  if (unixTimestamp === null || unixTimestamp === undefined) {
+    return null;
+  }
+  // Unix timestamps are always in UTC. Multiplying by 1000 converts seconds to milliseconds.
+  // The resulting Date object represents the same moment in time, stored internally as UTC.
+  return new Date(unixTimestamp * 1000);
+}
+
+/**
+ * Get current timestamp in UTC
+ * @returns Date object representing current moment in UTC
+ */
+function nowUtc(): Date {
+  // new Date() always creates a date in UTC internally, regardless of system timezone.
+  // The timestamp is always UTC - toString() may show local timezone, but toISOString() shows UTC.
+  return new Date();
+}
+
+/**
  * Determine if an error is transient (should retry) or permanent (should not retry)
  */
 function isTransientError(error: any): boolean {
@@ -85,7 +109,19 @@ router.post('/stripe', async (req: Request, res: Response) => {
       STRIPE_WEBHOOK_SECRET!
     );
   } catch (err: any) {
-    console.error('Webhook signature verification failed:', err.message);
+    // Security logging: potential attack or misconfiguration
+    const securityEvent = {
+      type: 'webhook_signature_failed',
+      ip: req.ip || req.socket.remoteAddress,
+      userAgent: req.get('user-agent'),
+      timestamp: new Date().toISOString(),
+      error: err.message,
+    };
+    console.error('SECURITY: Webhook signature verification failed:', JSON.stringify(securityEvent));
+
+    // TODO: Send to security monitoring system (e.g., Sentry, DataDog)
+    // await securityMonitor.logEvent(securityEvent);
+
     return res.status(400).json({ error: `Webhook Error: ${err.message}` });
   }
 
@@ -285,6 +321,12 @@ async function handleCheckoutCompleted(
     throw new Error(`Checkout session ${session.id} missing customer ID`);
   }
 
+  // Validate Stripe customer ID format (must start with 'cus_')
+  const customerId = typeof session.customer === 'string' ? session.customer : session.customer.id;
+  if (!customerId || !/^cus_/.test(customerId)) {
+    throw new Error(`Invalid Stripe customer ID format: ${customerId}`);
+  }
+
   const subscriptionId = session.subscription as string;
 
   // Use preloaded subscription (fetched BEFORE outer transaction) or fetch now
@@ -306,12 +348,21 @@ async function handleCheckoutCompleted(
     }
 
     // Extract metadata from session
-    const organizationId = parseInt(session.metadata?.organization_id || '0');
+    const orgIdStr = session.metadata?.organization_id;
+    if (!orgIdStr) {
+      throw new Error('Missing organization_id in checkout session metadata');
+    }
+
+    const organizationId = parseInt(orgIdStr, 10);
+    if (isNaN(organizationId) || organizationId < 1) {
+      throw new Error(`Invalid organization_id: ${orgIdStr} (must be positive integer)`);
+    }
+
     const planTier = session.metadata?.plan_tier as 'free' | 'starter' | 'pro' | 'enterprise';
     const billingCycle = session.metadata?.billing_cycle as 'monthly' | 'annual';
 
-    if (!organizationId || isNaN(organizationId) || !planTier || !billingCycle) {
-      throw new Error('Missing required metadata in checkout session');
+    if (!planTier || !billingCycle) {
+      throw new Error('Missing plan_tier or billing_cycle in checkout session metadata');
     }
 
     // Calculate total amount from all subscription items (handles add-ons, metered billing, quantities)
@@ -351,8 +402,8 @@ async function handleCheckoutCompleted(
         planTier,
         billingCycle,
         subscription.status,
-        new Date((subscription as any).current_period_start * 1000),
-        new Date((subscription as any).current_period_end * 1000),
+        fromUnixTimestamp((subscription as any).current_period_start),
+        fromUnixTimestamp((subscription as any).current_period_end),
         (subscription as any).cancel_at_period_end,
         amountCents,
         currency,
@@ -410,7 +461,17 @@ async function handleSubscriptionUpdated(
     }
 
     // Extract metadata for new subscriptions (may not exist for updates)
-    const organizationId = parseInt((subscription as any).metadata?.organization_id || '0');
+    const orgIdStr = (subscription as any).metadata?.organization_id;
+    let organizationId: number | undefined;
+
+    // Parse and validate organization ID if present
+    if (orgIdStr) {
+      organizationId = parseInt(orgIdStr, 10);
+      if (isNaN(organizationId) || organizationId < 1) {
+        throw new Error(`Invalid organization_id in subscription metadata: ${orgIdStr}`);
+      }
+    }
+
     const planTier = (subscription as any).metadata?.plan_tier as 'free' | 'starter' | 'pro' | 'enterprise' | undefined;
     const billingCycle = (subscription as any).metadata?.billing_cycle as 'monthly' | 'annual' | undefined;
 
@@ -432,7 +493,7 @@ async function handleSubscriptionUpdated(
     const currency = subscription.currency?.toUpperCase() || 'USD';
 
     // If we have full metadata, use UPSERT (handles both created and updated)
-    if (organizationId && !isNaN(organizationId) && planTier && billingCycle) {
+    if (organizationId !== undefined && planTier && billingCycle) {
       const result = await client.query(
         `INSERT INTO subscriptions (
           organization_id, stripe_customer_id, stripe_subscription_id,
@@ -461,10 +522,10 @@ async function handleSubscriptionUpdated(
           planTier,
           billingCycle,
           subscription.status,
-          new Date((subscription as any).current_period_start * 1000),
-          new Date((subscription as any).current_period_end * 1000),
+          fromUnixTimestamp((subscription as any).current_period_start),
+          fromUnixTimestamp((subscription as any).current_period_end),
           (subscription as any).cancel_at_period_end,
-          (subscription as any).canceled_at ? new Date((subscription as any).canceled_at * 1000) : null,
+          fromUnixTimestamp((subscription as any).canceled_at),
           amountCents,
           currency,
         ]
@@ -492,10 +553,10 @@ async function handleSubscriptionUpdated(
           amountCents,
           currency,
           subscription.status,
-          new Date((subscription as any).current_period_start * 1000),
-          new Date((subscription as any).current_period_end * 1000),
+          fromUnixTimestamp((subscription as any).current_period_start),
+          fromUnixTimestamp((subscription as any).current_period_end),
           (subscription as any).cancel_at_period_end,
-          (subscription as any).canceled_at ? new Date((subscription as any).canceled_at * 1000) : null,
+          fromUnixTimestamp((subscription as any).canceled_at),
           subscription.id,
         ]
       );
@@ -564,7 +625,7 @@ async function handleSubscriptionDeleted(
        WHERE stripe_subscription_id = $2
        RETURNING id, organization_id`,
       [
-        subscription.canceled_at ? new Date(subscription.canceled_at * 1000) : new Date(),
+        fromUnixTimestamp(subscription.canceled_at) || nowUtc(),
         subscription.id,
       ]
     );
@@ -651,6 +712,23 @@ async function handleInvoicePaid(
     // Stripe value. Currency-aware display should be handled by frontend/reporting.
     const currency = invoice.currency || 'usd';
 
+    // Validate and sanitize billing_reason
+    // Known Stripe billing reasons: subscription_create, subscription_cycle, subscription_update,
+    // subscription, manual, upcoming, subscription_threshold, automatic_pending_invoice_item_invoice
+    const validBillingReasons = [
+      'subscription_create',
+      'subscription_cycle',
+      'subscription_update',
+      'subscription',
+      'manual',
+      'upcoming',
+      'subscription_threshold',
+      'automatic_pending_invoice_item_invoice',
+    ];
+    const billingReason = invoice.billing_reason && validBillingReasons.includes(invoice.billing_reason)
+      ? invoice.billing_reason
+      : (invoice.billing_reason?.substring(0, 100) || 'unknown');
+
     // Restore subscription to active if it was past_due (payment retry succeeded)
     await client.query(
       `UPDATE subscriptions
@@ -682,14 +760,10 @@ async function handleInvoicePaid(
         'paid',
         invoice.invoice_pdf,
         invoice.hosted_invoice_url,
-        invoice.billing_reason,
-        invoice.period_start !== null && invoice.period_start !== undefined
-          ? new Date(invoice.period_start * 1000)
-          : new Date(),
-        invoice.period_end !== null && invoice.period_end !== undefined
-          ? new Date(invoice.period_end * 1000)
-          : new Date(),
-        new Date(),
+        billingReason,
+        fromUnixTimestamp(invoice.period_start) || nowUtc(),
+        fromUnixTimestamp(invoice.period_end) || nowUtc(),
+        nowUtc(),
       ]
     );
 
@@ -771,6 +845,23 @@ async function handleInvoiceFailed(
     // Stripe value. Currency-aware display should be handled by frontend/reporting.
     const currency = invoice.currency || 'usd';
 
+    // Validate and sanitize billing_reason
+    // Known Stripe billing reasons: subscription_create, subscription_cycle, subscription_update,
+    // subscription, manual, upcoming, subscription_threshold, automatic_pending_invoice_item_invoice
+    const validBillingReasons = [
+      'subscription_create',
+      'subscription_cycle',
+      'subscription_update',
+      'subscription',
+      'manual',
+      'upcoming',
+      'subscription_threshold',
+      'automatic_pending_invoice_item_invoice',
+    ];
+    const billingReason = invoice.billing_reason && validBillingReasons.includes(invoice.billing_reason)
+      ? invoice.billing_reason
+      : (invoice.billing_reason?.substring(0, 100) || 'unknown');
+
     // Update subscription status to past_due
     await client.query(
       `UPDATE subscriptions
@@ -800,13 +891,9 @@ async function handleInvoiceFailed(
         'open',
         invoice.invoice_pdf,
         invoice.hosted_invoice_url,
-        invoice.billing_reason,
-        invoice.period_start !== null && invoice.period_start !== undefined
-          ? new Date(invoice.period_start * 1000)
-          : new Date(),
-        invoice.period_end !== null && invoice.period_end !== undefined
-          ? new Date(invoice.period_end * 1000)
-          : new Date(),
+        billingReason,
+        fromUnixTimestamp(invoice.period_start) || nowUtc(),
+        fromUnixTimestamp(invoice.period_end) || nowUtc(),
       ]
     );
 
