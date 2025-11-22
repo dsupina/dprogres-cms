@@ -40,6 +40,13 @@ export const registerSchema = Joi.object({
   last_name: Joi.string().max(100).optional()
 });
 
+export const signupSchema = Joi.object({
+  email: Joi.string().email().required(),
+  password: Joi.string().min(6).required(),
+  first_name: Joi.string().max(100).required(),
+  last_name: Joi.string().max(100).required()
+});
+
 // Post validation schemas
 export const createPostSchema = Joi.object({
   title: Joi.string().max(255).required(),
