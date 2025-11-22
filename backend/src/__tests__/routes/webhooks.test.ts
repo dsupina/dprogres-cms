@@ -210,16 +210,10 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock Stripe subscription retrieve
       mockStripeSubscriptionsRetrieve.mockResolvedValueOnce(mockSubscription);
 
-      // Mock inner transaction BEGIN (for handleCheckoutCompleted)
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock INSERT subscription
+      // Mock INSERT subscription - handler uses outer client
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });
 
-      // Mock UPDATE subscription_events
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock inner COMMIT (for handleCheckoutCompleted)
+      // Mock UPDATE subscription_events (link event to subscription)
       mockClientQuery.mockResolvedValueOnce({});
 
       // Mock UPDATE to set processed_at
@@ -288,16 +282,10 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock Stripe subscription retrieve
       mockStripeSubscriptionsRetrieve.mockResolvedValueOnce(mockSubscription);
 
-      // Mock inner transaction BEGIN (handleCheckoutCompleted)
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock INSERT subscription
+      // Mock INSERT subscription (handler uses outer client, no inner transaction)
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });
 
-      // Mock UPDATE subscription_events
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock inner COMMIT (handleCheckoutCompleted)
+      // Mock UPDATE subscription_events (link event to subscription)
       mockClientQuery.mockResolvedValueOnce({});
 
       // Mock UPDATE to set processed_at
@@ -359,16 +347,10 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock SELECT FOR UPDATE - returns row with processed_at=NULL
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 2, processed_at: null }] });
 
-      // Mock inner transaction BEGIN (handleSubscriptionUpdated)
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock INSERT subscription (UPSERT)
+      // Mock INSERT subscription (UPSERT) - handler uses outer client
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, organization_id: 1 }] });
 
-      // Mock UPDATE subscription_events
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock inner COMMIT (handleSubscriptionUpdated)
+      // Mock UPDATE subscription_events (link event to subscription)
       mockClientQuery.mockResolvedValueOnce({});
 
       // Mock UPDATE to set processed_at
@@ -423,16 +405,10 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock SELECT FOR UPDATE - returns row with processed_at=NULL
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 2, processed_at: null }] });
 
-      // Mock inner transaction BEGIN (handleSubscriptionUpdated)
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock UPDATE subscription
+      // Mock UPDATE subscription - handler uses outer client
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, organization_id: 1 }] });
 
-      // Mock UPDATE subscription_events
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock inner COMMIT (handleSubscriptionUpdated)
+      // Mock UPDATE subscription_events (link event to subscription)
       mockClientQuery.mockResolvedValueOnce({});
 
       // Mock UPDATE to set processed_at
@@ -473,16 +449,10 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock SELECT FOR UPDATE - returns row with processed_at=NULL
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 3, processed_at: null }] });
 
-      // Mock inner transaction BEGIN (handleSubscriptionDeleted)
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock UPDATE subscription to canceled
+      // Mock UPDATE subscription to canceled - handler uses outer client
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, organization_id: 1 }] });
 
-      // Mock UPDATE subscription_events
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock inner COMMIT (handleSubscriptionDeleted)
+      // Mock UPDATE subscription_events (link event to subscription)
       mockClientQuery.mockResolvedValueOnce({});
 
       // Mock UPDATE to set processed_at
@@ -527,19 +497,13 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock SELECT FOR UPDATE - returns row with processed_at=NULL
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 4, processed_at: null }] });
 
-      // Mock inner transaction BEGIN (handleInvoicePaid)
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock SELECT subscription
+      // Mock SELECT subscription - handler uses outer client
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, organization_id: 1 }] });
 
       // Mock INSERT invoice
       mockClientQuery.mockResolvedValueOnce({});
 
-      // Mock UPDATE subscription_events
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock inner COMMIT (handleInvoicePaid)
+      // Mock UPDATE subscription_events (link event to subscription)
       mockClientQuery.mockResolvedValueOnce({});
 
       // Mock UPDATE to set processed_at
@@ -584,10 +548,7 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock SELECT FOR UPDATE - returns row with processed_at=NULL
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 5, processed_at: null }] });
 
-      // Mock inner transaction BEGIN (handleInvoiceFailed)
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock SELECT subscription
+      // Mock SELECT subscription - handler uses outer client
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, organization_id: 1 }] });
 
       // Mock UPDATE subscription to past_due
@@ -596,10 +557,7 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock INSERT invoice
       mockClientQuery.mockResolvedValueOnce({});
 
-      // Mock UPDATE subscription_events
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock inner COMMIT (handleInvoiceFailed)
+      // Mock UPDATE subscription_events (link event to subscription)
       mockClientQuery.mockResolvedValueOnce({});
 
       // Mock UPDATE to set processed_at
@@ -686,14 +644,8 @@ describe('Webhooks - Stripe Event Handler', () => {
         id: 'sub_test123',
       });
 
-      // Mock inner transaction BEGIN (handleCheckoutCompleted)
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock will fail due to missing metadata
+      // Mock will fail due to missing metadata in handler (uses outer client)
       mockClientQuery.mockRejectedValueOnce(new Error('Missing required metadata'));
-
-      // Mock inner ROLLBACK (handleCheckoutCompleted)
-      mockClientQuery.mockResolvedValueOnce({});
 
       // Mock outer ROLLBACK (for locking)
       mockClientQuery.mockResolvedValueOnce({});

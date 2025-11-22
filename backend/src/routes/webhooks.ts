@@ -89,7 +89,8 @@ router.post('/stripe', async (req: Request, res: Response) => {
 
       const eventRecordId = existingEvent.id;
 
-      await handleWebhookEvent(event, eventRecordId);
+      // Pass client to handlers to avoid deadlock (outer transaction holds row lock)
+      await handleWebhookEvent(event, eventRecordId, client);
 
       // Mark as successfully processed
       await client.query(
@@ -134,27 +135,31 @@ router.post('/stripe', async (req: Request, res: Response) => {
 /**
  * Route webhook event to appropriate handler
  */
-async function handleWebhookEvent(event: Stripe.Event, eventRecordId: number): Promise<void> {
+async function handleWebhookEvent(
+  event: Stripe.Event,
+  eventRecordId: number,
+  client?: any
+): Promise<void> {
   switch (event.type) {
     case 'checkout.session.completed':
-      await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session, eventRecordId);
+      await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session, eventRecordId, client);
       break;
 
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
-      await handleSubscriptionUpdated(event.data.object as Stripe.Subscription, eventRecordId);
+      await handleSubscriptionUpdated(event.data.object as Stripe.Subscription, eventRecordId, client);
       break;
 
     case 'customer.subscription.deleted':
-      await handleSubscriptionDeleted(event.data.object as Stripe.Subscription, eventRecordId);
+      await handleSubscriptionDeleted(event.data.object as Stripe.Subscription, eventRecordId, client);
       break;
 
     case 'invoice.payment_succeeded':
-      await handleInvoicePaid(event.data.object as Stripe.Invoice, eventRecordId);
+      await handleInvoicePaid(event.data.object as Stripe.Invoice, eventRecordId, client);
       break;
 
     case 'invoice.payment_failed':
-      await handleInvoiceFailed(event.data.object as Stripe.Invoice, eventRecordId);
+      await handleInvoiceFailed(event.data.object as Stripe.Invoice, eventRecordId, client);
       break;
 
     default:
@@ -168,12 +173,17 @@ async function handleWebhookEvent(event: Stripe.Event, eventRecordId: number): P
  */
 async function handleCheckoutCompleted(
   session: Stripe.Checkout.Session,
-  eventRecordId: number
+  eventRecordId: number,
+  providedClient?: any
 ): Promise<void> {
-  const client = await pool.connect();
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
 
   try {
-    await client.query('BEGIN');
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
 
     // Get subscription details from Stripe
     const subscriptionId = session.subscription as string;
@@ -227,14 +237,20 @@ async function handleCheckoutCompleted(
       [organizationId, dbSubscriptionId, eventRecordId]
     );
 
-    await client.query('COMMIT');
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
 
     console.log(`Checkout completed for org ${organizationId}, subscription ${subscriptionId}`);
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
     throw error;
   } finally {
-    client.release();
+    if (useTransaction) {
+      client.release();
+    }
   }
 }
 
@@ -244,12 +260,17 @@ async function handleCheckoutCompleted(
  */
 async function handleSubscriptionUpdated(
   subscription: Stripe.Subscription,
-  eventRecordId: number
+  eventRecordId: number,
+  providedClient?: any
 ): Promise<void> {
-  const client = await pool.connect();
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
 
   try {
-    await client.query('BEGIN');
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
 
     // Extract metadata for new subscriptions (may not exist for updates)
     const organizationId = parseInt((subscription as any).metadata?.organization_id || '0');
@@ -337,12 +358,18 @@ async function handleSubscriptionUpdated(
       );
     }
 
-    await client.query('COMMIT');
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
     throw error;
   } finally {
-    client.release();
+    if (useTransaction) {
+      client.release();
+    }
   }
 }
 
@@ -352,12 +379,17 @@ async function handleSubscriptionUpdated(
  */
 async function handleSubscriptionDeleted(
   subscription: Stripe.Subscription,
-  eventRecordId: number
+  eventRecordId: number,
+  providedClient?: any
 ): Promise<void> {
-  const client = await pool.connect();
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
 
   try {
-    await client.query('BEGIN');
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
 
     // Update subscription to canceled status
     const { rows } = await client.query(
@@ -383,14 +415,20 @@ async function handleSubscriptionDeleted(
       );
     }
 
-    await client.query('COMMIT');
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
 
     console.log(`Subscription deleted: ${subscription.id}`);
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
     throw error;
   } finally {
-    client.release();
+    if (useTransaction) {
+      client.release();
+    }
   }
 }
 
@@ -400,19 +438,26 @@ async function handleSubscriptionDeleted(
  */
 async function handleInvoicePaid(
   invoice: Stripe.Invoice,
-  eventRecordId: number
+  eventRecordId: number,
+  providedClient?: any
 ): Promise<void> {
-  const client = await pool.connect();
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
 
   try {
-    await client.query('BEGIN');
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
 
     // Find subscription in our database
     const stripeSubId = typeof (invoice as any).subscription === 'string' ? (invoice as any).subscription : (invoice as any).subscription?.id;
 
     if (!stripeSubId) {
       console.warn(`No subscription found for invoice ${invoice.id}`);
-      await client.query('COMMIT');
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
       return;
     }
 
@@ -424,7 +469,9 @@ async function handleInvoicePaid(
 
     if (subRows.length === 0) {
       console.warn(`Subscription not found for invoice ${invoice.id}`);
-      await client.query('COMMIT');
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
       return;
     }
 
@@ -468,16 +515,22 @@ async function handleInvoicePaid(
       [organizationId, dbSubscriptionId, eventRecordId]
     );
 
-    await client.query('COMMIT');
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
 
     console.log(`Invoice paid: ${invoice.id}, amount: ${invoice.amount_paid}`);
 
     // TODO: Send receipt email via email service
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
     throw error;
   } finally {
-    client.release();
+    if (useTransaction) {
+      client.release();
+    }
   }
 }
 
@@ -487,19 +540,26 @@ async function handleInvoicePaid(
  */
 async function handleInvoiceFailed(
   invoice: Stripe.Invoice,
-  eventRecordId: number
+  eventRecordId: number,
+  providedClient?: any
 ): Promise<void> {
-  const client = await pool.connect();
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
 
   try {
-    await client.query('BEGIN');
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
 
     // Find subscription in our database
     const stripeSubId = typeof (invoice as any).subscription === 'string' ? (invoice as any).subscription : (invoice as any).subscription?.id;
 
     if (!stripeSubId) {
       console.warn(`No subscription found for failed invoice ${invoice.id}`);
-      await client.query('COMMIT');
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
       return;
     }
 
@@ -511,7 +571,9 @@ async function handleInvoiceFailed(
 
     if (subRows.length === 0) {
       console.warn(`Subscription not found for failed invoice ${invoice.id}`);
-      await client.query('COMMIT');
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
       return;
     }
 
@@ -561,16 +623,22 @@ async function handleInvoiceFailed(
       [organizationId, dbSubscriptionId, eventRecordId]
     );
 
-    await client.query('COMMIT');
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
 
     console.log(`Invoice payment failed: ${invoice.id}, amount: ${invoice.amount_due}`);
 
     // TODO: Send warning email via email service
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
     throw error;
   } finally {
-    client.release();
+    if (useTransaction) {
+      client.release();
+    }
   }
 }
 
