@@ -187,6 +187,147 @@ Time:        ~2s
 - Database pool exhaustion
 - Signature verification failures (security)
 
+### Connection Pool Monitoring
+
+**Configuration**:
+The webhook handler uses PostgreSQL connection pooling via the `pg` library. Default pool settings:
+- **Default pool size**: 10-20 connections (configured in `utils/database.ts`)
+- **Idle timeout**: 10 seconds (connections released after idle period)
+- **Connection timeout**: 30 seconds (max wait time for available connection)
+
+**Key Metrics to Monitor**:
+
+1. **Active Connections** (`pg_stat_activity.count`)
+   - Query: `SELECT count(*) FROM pg_stat_activity WHERE datname = 'cms_db'`
+   - Normal range: 2-5 for typical load
+   - Warning threshold: > 70% of pool size (e.g., >14 for pool of 20)
+   - Critical threshold: > 90% of pool size (pool exhaustion imminent)
+
+2. **Waiting Connections** (application-level metric)
+   - Track: Number of requests waiting for connection from pool
+   - Warning: > 0 sustained for >10 seconds
+   - Indicates: Pool exhaustion or slow queries holding connections
+
+3. **Connection Acquisition Time**
+   - Track: Time from `pool.connect()` call to connection acquired
+   - Target: <10ms for p95
+   - Warning: p95 >50ms
+   - Critical: p95 >500ms (indicates pool saturation)
+
+4. **Transaction Duration**
+   - Track: Time from BEGIN to COMMIT/ROLLBACK
+   - Target: <100ms for p95 (optimized with Stripe API preloading)
+   - Warning: p95 >300ms
+   - Critical: p95 >1000ms
+
+5. **Idle Transactions** (`pg_stat_activity.state = 'idle in transaction'`)
+   - Query: `SELECT count(*) FROM pg_stat_activity WHERE state = 'idle in transaction'`
+   - Warning: > 0 sustained (indicates connection leaks)
+   - Action: Review for missing `client.release()` or unclosed transactions
+
+**Recommended Pool Size by Webhook Volume**:
+- **< 10 webhooks/min**: Default pool (10-20 connections) ✅
+- **10-50 webhooks/min**: Increase pool to 30 connections
+- **50-100 webhooks/min**: Increase pool to 50 connections
+- **> 100 webhooks/min**: Increase pool to 100 + dedicated webhook database replica
+
+**Pool Exhaustion Indicators**:
+1. Webhook processing time p95 suddenly increases (>500ms)
+2. Error logs: "pool is draining", "too many clients", "timeout exceeded"
+3. Active connections at or near pool limit for sustained period (>30 seconds)
+4. Increasing backlog of waiting connections
+
+**Scaling Strategies**:
+
+1. **Horizontal Scaling** (Recommended for >100 webhooks/min)
+   - Deploy multiple webhook handler instances
+   - Use load balancer to distribute across instances
+   - Each instance has its own connection pool
+
+2. **Connection Pool Tuning**
+   - Increase `max` pool size (requires PostgreSQL max_connections increase)
+   - Adjust `idleTimeoutMillis` to release connections faster
+   - Monitor `connectionTimeoutMillis` - increase if legitimate spikes
+
+3. **Database Optimization**
+   - Add indexes on `subscription_events(stripe_event_id, processed_at)`
+   - Use connection pooler like PgBouncer in transaction mode
+   - Consider read replicas for SELECT-heavy operations
+
+4. **Application-Level Optimization**
+   - Already done: Stripe API calls moved outside transactions ✅
+   - Already done: Row-level locking with SKIP LOCKED ✅
+   - Future: Implement webhook queue (Redis/SQS) for async processing
+
+**Monitoring Tools**:
+
+1. **PostgreSQL Stats** (built-in)
+   ```sql
+   -- Active connections by state
+   SELECT state, count(*)
+   FROM pg_stat_activity
+   WHERE datname = 'cms_db'
+   GROUP BY state;
+
+   -- Long-running transactions (>5 seconds)
+   SELECT pid, state, query_start, state_change, query
+   FROM pg_stat_activity
+   WHERE datname = 'cms_db'
+     AND state != 'idle'
+     AND now() - query_start > interval '5 seconds';
+
+   -- Connection pool metrics
+   SELECT
+     max_conn,
+     used,
+     res_for_super,
+     max_conn - used - res_for_super AS available
+   FROM (
+     SELECT count(*) used FROM pg_stat_activity WHERE datname = 'cms_db'
+   ) t1,
+   (
+     SELECT setting::int max_conn FROM pg_settings WHERE name = 'max_connections'
+   ) t2,
+   (
+     SELECT setting::int res_for_super FROM pg_settings WHERE name = 'superuser_reserved_connections'
+   ) t3;
+   ```
+
+2. **Application Metrics** (recommended libraries)
+   - `prom-client` for Prometheus metrics
+   - `pg-pool-monitor` for pool stats
+   - DataDog APM or New Relic for distributed tracing
+
+3. **Alerting Examples** (Prometheus/Grafana)
+   ```yaml
+   # Alert on pool exhaustion
+   - alert: WebhookPoolExhaustion
+     expr: pg_pool_active_connections / pg_pool_max_connections > 0.9
+     for: 1m
+     labels:
+       severity: critical
+     annotations:
+       summary: "Webhook database pool near exhaustion"
+       description: "{{ $value }}% of connections in use"
+
+   # Alert on long-running transactions
+   - alert: WebhookSlowTransactions
+     expr: webhook_transaction_duration_p95 > 1000
+     for: 5m
+     labels:
+       severity: warning
+     annotations:
+       summary: "Webhook transactions running slowly"
+   ```
+
+**Current Implementation Status**:
+- ✅ Connection pooling configured
+- ✅ Proper `client.release()` in all code paths (try/finally blocks)
+- ✅ Transactions optimized (Stripe API outside BEGIN/COMMIT)
+- ✅ Row-level locking prevents concurrent duplicate processing
+- 📋 Production monitoring not yet implemented (deploy-time task)
+- 📋 Pool size tuning based on actual production load (TBD)
+
 ### Documentation
 
 - ✅ `WEBHOOK_EDGE_CASES.md` - Comprehensive edge case analysis (32 issues)

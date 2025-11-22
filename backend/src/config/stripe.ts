@@ -16,6 +16,11 @@ if (!stripeSecretKey) {
 export const stripe = new Stripe(stripeSecretKey, {
   apiVersion: '2025-11-17.clover', // Latest Stripe API version (Clover release)
   typescript: true,
+  // Timeout for Stripe API calls (milliseconds)
+  // Important for webhook handlers: Stripe expects webhook responses within 5 seconds
+  // This 10-second timeout allows for network latency while preventing indefinite hangs
+  // Individual API calls typically complete in <500ms, but network issues can cause delays
+  timeout: 10000, // 10 seconds
   appInfo: {
     name: 'DProgres CMS',
     version: '1.0.0',
