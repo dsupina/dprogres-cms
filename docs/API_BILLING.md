@@ -524,6 +524,37 @@ Quota increments use the PostgreSQL function `check_and_increment_quota()` which
 
 ---
 
+## Deployment & Migration Notes
+
+### Migration 003: Quota Backfill
+
+When deploying migration `003_create_usage_quotas.sql`, the following happens automatically:
+
+1. **Table Creation**: Creates `usage_quotas` table with constraints and indexes
+2. **Function Creation**: Creates PostgreSQL functions for atomic quota operations
+3. **Automatic Backfill**: Seeds default Free tier quotas for ALL existing organizations
+
+**Backfill Behavior**:
+- Uses `INSERT ... ON CONFLICT DO NOTHING` for idempotency (safe to re-run)
+- Assigns Free tier limits to all existing organizations:
+  - `sites`: 1 site
+  - `posts`: 100 posts
+  - `users`: 1 user
+  - `storage_bytes`: 1GB (1,073,741,824 bytes)
+  - `api_calls`: 10,000 calls/month
+- Sets `period_end` to NOW() + 1 month for `api_calls` dimension
+- Sets `current_usage` to 0 for all dimensions
+
+**New Organizations**:
+- Quota records are created during signup in the SubscriptionService
+- Same Free tier defaults applied
+
+**Upgrading Organizations**:
+- Use `PUT /api/quotas/:organizationId/:dimension/override` to adjust limits
+- Enterprise customers can have custom quota limits
+
+---
+
 **Last Updated**: January 2025
 **Version**: 1.0
 **Related Tickets**: SF-009 (Quota System Implementation)
