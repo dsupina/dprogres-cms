@@ -3,6 +3,7 @@ import { pool } from '../utils/database';
 import type { ServiceResponse } from '../types/versioning';
 import jwt from 'jsonwebtoken';
 import { sendEmail, generateInviteEmailHTML, generateInviteEmailText } from '../utils/email';
+import { permissionCache } from '../middleware/rbac';
 
 /**
  * Organization member entity from database
@@ -443,6 +444,9 @@ export class MemberService extends EventEmitter {
 
       await client.query('COMMIT');
 
+      // Invalidate permission cache (in case of re-activation with different role)
+      permissionCache.invalidate(invite.organization_id, userId);
+
       // Emit event
       this.emit('member:joined', {
         memberId: member.id,
@@ -621,6 +625,9 @@ export class MemberService extends EventEmitter {
 
       await client.query('COMMIT');
 
+      // Invalidate permission cache for this user (security: prevent stale permissions)
+      permissionCache.invalidate(organizationId, targetMember.user_id);
+
       // Emit event
       this.emit('member:role_updated', {
         memberId,
@@ -731,6 +738,9 @@ export class MemberService extends EventEmitter {
       );
 
       await client.query('COMMIT');
+
+      // Invalidate permission cache for this user (security: prevent stale permissions)
+      permissionCache.invalidate(organizationId, targetMember.user_id);
 
       // Emit event
       this.emit('member:removed', {
