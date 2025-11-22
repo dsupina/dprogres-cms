@@ -448,6 +448,22 @@ describe('QuotaService', () => {
       expect(result.success).toBe(true);
       expect(result.data).toBe(0);
     });
+
+    it('should NOT reset quotas when period has not expired (period_end > NOW)', async () => {
+      // Mock returns empty because period_end is in the future
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      const result = await quotaService.resetMonthlyQuotas(1);
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe(0);
+
+      // Verify SQL includes period_end < NOW() check
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('period_end < NOW()'),
+        [1]
+      );
+    });
   });
 
   describe('resetAllMonthlyQuotas', () => {

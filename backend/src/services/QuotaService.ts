@@ -401,7 +401,7 @@ export class QuotaService extends EventEmitter {
 
   /**
    * Reset monthly quotas for an organization
-   * Only resets dimensions with period_end set (api_calls)
+   * Only resets dimensions with period_end set (api_calls) AND period expired
    */
   async resetMonthlyQuotas(organizationId: number): Promise<ServiceResponse<number>> {
     try {
@@ -414,6 +414,7 @@ export class QuotaService extends EventEmitter {
          WHERE organization_id = $1
            AND dimension = 'api_calls'
            AND period_end IS NOT NULL
+           AND period_end < NOW()
          RETURNING dimension`,
         [organizationId]
       );

@@ -228,6 +228,8 @@ Decrement quota usage (when deleting resources).
 
 Reset monthly quotas for an organization (resets `api_calls` dimension).
 
+**IMPORTANT**: Only resets quotas where `period_end < NOW()` (billing period has expired). This prevents accidental mid-cycle resets that would bypass quota enforcement.
+
 **Authentication**: Required (Admin)
 
 **Parameters**:
@@ -242,11 +244,13 @@ Reset monthly quotas for an organization (resets `api_calls` dimension).
 ```
 
 **Field Descriptions**:
-- `data` (integer) - Number of quotas reset (typically 1 for api_calls)
+- `data` (integer) - Number of quotas reset (0 if no periods have expired, typically 1 for api_calls when period expired)
 
 **Error Responses**:
 - `400` - Invalid organization ID
 - `404` - No quota records found
+
+**Note**: Returns `data: 0` if the billing period has not yet expired, even if quota records exist. This is expected behavior to prevent premature resets.
 
 ---
 
