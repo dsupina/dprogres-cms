@@ -70,6 +70,7 @@ BEGIN
   SET current_usage = 0,
       last_reset_at = NOW(),
       period_start = NOW(),
+      period_end = period_end + INTERVAL '1 month',
       updated_at = NOW()
   WHERE dimension = 'api_calls'
     AND period_end IS NOT NULL

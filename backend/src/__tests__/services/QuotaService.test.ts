@@ -464,6 +464,20 @@ describe('QuotaService', () => {
         [1]
       );
     });
+
+    it('should advance period_end by 1 month to prevent repeated resets', async () => {
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ dimension: 'api_calls' }],
+      });
+
+      await quotaService.resetMonthlyQuotas(1);
+
+      // Verify SQL advances period_end
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining("period_end = period_end + INTERVAL '1 month'"),
+        [1]
+      );
+    });
   });
 
   describe('resetAllMonthlyQuotas', () => {
