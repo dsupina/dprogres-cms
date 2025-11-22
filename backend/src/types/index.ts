@@ -7,6 +7,10 @@ export interface User {
   role: string;
   first_name?: string;
   last_name?: string;
+  current_organization_id?: number;
+  email_verified?: boolean;
+  email_verification_token?: string;
+  email_verification_sent_at?: Date;
   created_at: Date;
   updated_at: Date;
 }

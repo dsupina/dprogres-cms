@@ -37,8 +37,9 @@ router.post('/login', validate(loginSchema), async (req: Request, res: Response)
     }
 
     // Check email verification (SF-008)
-    // Allow users created before SF-008 (no email_verified field) to log in
-    if (user.email_verified === false) {
+    // Block only users who explicitly have email_verified = false
+    // Allow legacy users (email_verified = null/undefined) to log in
+    if (user.email_verified === false && user.email_verification_token !== null) {
       return res.status(403).json({
         error: 'Please verify your email before logging in',
         code: 'EMAIL_NOT_VERIFIED'
@@ -150,44 +151,72 @@ router.post('/signup', validate(signupSchema), async (req: Request, res: Respons
     const newUser = userResult.rows[0];
     const userId = newUser.id;
 
-    // Create organization using OrganizationService
+    // Create organization directly (within the same transaction)
     const orgName = `${first_name}'s Organization`;
-    const orgResult = await organizationService.createOrganization({
-      name: orgName,
-      ownerId: userId,
-    });
 
-    if (!orgResult.success) {
-      await client.query('ROLLBACK');
-      return res.status(500).json({ error: orgResult.error || 'Failed to create organization' });
-    }
+    // Generate unique slug for organization
+    const baseSlug = orgName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+    const randomSuffix = crypto.randomBytes(3).toString('hex');
+    const slug = `${baseSlug}-${randomSuffix}`;
 
-    const organization = orgResult.data!;
+    // Create organization
+    const orgResult = await client.query(
+      `INSERT INTO organizations (name, slug, owner_id, plan_tier)
+       VALUES ($1, $2, $3, 'free')
+       RETURNING *`,
+      [orgName, slug, userId]
+    );
+
+    const organization = orgResult.rows[0];
     const organizationId = organization.id;
+
+    // Add user as organization member with "owner" role
+    await client.query(
+      `INSERT INTO organization_members (organization_id, user_id, role)
+       VALUES ($1, $2, 'owner')`,
+      [organizationId, userId]
+    );
 
     // Initialize usage_quotas for free tier (5 dimensions)
     const quotas = [
-      { dimension: 'sites', limit: 1, period_end: null },
-      { dimension: 'posts', limit: 20, period_end: null },
-      { dimension: 'users', limit: 2, period_end: null },
-      { dimension: 'storage_bytes', limit: 524288000, period_end: null }, // 500MB
-      { dimension: 'api_calls', limit: 10000, period_end: "NOW() + INTERVAL '1 month'" }, // Monthly
+      { dimension: 'sites', limit: 1, hasPeriod: false },
+      { dimension: 'posts', limit: 20, hasPeriod: false },
+      { dimension: 'users', limit: 2, hasPeriod: false },
+      { dimension: 'storage_bytes', limit: 524288000, hasPeriod: false }, // 500MB
+      { dimension: 'api_calls', limit: 10000, hasPeriod: true }, // Monthly reset
     ];
 
     for (const quota of quotas) {
-      const periodEndValue = quota.period_end === null ? null : quota.period_end;
-
-      await client.query(
-        `INSERT INTO usage_quotas (
-          organization_id,
-          dimension,
-          current_usage,
-          quota_limit,
-          period_start,
-          period_end
-        ) VALUES ($1, $2, 0, $3, NOW(), ${quota.period_end === null ? 'NULL' : quota.period_end})`,
-        [organizationId, quota.dimension, quota.limit]
-      );
+      if (quota.hasPeriod) {
+        // For monthly quotas (api_calls), set period_end to 1 month from now
+        await client.query(
+          `INSERT INTO usage_quotas (
+            organization_id,
+            dimension,
+            current_usage,
+            quota_limit,
+            period_start,
+            period_end
+          ) VALUES ($1, $2, 0, $3, NOW(), NOW() + INTERVAL '1 month')`,
+          [organizationId, quota.dimension, quota.limit]
+        );
+      } else {
+        // For non-resetting quotas (sites, posts, users, storage_bytes)
+        await client.query(
+          `INSERT INTO usage_quotas (
+            organization_id,
+            dimension,
+            current_usage,
+            quota_limit,
+            period_start,
+            period_end
+          ) VALUES ($1, $2, 0, $3, NOW(), NULL)`,
+          [organizationId, quota.dimension, quota.limit]
+        );
+      }
     }
 
     // Update user's current_organization_id
