@@ -13,6 +13,7 @@
     "test:coverage": "jest --coverage"
   },
   "dependencies": {
+    "@aws-sdk/client-ses": "^3.936.0",
     "@types/diff-match-patch": "^1.0.36",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
