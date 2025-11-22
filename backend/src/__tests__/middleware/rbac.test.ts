@@ -489,6 +489,44 @@ describe('RBAC Middleware', () => {
     });
   });
 
+  describe('Soft-deleted members', () => {
+    it('should deny access to soft-deleted members', async () => {
+      mockRequest.params = { organizationId: '1' };
+
+      // Simulate soft-deleted member (getMemberRole returns no data)
+      (organizationService.getMemberRole as jest.Mock).mockResolvedValue({
+        success: false,
+        error: 'User is not a member of this organization',
+      });
+
+      const result = await checkPermission(1, 1, Permission.VIEW_POSTS);
+
+      expect(result).toBe(false);
+      expect(organizationService.getMemberRole).toHaveBeenCalledWith(1, 1);
+    });
+
+    it('should not cache roles for soft-deleted members', async () => {
+      // Prime cache with ADMIN role
+      permissionCache.set(1, 1, OrganizationRole.ADMIN);
+
+      // Simulate member gets removed (soft-deleted)
+      // Cache gets invalidated, next call returns no member
+      permissionCache.invalidate(1, 1);
+
+      (organizationService.getMemberRole as jest.Mock).mockResolvedValue({
+        success: false,
+        error: 'User is not a member of this organization',
+      });
+
+      const result = await checkPermission(1, 1, Permission.MANAGE_MEMBERS);
+
+      expect(result).toBe(false);
+
+      // Verify cache is still empty (not re-cached with old role)
+      expect(permissionCache.get(1, 1)).toBeNull();
+    });
+  });
+
   describe('Real-world scenarios', () => {
     it('should handle OWNER with all permissions', async () => {
       mockRequest.params = { organizationId: '1' };

@@ -574,6 +574,8 @@ export class OrganizationService extends EventEmitter {
   /**
    * Get member's role in organization
    * Helper method for permission checks
+   *
+   * SECURITY: Only returns role for active (non-deleted) members
    */
   async getMemberRole(
     organizationId: number,
@@ -582,7 +584,7 @@ export class OrganizationService extends EventEmitter {
     try {
       const { rows } = await pool.query<{ role: string }>(
         `SELECT role FROM organization_members
-         WHERE organization_id = $1 AND user_id = $2`,
+         WHERE organization_id = $1 AND user_id = $2 AND deleted_at IS NULL`,
         [organizationId, userId]
       );
 
