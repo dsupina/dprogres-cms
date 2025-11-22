@@ -692,4 +692,60 @@ describe('QuotaService', () => {
       }
     });
   });
+
+  describe('Error Codes (P2 Fix)', () => {
+    it('should return NOT_FOUND error code when quota record missing', async () => {
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      const result = await quotaService.checkQuota({
+        organizationId: 999,
+        dimension: 'sites',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('NOT_FOUND');
+    });
+
+    it('should return QUOTA_EXCEEDED error code when quota limit exceeded', async () => {
+      // Mock quota existence check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 100, quota_limit: 100 }],
+      });
+      // Mock database function returning false (quota exceeded)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ allowed: false }] });
+
+      const result = await quotaService.incrementQuota({
+        organizationId: 1,
+        dimension: 'posts',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('QUOTA_EXCEEDED');
+      expect(result.error).toContain('Quota exceeded');
+    });
+
+    it('should return INTERNAL_ERROR error code on database failures', async () => {
+      mockPoolQuery.mockRejectedValueOnce(new Error('Database connection failed'));
+
+      const result = await quotaService.checkQuota({
+        organizationId: 1,
+        dimension: 'sites',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('INTERNAL_ERROR');
+    });
+
+    it('should return VALIDATION_ERROR error code for invalid input', async () => {
+      const result = await quotaService.setQuotaOverride({
+        organizationId: 1,
+        dimension: 'sites',
+        newLimit: -10, // Invalid: must be > 0
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errorCode).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('must be greater than 0');
+    });
+  });
 });

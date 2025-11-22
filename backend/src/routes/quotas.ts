@@ -3,9 +3,38 @@ import { authenticateToken, requireAdmin } from '../middleware/auth';
 import { validateRequest } from '../middleware/validation';
 import { quotaService } from '../services/QuotaService';
 import type { QuotaDimension } from '../services/QuotaService';
+import { ServiceErrorCode } from '../types/versioning';
 import Joi from 'joi';
 
 const router = Router();
+
+/**
+ * Map ServiceErrorCode to HTTP status code
+ */
+function getHttpStatusCode(errorCode?: ServiceErrorCode): number {
+  if (!errorCode) {
+    return 500; // Default to 500 for unknown errors
+  }
+
+  switch (errorCode) {
+    case ServiceErrorCode.VALIDATION_ERROR:
+      return 400;
+    case ServiceErrorCode.UNAUTHORIZED:
+      return 401;
+    case ServiceErrorCode.FORBIDDEN:
+    case ServiceErrorCode.QUOTA_EXCEEDED:
+      return 403;
+    case ServiceErrorCode.NOT_FOUND:
+      return 404;
+    case ServiceErrorCode.INTERNAL_ERROR:
+    case ServiceErrorCode.DATABASE_ERROR:
+      return 500;
+    case ServiceErrorCode.SERVICE_UNAVAILABLE:
+      return 503;
+    default:
+      return 500;
+  }
+}
 
 // Validation schemas
 const checkQuotaSchema = Joi.object({
@@ -51,7 +80,8 @@ router.get('/:organizationId', authenticateToken, requireAdmin, async (req: Requ
     const result = await quotaService.getQuotaStatus(organizationId);
 
     if (!result.success) {
-      return res.status(404).json(result);
+      const statusCode = getHttpStatusCode(result.errorCode);
+      return res.status(statusCode).json(result);
     }
 
     res.json(result);
@@ -94,7 +124,8 @@ router.post(
       });
 
       if (!result.success) {
-        return res.status(404).json(result);
+        const statusCode = getHttpStatusCode(result.errorCode);
+        return res.status(statusCode).json(result);
       }
 
       res.json(result);
@@ -138,8 +169,10 @@ router.post(
       });
 
       if (!result.success) {
-        // Quota exceeded - return 403 Forbidden
-        return res.status(403).json(result);
+        // Return appropriate status code based on error type
+        // 403 for QUOTA_EXCEEDED, 404 for NOT_FOUND, 500 for INTERNAL_ERROR
+        const statusCode = getHttpStatusCode(result.errorCode);
+        return res.status(statusCode).json(result);
       }
 
       res.json(result);
@@ -183,7 +216,8 @@ router.post(
       });
 
       if (!result.success) {
-        return res.status(404).json(result);
+        const statusCode = getHttpStatusCode(result.errorCode);
+        return res.status(statusCode).json(result);
       }
 
       res.json(result);
@@ -215,7 +249,8 @@ router.post('/:organizationId/reset', authenticateToken, requireAdmin, async (re
     const result = await quotaService.resetMonthlyQuotas(organizationId);
 
     if (!result.success) {
-      return res.status(404).json(result);
+      const statusCode = getHttpStatusCode(result.errorCode);
+      return res.status(statusCode).json(result);
     }
 
     res.json(result);
@@ -268,7 +303,8 @@ router.put(
       });
 
       if (!result.success) {
-        return res.status(404).json(result);
+        const statusCode = getHttpStatusCode(result.errorCode);
+        return res.status(statusCode).json(result);
       }
 
       res.json(result);
@@ -291,7 +327,8 @@ router.post('/reset-all', authenticateToken, requireAdmin, async (req: Request, 
     const result = await quotaService.resetAllMonthlyQuotas();
 
     if (!result.success) {
-      return res.status(500).json(result);
+      const statusCode = getHttpStatusCode(result.errorCode);
+      return res.status(statusCode).json(result);
     }
 
     res.json(result);

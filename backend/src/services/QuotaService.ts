@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { pool } from '../utils/database';
 import type { ServiceResponse } from '../types/versioning';
+import { ServiceErrorCode } from '../types/versioning';
 
 /**
  * Quota dimensions tracked per organization
@@ -109,6 +110,7 @@ export class QuotaService extends EventEmitter {
         return {
           success: false,
           error: `No quota record found for organization ${organizationId} and dimension ${dimension}`,
+          errorCode: ServiceErrorCode.NOT_FOUND,
         };
       }
 
@@ -134,6 +136,7 @@ export class QuotaService extends EventEmitter {
       return {
         success: false,
         error: error.message || 'Failed to check quota',
+        errorCode: ServiceErrorCode.INTERNAL_ERROR,
       };
     }
   }
@@ -156,6 +159,7 @@ export class QuotaService extends EventEmitter {
         return {
           success: false,
           error: `No quota record found for organization ${organizationId} and dimension ${dimension}. Quota may not be initialized.`,
+          errorCode: ServiceErrorCode.NOT_FOUND,
         };
       }
 
@@ -178,6 +182,7 @@ export class QuotaService extends EventEmitter {
         return {
           success: false,
           error: `Quota exceeded for dimension: ${dimension}`,
+          errorCode: ServiceErrorCode.QUOTA_EXCEEDED,
         };
       }
 
@@ -246,6 +251,7 @@ export class QuotaService extends EventEmitter {
       return {
         success: false,
         error: error.message || 'Failed to increment quota',
+        errorCode: ServiceErrorCode.INTERNAL_ERROR,
       };
     }
   }
@@ -276,6 +282,7 @@ export class QuotaService extends EventEmitter {
         return {
           success: false,
           error: `No quota record found for organization ${organizationId} and dimension ${dimension}`,
+          errorCode: ServiceErrorCode.NOT_FOUND,
         };
       }
 
@@ -312,6 +319,7 @@ export class QuotaService extends EventEmitter {
       return {
         success: false,
         error: error.message || 'Failed to decrement quota',
+        errorCode: ServiceErrorCode.INTERNAL_ERROR,
       };
     } finally {
       client.release();
@@ -338,6 +346,7 @@ export class QuotaService extends EventEmitter {
         return {
           success: false,
           error: `No quota found for dimension: ${dimension}`,
+          errorCode: ServiceErrorCode.NOT_FOUND,
         };
       }
 
@@ -365,6 +374,7 @@ export class QuotaService extends EventEmitter {
       return {
         success: false,
         error: error.message || 'Failed to get quota status',
+        errorCode: ServiceErrorCode.INTERNAL_ERROR,
       };
     }
   }
@@ -386,6 +396,7 @@ export class QuotaService extends EventEmitter {
         return {
           success: false,
           error: `No quota records found for organization ${organizationId}`,
+          errorCode: ServiceErrorCode.NOT_FOUND,
         };
       }
 
@@ -418,6 +429,7 @@ export class QuotaService extends EventEmitter {
       return {
         success: false,
         error: error.message || 'Failed to get quota status',
+        errorCode: ServiceErrorCode.INTERNAL_ERROR,
       };
     }
   }
@@ -462,6 +474,7 @@ export class QuotaService extends EventEmitter {
       return {
         success: false,
         error: error.message || 'Failed to reset monthly quotas',
+        errorCode: ServiceErrorCode.INTERNAL_ERROR,
       };
     }
   }
@@ -490,6 +503,7 @@ export class QuotaService extends EventEmitter {
       return {
         success: false,
         error: error.message || 'Failed to reset all monthly quotas',
+        errorCode: ServiceErrorCode.INTERNAL_ERROR,
       };
     }
   }
@@ -506,6 +520,7 @@ export class QuotaService extends EventEmitter {
         return {
           success: false,
           error: 'Quota limit must be greater than 0',
+          errorCode: ServiceErrorCode.VALIDATION_ERROR,
         };
       }
 
@@ -523,6 +538,7 @@ export class QuotaService extends EventEmitter {
         return {
           success: false,
           error: `No quota record found for organization ${organizationId} and dimension ${dimension}`,
+          errorCode: ServiceErrorCode.NOT_FOUND,
         };
       }
 
@@ -560,6 +576,7 @@ export class QuotaService extends EventEmitter {
       return {
         success: false,
         error: error.message || 'Failed to set quota override',
+        errorCode: ServiceErrorCode.INTERNAL_ERROR,
       };
     }
   }
