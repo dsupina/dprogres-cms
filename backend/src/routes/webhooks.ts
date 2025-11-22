@@ -454,11 +454,7 @@ async function handleInvoicePaid(
     const stripeSubId = typeof (invoice as any).subscription === 'string' ? (invoice as any).subscription : (invoice as any).subscription?.id;
 
     if (!stripeSubId) {
-      console.warn(`No subscription found for invoice ${invoice.id}`);
-      if (useTransaction) {
-        await client.query('COMMIT');
-      }
-      return;
+      throw new Error(`No subscription ID found for invoice ${invoice.id}. Event will be retried.`);
     }
 
     const { rows: subRows } = await client.query(
@@ -468,11 +464,10 @@ async function handleInvoicePaid(
     );
 
     if (subRows.length === 0) {
-      console.warn(`Subscription not found for invoice ${invoice.id}`);
-      if (useTransaction) {
-        await client.query('COMMIT');
-      }
-      return;
+      throw new Error(
+        `Subscription ${stripeSubId} not found for invoice ${invoice.id}. ` +
+        `Ensure checkout.session.completed event is processed first. Event will be retried.`
+      );
     }
 
     const { id: dbSubscriptionId, organization_id: organizationId } = subRows[0];
@@ -556,11 +551,7 @@ async function handleInvoiceFailed(
     const stripeSubId = typeof (invoice as any).subscription === 'string' ? (invoice as any).subscription : (invoice as any).subscription?.id;
 
     if (!stripeSubId) {
-      console.warn(`No subscription found for failed invoice ${invoice.id}`);
-      if (useTransaction) {
-        await client.query('COMMIT');
-      }
-      return;
+      throw new Error(`No subscription ID found for failed invoice ${invoice.id}. Event will be retried.`);
     }
 
     const { rows: subRows } = await client.query(
@@ -570,11 +561,10 @@ async function handleInvoiceFailed(
     );
 
     if (subRows.length === 0) {
-      console.warn(`Subscription not found for failed invoice ${invoice.id}`);
-      if (useTransaction) {
-        await client.query('COMMIT');
-      }
-      return;
+      throw new Error(
+        `Subscription ${stripeSubId} not found for failed invoice ${invoice.id}. ` +
+        `Ensure checkout.session.completed event is processed first. Event will be retried.`
+      );
     }
 
     const { id: dbSubscriptionId, organization_id: organizationId } = subRows[0];
