@@ -2,7 +2,7 @@
 
 ## Overview
 
-Fixed **22 critical and high-priority bugs** in the Stripe webhook handler (`backend/src/routes/webhooks.ts`) across 9 commits.
+Fixed **23 critical and high-priority bugs** in the Stripe webhook handler (`backend/src/routes/webhooks.ts`) across 10 commits.
 
 **Commits**:
 1. `76708444` - 9 Critical Bugs (P1)
@@ -14,6 +14,7 @@ Fixed **22 critical and high-priority bugs** in the Stripe webhook handler (`bac
 7. `75ea9445` - Currency Persistence (P2)
 8. `3d28e29e` - Metadata-Missing Pricing (P1)
 9. `6ccfc30f` - Lock Duration During API Calls (P2)
+10. `89920bd4` - Stripe Error Metadata Preservation (P1)
 
 **Test Results**: ✅ All 13 tests passing | ✅ TypeScript compilation clean
 
@@ -269,6 +270,19 @@ if (event.type === 'checkout.session.completed') {
 await handleWebhookEvent(event, eventRecordId, client, preloadedSubscription);
 ```
 - **Impact**: Lock duration reduced from 300-500ms to <50ms, prevents blocking concurrent webhooks
+
+### 22. **Stripe Error Metadata Lost** ✅ (Commit 89920bd4)
+- **Issue**: Preload error handler wrapped Stripe errors in `new Error()`, discarding type/statusCode fields
+- **Fix**: Re-throw original error to preserve metadata
+```typescript
+} catch (err: any) {
+  console.error(`Failed to fetch subscription ${session.subscription}:`, err.message);
+  // Re-throw original error to preserve Stripe metadata (type, statusCode)
+  // isTransientError() needs these fields to classify rate limits and 5xx errors
+  throw err;
+}
+```
+- **Impact**: Rate limits (429) and 5xx errors correctly return 500 for retry instead of 200
 
 ---
 

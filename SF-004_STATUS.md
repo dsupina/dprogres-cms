@@ -13,7 +13,7 @@
 - ✅ Comprehensive unit test suite (13 tests, 100% passing)
 - ✅ Performance optimized (lock duration <50ms)
 
-### Recent Hardening (22 Bug Fixes)
+### Recent Hardening (23 Bug Fixes)
 
 **Commit 1: `76708444` - 9 Critical Bugs (P1)**
 1. ✅ Removed unreachable code
@@ -33,7 +33,7 @@
 13. ✅ Zero-decimal currency support (JPY, KRW, etc.)
 14. ✅ Error logging race condition fix (INSERT...ON CONFLICT)
 
-**Commits 3-9: Sequential Review Fixes - 7 Additional Bugs**
+**Commits 3-10: Sequential Review Fixes - 8 Additional Bugs**
 15. ✅ Event ordering errors treated as transient (bc42b5a6)
 16. ✅ Error logging explicit NULL for processed_at (ff23f2c0)
 17. ✅ Quantity calculation for seat-based billing (ff23f2c0)
@@ -42,6 +42,7 @@
 20. ✅ Subscription currency persistence (75ea9445)
 21. ✅ Metadata-missing pricing updates (3d28e29e)
 22. ✅ Lock duration optimization - preload Stripe data (6ccfc30f)
+23. ✅ Stripe error metadata preservation (89920bd4)
 
 ### Test Coverage
 ```
@@ -67,9 +68,9 @@ Time:        ~2s
 
 ### Edge Case Analysis
 - **Total Identified**: 32 edge cases
-- **Fixed (P1)**: 16 critical bugs ✅
+- **Fixed (P1)**: 17 critical bugs ✅
 - **Fixed (P2)**: 6 high-priority bugs ✅
-- **Remaining (P3)**: 10 medium-priority issues 📋
+- **Remaining (P3)**: 9 medium-priority issues 📋
 
 **Remaining P3 Issues** (for future PR):
 1. Connection pool exhaustion monitoring
