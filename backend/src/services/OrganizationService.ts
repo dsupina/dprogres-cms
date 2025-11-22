@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { pool } from '../utils/database';
 import type { ServiceResponse } from '../types/versioning';
 import crypto from 'crypto';
+import { permissionCache } from '../middleware/rbac';
 
 /**
  * Organization entity from database
@@ -474,6 +475,10 @@ export class OrganizationService extends EventEmitter {
       );
 
       await client.query('COMMIT');
+
+      // Invalidate permission cache for both users (security: prevent stale roles)
+      permissionCache.invalidate(organizationId, currentOwnerId); // Old owner now admin
+      permissionCache.invalidate(organizationId, newOwnerId);     // New owner now owner
 
       // Emit event
       this.emit('organization:ownership_transferred', {
