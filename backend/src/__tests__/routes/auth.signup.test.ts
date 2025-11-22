@@ -24,17 +24,55 @@ describe('SF-008: Signup with Free Tier Organization', () => {
 
   beforeEach(async () => {
     // Clean up test data before each test (order matters for FK constraints)
+    // IMPORTANT: Only delete test users and their organizations, not all organizations!
     client = await pool.connect();
     try {
       await client.query('BEGIN');
-      // Delete in reverse FK dependency order
-      // Clear all test user current_organization_id references first
-      await client.query('UPDATE users SET current_organization_id = NULL WHERE email LIKE \'%test-signup%\'');
-      // Now safe to delete in order
-      await client.query('DELETE FROM usage_quotas WHERE organization_id IN (SELECT id FROM organizations WHERE name LIKE \'%Test%\' OR name LIKE \'%Organization\')');
-      await client.query('DELETE FROM organization_members WHERE organization_id IN (SELECT id FROM organizations WHERE name LIKE \'%Test%\' OR name LIKE \'%Organization\')');
-      await client.query('DELETE FROM organizations WHERE name LIKE \'%Test%\' OR name LIKE \'%Organization\'');
-      await client.query('DELETE FROM users WHERE email LIKE \'%test-signup%\'');
+
+      // Find test user IDs and their organization IDs
+      const testUserIds = await client.query(
+        'SELECT id, current_organization_id FROM users WHERE email LIKE \'%test-signup%\''
+      );
+
+      if (testUserIds.rows.length > 0) {
+        const userIds = testUserIds.rows.map((u: any) => u.id);
+        const orgIds = testUserIds.rows
+          .map((u: any) => u.current_organization_id)
+          .filter((id: number | null): id is number => id !== null);
+
+        // Clear current_organization_id for test users
+        await client.query(
+          'UPDATE users SET current_organization_id = NULL WHERE id = ANY($1)',
+          [userIds]
+        );
+
+        if (orgIds.length > 0) {
+          // Delete usage_quotas for test organizations
+          await client.query(
+            'DELETE FROM usage_quotas WHERE organization_id = ANY($1)',
+            [orgIds]
+          );
+
+          // Delete organization_members for test organizations
+          await client.query(
+            'DELETE FROM organization_members WHERE organization_id = ANY($1)',
+            [orgIds]
+          );
+
+          // Delete test organizations
+          await client.query(
+            'DELETE FROM organizations WHERE id = ANY($1)',
+            [orgIds]
+          );
+        }
+
+        // Finally delete test users
+        await client.query(
+          'DELETE FROM users WHERE id = ANY($1)',
+          [userIds]
+        );
+      }
+
       await client.query('COMMIT');
     } catch (error) {
       await client.query('ROLLBACK');
@@ -46,15 +84,55 @@ describe('SF-008: Signup with Free Tier Organization', () => {
 
   afterAll(async () => {
     // Final cleanup (order matters for FK constraints)
+    // IMPORTANT: Only delete test users and their organizations, not all organizations!
     const cleanupClient = await pool.connect();
     try {
       await cleanupClient.query('BEGIN');
-      // Delete in reverse FK dependency order
-      await cleanupClient.query('UPDATE users SET current_organization_id = NULL WHERE email LIKE \'%test-signup%\'');
-      await cleanupClient.query('DELETE FROM usage_quotas WHERE organization_id IN (SELECT id FROM organizations WHERE name LIKE \'%Test%\' OR name LIKE \'%Organization\')');
-      await cleanupClient.query('DELETE FROM organization_members WHERE organization_id IN (SELECT id FROM organizations WHERE name LIKE \'%Test%\' OR name LIKE \'%Organization\')');
-      await cleanupClient.query('DELETE FROM organizations WHERE name LIKE \'%Test%\' OR name LIKE \'%Organization\'');
-      await cleanupClient.query('DELETE FROM users WHERE email LIKE \'%test-signup%\'');
+
+      // Find test user IDs and their organization IDs
+      const testUserIds = await cleanupClient.query(
+        'SELECT id, current_organization_id FROM users WHERE email LIKE \'%test-signup%\''
+      );
+
+      if (testUserIds.rows.length > 0) {
+        const userIds = testUserIds.rows.map((u: any) => u.id);
+        const orgIds = testUserIds.rows
+          .map((u: any) => u.current_organization_id)
+          .filter((id: number | null): id is number => id !== null);
+
+        // Clear current_organization_id for test users
+        await cleanupClient.query(
+          'UPDATE users SET current_organization_id = NULL WHERE id = ANY($1)',
+          [userIds]
+        );
+
+        if (orgIds.length > 0) {
+          // Delete usage_quotas for test organizations
+          await cleanupClient.query(
+            'DELETE FROM usage_quotas WHERE organization_id = ANY($1)',
+            [orgIds]
+          );
+
+          // Delete organization_members for test organizations
+          await cleanupClient.query(
+            'DELETE FROM organization_members WHERE organization_id = ANY($1)',
+            [orgIds]
+          );
+
+          // Delete test organizations
+          await cleanupClient.query(
+            'DELETE FROM organizations WHERE id = ANY($1)',
+            [orgIds]
+          );
+        }
+
+        // Finally delete test users
+        await cleanupClient.query(
+          'DELETE FROM users WHERE id = ANY($1)',
+          [userIds]
+        );
+      }
+
       await cleanupClient.query('COMMIT');
     } catch (error) {
       await cleanupClient.query('ROLLBACK');
@@ -232,18 +310,20 @@ describe('SF-008: Signup with Free Tier Organization', () => {
 
     it('should generate unique slugs with random suffixes', async () => {
       // Signup twice with same first name to test slug uniqueness
+      // Use timestamps to ensure unique emails on each test run
+      const timestamp = Date.now();
       const firstSignup = await request(app)
         .post('/auth/signup')
         .send({
           ...validSignupData,
-          email: 'slug-test-1-signup@example.com',
+          email: `slug-test-1-signup-${timestamp}@example.com`,
         });
 
       const secondSignup = await request(app)
         .post('/auth/signup')
         .send({
           ...validSignupData,
-          email: 'slug-test-2-signup@example.com',
+          email: `slug-test-2-signup-${timestamp}@example.com`,
         });
 
       // Both should succeed
