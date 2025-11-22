@@ -100,8 +100,9 @@ router.post('/stripe', async (req: Request, res: Response) => {
           preloadedSubscription = await stripe.subscriptions.retrieve(session.subscription as string);
         } catch (err: any) {
           console.error(`Failed to fetch subscription ${session.subscription}:`, err.message);
-          // Will be retried when event is redelivered
-          throw new Error(`Failed to fetch subscription data: ${err.message}`);
+          // Re-throw original error to preserve Stripe metadata (type, statusCode)
+          // isTransientError() needs these fields to classify rate limits and 5xx errors
+          throw err;
         }
       }
     }
