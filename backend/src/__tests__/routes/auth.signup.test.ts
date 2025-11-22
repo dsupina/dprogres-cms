@@ -152,22 +152,24 @@ describe('SF-008: Signup with Free Tier Organization', () => {
       expect(quotaMap.get('api_calls').period_end).toBeTruthy(); // Should have a period_end
     });
 
-    it('should return verification URL in development mode', async () => {
-      const originalEnv = process.env.NODE_ENV;
-      process.env.NODE_ENV = 'development';
-
+    it('should return verification URL for all environments', async () => {
+      // TEMPORARY: Until SF-013 implements email sending, verification URL
+      // is returned in all environments to allow signup to work
       const response = await request(app)
         .post('/auth/signup')
         .send({
           ...validSignupData,
-          email: 'dev-test-signup@example.com',
+          email: 'url-test-signup@example.com',
         });
 
       expect(response.status).toBe(201);
       expect(response.body.verificationUrl).toBeDefined();
       expect(response.body.verificationUrl).toContain('/verify-email?token=');
 
-      process.env.NODE_ENV = originalEnv;
+      // Verify the token in the URL matches the user's token
+      const token = response.body.verificationUrl.split('token=')[1];
+      expect(token).toBeTruthy();
+      expect(token.length).toBeGreaterThan(32); // Should be hex-encoded 32 bytes
     });
 
     it('should fail with duplicate email', async () => {
@@ -345,11 +347,7 @@ describe('SF-008: Signup with Free Tier Organization', () => {
     });
 
     it('should allow login for verified users', async () => {
-      // Set NODE_ENV to development to get verification URL
-      const originalEnv = process.env.NODE_ENV;
-      process.env.NODE_ENV = 'development';
-
-      // Create user via signup
+      // Create user via signup (verification URL now returned in all environments)
       const signupResponse = await request(app)
         .post('/auth/signup')
         .send({
@@ -358,8 +356,6 @@ describe('SF-008: Signup with Free Tier Organization', () => {
           first_name: 'Verified',
           last_name: 'User',
         });
-
-      process.env.NODE_ENV = originalEnv;
 
       const verificationToken = signupResponse.body.verificationUrl?.split('token=')[1];
       expect(verificationToken).toBeTruthy();

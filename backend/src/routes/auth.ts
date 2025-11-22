@@ -227,10 +227,11 @@ router.post('/signup', validate(signupSchema), async (req: Request, res: Respons
 
     await client.query('COMMIT');
 
-    // Generate verification URL (in development, log to console)
+    // Generate verification URL
     const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${verificationToken}`;
 
     // TODO: SF-013 - Send email via EmailService when implemented
+    // For now, log to console in development and return URL in all environments
     if (process.env.NODE_ENV === 'development') {
       console.log('\n=== EMAIL VERIFICATION ===');
       console.log(`To: ${email}`);
@@ -239,7 +240,7 @@ router.post('/signup', validate(signupSchema), async (req: Request, res: Respons
     }
 
     res.status(201).json({
-      message: 'Signup successful! Please check your email to verify your account.',
+      message: 'Signup successful! Please verify your email to complete registration.',
       user: {
         id: newUser.id,
         email: newUser.email,
@@ -251,8 +252,9 @@ router.post('/signup', validate(signupSchema), async (req: Request, res: Respons
         name: organization.name,
         slug: organization.slug,
       },
-      // In development, return verification URL for testing
-      ...(process.env.NODE_ENV === 'development' && { verificationUrl }),
+      // TEMPORARY: Return verification URL until SF-013 implements email sending
+      // This allows production signup to work while we build EmailService
+      verificationUrl,
     });
   } catch (error) {
     await client.query('ROLLBACK');
