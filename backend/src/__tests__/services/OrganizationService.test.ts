@@ -136,6 +136,40 @@ describe('OrganizationService', () => {
       expect(result.error).toContain('Failed to generate unique slug');
       expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
     });
+
+    it('should not reuse slugs from soft-deleted organizations', async () => {
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // BEGIN
+      mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] }); // user check
+      // Slug check returns a deleted org (has id, so not unique)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 999, deleted_at: new Date() }] });
+      // Second attempt succeeds
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+      mockClientQuery.mockResolvedValueOnce({
+        rows: [{
+          id: 1,
+          name: 'Test Org',
+          slug: 'test-org-new123',
+          owner_id: 1,
+          plan_tier: 'free',
+          created_at: new Date(),
+          updated_at: new Date(),
+        }],
+      });
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // add member
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+      const result = await organizationService.createOrganization({
+        name: 'Test Org',
+        ownerId: 1,
+      });
+
+      expect(result.success).toBe(true);
+      // Should have checked slug twice (once collision with deleted org, then success)
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        'SELECT id FROM organizations WHERE slug = $1',
+        expect.any(Array)
+      );
+    });
   });
 
   describe('getOrganization', () => {

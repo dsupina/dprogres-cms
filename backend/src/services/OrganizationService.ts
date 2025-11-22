@@ -86,11 +86,13 @@ export class OrganizationService extends EventEmitter {
   }
 
   /**
-   * Check if slug is unique
+   * Check if slug is unique (including soft-deleted organizations)
+   * Note: Database has UNIQUE constraint on slug across all rows,
+   * so we must check all organizations, not just active ones
    */
   private async isSlugUnique(slug: string): Promise<boolean> {
     const { rows } = await pool.query(
-      'SELECT id FROM organizations WHERE slug = $1 AND deleted_at IS NULL',
+      'SELECT id FROM organizations WHERE slug = $1',
       [slug]
     );
     return rows.length === 0;
