@@ -190,6 +190,16 @@ export class MemberService extends EventEmitter {
         };
       }
 
+      // Clean up old invites (expired or accepted) to allow re-inviting
+      // This prevents UNIQUE constraint violations on partial index
+      // Partial index only blocks unaccepted invites, but we still need to clean up
+      await client.query(
+        `DELETE FROM organization_invites
+         WHERE organization_id = $1 AND email = $2
+           AND (accepted_at IS NOT NULL OR expires_at <= NOW())`,
+        [organizationId, email]
+      );
+
       // Calculate expiration date (7 days from now)
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + this.INVITE_EXPIRATION_DAYS);
