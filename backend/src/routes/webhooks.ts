@@ -8,6 +8,42 @@ const router = Router();
 // PostgreSQL INTEGER max value (2^31 - 1)
 const MAX_INT = 2147483647;
 
+// Zero-decimal currencies (no cents, e.g., ¥1000 = 1000, not 100000)
+// Stripe returns these as the actual amount, not in subunits
+const ZERO_DECIMAL_CURRENCIES = ['jpy', 'krw', 'vnd', 'clp', 'pyg', 'xaf', 'xof', 'xpf', 'bif', 'djf', 'gnf', 'kmf', 'mga', 'rwf', 'ugx'];
+
+/**
+ * Determine if an error is transient (should retry) or permanent (should not retry)
+ */
+function isTransientError(error: any): boolean {
+  const message = error.message?.toLowerCase() || '';
+
+  // Database connection/timeout errors (transient)
+  if (message.includes('connection') ||
+      message.includes('timeout') ||
+      message.includes('econnrefused') ||
+      message.includes('enotfound') ||
+      message.includes('network')) {
+    return true;
+  }
+
+  // Database pool exhausted (transient)
+  if (message.includes('pool') || message.includes('too many clients')) {
+    return true;
+  }
+
+  // Stripe API rate limits or service errors (transient)
+  if (error.type === 'StripeAPIError' ||
+      error.type === 'StripeConnectionError' ||
+      error.statusCode === 429 ||
+      error.statusCode >= 500) {
+    return true;
+  }
+
+  // All other errors are permanent (validation, missing data, constraint violations)
+  return false;
+}
+
 /**
  * Stripe Webhook Endpoint
  *
@@ -115,20 +151,37 @@ router.post('/stripe', async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('Error processing webhook event:', error);
 
-    // Log error to subscription_events table
+    // Determine if error is transient (should retry) or permanent (should not retry)
+    const isRetryable = isTransientError(error);
+
+    // Log error to subscription_events table (use INSERT...ON CONFLICT to handle race condition)
     try {
       await pool.query(
-        `UPDATE subscription_events
-         SET processing_error = $1
-         WHERE stripe_event_id = $2`,
-        [error.message, event.id]
+        `INSERT INTO subscription_events (stripe_event_id, event_type, data, processing_error)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (stripe_event_id) DO UPDATE
+         SET processing_error = EXCLUDED.processing_error`,
+        [event.id, event.type, JSON.stringify(event.data), error.message]
       );
     } catch (logError) {
       console.error('Failed to log webhook error:', logError);
     }
 
-    // Still return 200 to prevent Stripe retries for unrecoverable errors
-    return res.status(200).json({ received: true, error: error.message });
+    // Return 500 for transient errors (Stripe will retry)
+    // Return 200 for permanent errors (don't retry, prevents endless loops)
+    if (isRetryable) {
+      return res.status(500).json({
+        received: false,
+        error: 'Transient error - will retry',
+        details: error.message
+      });
+    } else {
+      return res.status(200).json({
+        received: true,
+        error: 'Permanent error - not retrying',
+        details: error.message
+      });
+    }
   }
 });
 
@@ -211,8 +264,13 @@ async function handleCheckoutCompleted(
       throw new Error('Missing required metadata in checkout session');
     }
 
+    // Calculate total amount from all subscription items (handles add-ons, metered billing)
+    const amountCents = subscription.items.data.reduce(
+      (sum, item) => sum + (item.price.unit_amount || 0),
+      0
+    );
+
     // Validate amount doesn't exceed PostgreSQL INTEGER max
-    const amountCents = subscription.items.data[0].price.unit_amount || 0;
     if (amountCents > MAX_INT) {
       throw new Error(`Subscription amount ${amountCents} exceeds max integer value`);
     }
@@ -303,8 +361,13 @@ async function handleSubscriptionUpdated(
 
     let rows;
 
+    // Calculate total amount from all subscription items (handles add-ons, metered billing)
+    const amountCents = subscription.items.data.reduce(
+      (sum, item) => sum + (item.price.unit_amount || 0),
+      0
+    );
+
     // Validate amount doesn't exceed PostgreSQL INTEGER max
-    const amountCents = subscription.items.data[0].price.unit_amount || 0;
     if (amountCents > MAX_INT) {
       throw new Error(`Subscription amount ${amountCents} exceeds max integer value`);
     }
@@ -438,15 +501,20 @@ async function handleSubscriptionDeleted(
       ]
     );
 
-    if (rows.length > 0) {
-      // Link event to subscription and organization
-      await client.query(
-        `UPDATE subscription_events
-         SET organization_id = $1, subscription_id = $2
-         WHERE id = $3`,
-        [rows[0].organization_id, rows[0].id, eventRecordId]
+    if (rows.length === 0) {
+      throw new Error(
+        `Subscription ${subscription.id} not found for deletion. ` +
+        `Ensure checkout.session.completed or subscription.created event is processed first. Event will be retried.`
       );
     }
+
+    // Link event to subscription and organization
+    await client.query(
+      `UPDATE subscription_events
+       SET organization_id = $1, subscription_id = $2
+       WHERE id = $3`,
+      [rows[0].organization_id, rows[0].id, eventRecordId]
+    );
 
     if (useTransaction) {
       await client.query('COMMIT');
@@ -510,6 +578,11 @@ async function handleInvoicePaid(
       throw new Error(`Invoice amounts exceed max integer value: due=${invoice.amount_due}, paid=${invoice.amount_paid}`);
     }
 
+    // Note: For zero-decimal currencies (JPY, KRW, etc.), Stripe returns the actual amount
+    // without subunits (¥1000 = 1000, not 100000). Our amount_cents column stores the raw
+    // Stripe value. Currency-aware display should be handled by frontend/reporting.
+    const currency = invoice.currency || 'usd';
+
     // Create invoice record
     await client.query(
       `INSERT INTO invoices (
@@ -529,7 +602,7 @@ async function handleInvoicePaid(
         invoice.id,
         invoice.amount_due,
         invoice.amount_paid,
-        invoice.currency || 'usd',
+        currency,
         'paid',
         invoice.invoice_pdf,
         invoice.hosted_invoice_url,
@@ -617,6 +690,11 @@ async function handleInvoiceFailed(
       throw new Error(`Invoice amounts exceed max integer value: due=${invoice.amount_due}, paid=${amountPaid}`);
     }
 
+    // Note: For zero-decimal currencies (JPY, KRW, etc.), Stripe returns the actual amount
+    // without subunits (¥1000 = 1000, not 100000). Our amount_cents column stores the raw
+    // Stripe value. Currency-aware display should be handled by frontend/reporting.
+    const currency = invoice.currency || 'usd';
+
     // Update subscription status to past_due
     await client.query(
       `UPDATE subscriptions
@@ -643,7 +721,7 @@ async function handleInvoiceFailed(
         invoice.id,
         invoice.amount_due,
         amountPaid,
-        invoice.currency || 'usd',
+        currency,
         'open',
         invoice.invoice_pdf,
         invoice.hosted_invoice_url,
