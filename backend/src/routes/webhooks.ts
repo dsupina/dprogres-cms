@@ -90,8 +90,22 @@ router.post('/stripe', async (req: Request, res: Response) => {
   }
 
   try {
+    // Quick idempotency check BEFORE external API calls
+    // This prevents wasting Stripe API calls on duplicate events
+    const { rows: existingCheck } = await pool.query(
+      `SELECT processed_at FROM subscription_events WHERE stripe_event_id = $1`,
+      [event.id]
+    );
+
+    // If event already processed, return immediately without calling Stripe API
+    if (existingCheck.length > 0 && existingCheck[0].processed_at) {
+      console.log(`Event ${event.id} already processed (quick check), skipping`);
+      return res.status(200).json({ received: true, duplicate: true });
+    }
+
     // For checkout.session.completed, fetch subscription from Stripe BEFORE transaction
     // to avoid holding database locks during external API call
+    // Only do this AFTER confirming event is not already processed
     let preloadedSubscription: any = null;
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object as any;
@@ -107,7 +121,7 @@ router.post('/stripe', async (req: Request, res: Response) => {
       }
     }
 
-    // Idempotency check: Insert event with processed_at = NULL (not processed yet)
+    // Idempotency insert: Insert event with processed_at = NULL (not processed yet)
     const { rows } = await pool.query(
       `INSERT INTO subscription_events (stripe_event_id, event_type, data, processed_at)
        VALUES ($1, $2, $3, NULL)

@@ -98,17 +98,8 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
 
-      // Mock idempotency check - no rows returned (duplicate)
-      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
-
-      // Mock transaction BEGIN
-      mockClientQuery.mockResolvedValueOnce({});
-
-      // Mock SELECT FOR UPDATE SKIP LOCKED - event was already processed
-      mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, processed_at: new Date() }] });
-
-      // Mock COMMIT
-      mockClientQuery.mockResolvedValueOnce({});
+      // Mock quick idempotency check - event exists and is already processed
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ processed_at: new Date() }] });
 
       const response = await request(app)
         .post('/webhooks/stripe')
@@ -139,7 +130,29 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
 
-      // Mock idempotency check - no rows returned (duplicate event ID)
+      // Mock quick idempotency check - event doesn't exist yet
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock Stripe subscription retrieve (preload)
+      mockStripeSubscriptionsRetrieve.mockResolvedValueOnce({
+        id: 'sub_concurrent',
+        items: {
+          data: [{
+            price: {
+              id: 'price_starter_monthly',
+              unit_amount: 2900,
+            },
+            quantity: 1,
+          }],
+        },
+        status: 'active',
+        current_period_start: 1700000000,
+        current_period_end: 1702592000,
+        cancel_at_period_end: false,
+        currency: 'usd',
+      });
+
+      // Mock idempotency INSERT - no rows returned (duplicate event ID)
       mockPoolQuery.mockResolvedValueOnce({ rows: [] });
 
       // Mock transaction BEGIN
@@ -198,7 +211,13 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
 
-      // Mock idempotency check - no rows returned (duplicate event ID)
+      // Mock quick idempotency check - event exists but not processed (retry scenario)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ processed_at: null }] });
+
+      // Mock Stripe subscription retrieve (preload for checkout.session.completed)
+      mockStripeSubscriptionsRetrieve.mockResolvedValueOnce(mockSubscription);
+
+      // Mock idempotency INSERT - no rows returned (event already exists)
       mockPoolQuery.mockResolvedValueOnce({ rows: [] });
 
       // Mock outer transaction BEGIN (for retry path)
@@ -206,9 +225,6 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       // Mock SELECT FOR UPDATE SKIP LOCKED - returns row with processed_at = NULL
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 10, processed_at: null }] });
-
-      // Mock Stripe subscription retrieve
-      mockStripeSubscriptionsRetrieve.mockResolvedValueOnce(mockSubscription);
 
       // Mock INSERT subscription - handler uses outer client
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });
@@ -270,7 +286,13 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
 
-      // Mock idempotency check - event is new
+      // Mock quick idempotency check - event doesn't exist yet
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock Stripe subscription retrieve (preload for checkout.session.completed)
+      mockStripeSubscriptionsRetrieve.mockResolvedValueOnce(mockSubscription);
+
+      // Mock idempotency INSERT - event is new
       mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });
 
       // Mock outer transaction BEGIN (for locking)
@@ -278,9 +300,6 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       // Mock SELECT FOR UPDATE - returns row with processed_at=NULL
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, processed_at: null }] });
-
-      // Mock Stripe subscription retrieve
-      mockStripeSubscriptionsRetrieve.mockResolvedValueOnce(mockSubscription);
 
       // Mock INSERT subscription (handler uses outer client, no inner transaction)
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });
@@ -338,7 +357,10 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
 
-      // Mock idempotency check - event is new
+      // Mock quick idempotency check - event doesn't exist yet
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock idempotency INSERT - event is new
       mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 2 }] });
 
       // Mock outer transaction BEGIN (for locking)
@@ -396,7 +418,10 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
 
-      // Mock idempotency check - event is new
+      // Mock quick idempotency check - event doesn't exist yet
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock idempotency INSERT - event is new
       mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 2 }] });
 
       // Mock outer transaction BEGIN (for locking)
@@ -440,7 +465,10 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
 
-      // Mock idempotency check - event is new
+      // Mock quick idempotency check - event doesn't exist yet
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock idempotency INSERT - event is new
       mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 3 }] });
 
       // Mock outer transaction BEGIN (for locking)
@@ -488,7 +516,10 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
 
-      // Mock idempotency check - event is new
+      // Mock quick idempotency check - event doesn't exist yet
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock idempotency INSERT - event is new
       mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 4 }] });
 
       // Mock outer transaction BEGIN (for locking)
@@ -496,6 +527,9 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       // Mock SELECT FOR UPDATE - returns row with processed_at=NULL
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 4, processed_at: null }] });
+
+      // Mock UPDATE subscription to active (restore from past_due)
+      mockClientQuery.mockResolvedValueOnce({});
 
       // Mock SELECT subscription - handler uses outer client
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, organization_id: 1 }] });
@@ -539,7 +573,10 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
 
-      // Mock idempotency check - event is new
+      // Mock quick idempotency check - event doesn't exist yet
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock idempotency INSERT - event is new
       mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 5 }] });
 
       // Mock outer transaction BEGIN (for locking)
@@ -588,7 +625,10 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
 
-      // Mock idempotency check - event is new
+      // Mock quick idempotency check - event doesn't exist yet
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock idempotency INSERT - event is new
       mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 6 }] });
 
       // Mock outer transaction BEGIN (for locking)
@@ -630,7 +670,29 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       mockStripeWebhooksConstructEvent.mockReturnValue(mockEvent);
 
-      // Mock idempotency check - event is new
+      // Mock quick idempotency check - event doesn't exist yet
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock Stripe subscription retrieve (preload for checkout.session.completed)
+      mockStripeSubscriptionsRetrieve.mockResolvedValueOnce({
+        id: 'sub_test123',
+        items: {
+          data: [{
+            price: {
+              id: 'price_test',
+              unit_amount: 2900,
+            },
+            quantity: 1,
+          }],
+        },
+        status: 'active',
+        current_period_start: 1700000000,
+        current_period_end: 1702592000,
+        cancel_at_period_end: false,
+        currency: 'usd',
+      });
+
+      // Mock idempotency INSERT - event is new
       mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 7 }] });
 
       // Mock outer transaction BEGIN (for locking)
@@ -638,11 +700,6 @@ describe('Webhooks - Stripe Event Handler', () => {
 
       // Mock SELECT FOR UPDATE - returns row with processed_at=NULL
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 7, processed_at: null }] });
-
-      // Mock Stripe subscription retrieve
-      mockStripeSubscriptionsRetrieve.mockResolvedValueOnce({
-        id: 'sub_test123',
-      });
 
       // Mock will fail due to missing metadata in handler (uses outer client)
       mockClientQuery.mockRejectedValueOnce(new Error('Missing required metadata'));
