@@ -741,7 +741,8 @@ async function handleInvoicePaid(
     // Note: For zero-decimal currencies (JPY, KRW, etc.), Stripe returns the actual amount
     // without subunits (¥1000 = 1000, not 100000). Our amount_cents column stores the raw
     // Stripe value. Currency-aware display should be handled by frontend/reporting.
-    const currency = invoice.currency || 'usd';
+    // Normalize to uppercase to match subscription handler and ISO 4217 standard
+    const currency = invoice.currency?.toUpperCase() || 'USD';
 
     // Validate and sanitize billing_reason
     // Known Stripe billing reasons: subscription_create, subscription_cycle, subscription_update,
@@ -885,7 +886,8 @@ async function handleInvoiceFailed(
     // Note: For zero-decimal currencies (JPY, KRW, etc.), Stripe returns the actual amount
     // without subunits (¥1000 = 1000, not 100000). Our amount_cents column stores the raw
     // Stripe value. Currency-aware display should be handled by frontend/reporting.
-    const currency = invoice.currency || 'usd';
+    // Normalize to uppercase to match subscription handler and ISO 4217 standard
+    const currency = invoice.currency?.toUpperCase() || 'USD';
 
     // Validate and sanitize billing_reason
     // Known Stripe billing reasons: subscription_create, subscription_cycle, subscription_update,
