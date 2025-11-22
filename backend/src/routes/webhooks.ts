@@ -90,6 +90,22 @@ router.post('/stripe', async (req: Request, res: Response) => {
   }
 
   try {
+    // For checkout.session.completed, fetch subscription from Stripe BEFORE transaction
+    // to avoid holding database locks during external API call
+    let preloadedSubscription: any = null;
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object as any;
+      if (session.subscription) {
+        try {
+          preloadedSubscription = await stripe.subscriptions.retrieve(session.subscription as string);
+        } catch (err: any) {
+          console.error(`Failed to fetch subscription ${session.subscription}:`, err.message);
+          // Will be retried when event is redelivered
+          throw new Error(`Failed to fetch subscription data: ${err.message}`);
+        }
+      }
+    }
+
     // Idempotency check: Insert event with processed_at = NULL (not processed yet)
     const { rows } = await pool.query(
       `INSERT INTO subscription_events (stripe_event_id, event_type, data, processed_at)
@@ -140,7 +156,8 @@ router.post('/stripe', async (req: Request, res: Response) => {
       const eventRecordId = existingEvent.id;
 
       // Pass client to handlers to avoid deadlock (outer transaction holds row lock)
-      await handleWebhookEvent(event, eventRecordId, client);
+      // Pass preloaded subscription data to avoid Stripe API call inside transaction
+      await handleWebhookEvent(event, eventRecordId, client, preloadedSubscription);
 
       // Mark as successfully processed (clear any prior error from failed attempts)
       await client.query(
@@ -205,11 +222,12 @@ router.post('/stripe', async (req: Request, res: Response) => {
 async function handleWebhookEvent(
   event: Stripe.Event,
   eventRecordId: number,
-  client?: any
+  client?: any,
+  preloadedSubscription?: any
 ): Promise<void> {
   switch (event.type) {
     case 'checkout.session.completed':
-      await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session, eventRecordId, client);
+      await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session, eventRecordId, client, preloadedSubscription);
       break;
 
     case 'customer.subscription.created':
@@ -241,7 +259,8 @@ async function handleWebhookEvent(
 async function handleCheckoutCompleted(
   session: Stripe.Checkout.Session,
   eventRecordId: number,
-  providedClient?: any
+  providedClient?: any,
+  preloadedSubscription?: any
 ): Promise<void> {
   // Validate session has required fields
   if (!session.subscription) {
@@ -251,9 +270,11 @@ async function handleCheckoutCompleted(
     throw new Error(`Checkout session ${session.id} missing customer ID`);
   }
 
-  // Get subscription details from Stripe (BEFORE starting transaction to avoid holding locks during API call)
   const subscriptionId = session.subscription as string;
-  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+  // Use preloaded subscription (fetched BEFORE outer transaction) or fetch now
+  // Preloaded subscription avoids holding database locks during external API call
+  const subscription = preloadedSubscription || await stripe.subscriptions.retrieve(subscriptionId);
 
   // Validate subscription has price information
   if (!subscription.items?.data?.[0]?.price?.id) {
@@ -281,7 +302,7 @@ async function handleCheckoutCompleted(
     // Calculate total amount from all subscription items (handles add-ons, metered billing, quantities)
     // For seat-based billing: 5 users × $10/seat = $50, not $10
     const amountCents = subscription.items.data.reduce(
-      (sum, item) => sum + ((item.price.unit_amount || 0) * (item.quantity || 1)),
+      (sum: number, item: any) => sum + ((item.price.unit_amount || 0) * (item.quantity || 1)),
       0
     );
 
@@ -383,7 +404,7 @@ async function handleSubscriptionUpdated(
     // Calculate total amount from all subscription items (handles add-ons, metered billing, quantities)
     // For seat-based billing: 5 users × $10/seat = $50, not $10
     const amountCents = subscription.items.data.reduce(
-      (sum, item) => sum + ((item.price.unit_amount || 0) * (item.quantity || 1)),
+      (sum: number, item: any) => sum + ((item.price.unit_amount || 0) * (item.quantity || 1)),
       0
     );
 
