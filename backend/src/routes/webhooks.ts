@@ -619,8 +619,7 @@ async function handleInvoicePaid(
       ON CONFLICT (stripe_invoice_id) DO UPDATE
       SET status = EXCLUDED.status,
           amount_paid_cents = EXCLUDED.amount_paid_cents,
-          paid_at = EXCLUDED.paid_at,
-          updated_at = NOW()`,
+          paid_at = EXCLUDED.paid_at`,
       [
         organizationId,
         dbSubscriptionId,
@@ -738,8 +737,7 @@ async function handleInvoiceFailed(
         period_start, period_end
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       ON CONFLICT (stripe_invoice_id) DO UPDATE
-      SET status = EXCLUDED.status,
-          updated_at = NOW()`,
+      SET status = EXCLUDED.status`,
       [
         organizationId,
         dbSubscriptionId,
