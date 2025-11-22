@@ -2,7 +2,7 @@
 
 ## Overview
 
-Fixed **23 critical and high-priority bugs** in the Stripe webhook handler (`backend/src/routes/webhooks.ts`) across 10 commits.
+Fixed **24 critical and high-priority bugs** in the Stripe webhook handler (`backend/src/routes/webhooks.ts`) across 11 commits.
 
 **Commits**:
 1. `76708444` - 9 Critical Bugs (P1)
@@ -15,6 +15,7 @@ Fixed **23 critical and high-priority bugs** in the Stripe webhook handler (`bac
 8. `3d28e29e` - Metadata-Missing Pricing (P1)
 9. `6ccfc30f` - Lock Duration During API Calls (P2)
 10. `89920bd4` - Stripe Error Metadata Preservation (P1)
+11. `852f9267` - Idempotency Check Before API Calls (P1)
 
 **Test Results**: ✅ All 13 tests passing | ✅ TypeScript compilation clean
 
@@ -283,6 +284,26 @@ await handleWebhookEvent(event, eventRecordId, client, preloadedSubscription);
 }
 ```
 - **Impact**: Rate limits (429) and 5xx errors correctly return 500 for retry instead of 200
+
+### 23. **Idempotency Check After Stripe API** ✅ (Commit 852f9267)
+- **Issue**: Stripe API call happened before idempotency check, wasting API calls on duplicates
+- **Fix**: Add quick SELECT before preloading to check if event already processed
+```typescript
+// Quick idempotency check BEFORE external API calls
+const { rows: existingCheck } = await pool.query(
+  `SELECT processed_at FROM subscription_events WHERE stripe_event_id = $1`,
+  [event.id]
+);
+
+// If event already processed, return immediately without calling Stripe API
+if (existingCheck.length > 0 && existingCheck[0].processed_at) {
+  console.log(`Event ${event.id} already processed (quick check), skipping`);
+  return res.status(200).json({ received: true, duplicate: true });
+}
+
+// Only NOW fetch from Stripe if event is not already processed
+```
+- **Impact**: Duplicate webhook deliveries no longer waste Stripe API calls or risk rate limits
 
 ---
 
