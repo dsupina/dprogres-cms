@@ -157,14 +157,20 @@ router.post('/stripe', async (req: Request, res: Response) => {
     let preloadedSubscription: Stripe.Subscription | null = null;
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object as Stripe.Checkout.Session;
-      if (session.subscription && typeof session.subscription === 'string') {
-        try {
-          preloadedSubscription = await stripe.subscriptions.retrieve(session.subscription);
-        } catch (err: any) {
-          console.error(`Failed to fetch subscription ${session.subscription}:`, err.message);
-          // Re-throw original error to preserve Stripe metadata (type, statusCode)
-          // isTransientError() needs these fields to classify rate limits and 5xx errors
-          throw err;
+      if (session.subscription) {
+        if (typeof session.subscription === 'string') {
+          // Subscription is an ID string - fetch from Stripe
+          try {
+            preloadedSubscription = await stripe.subscriptions.retrieve(session.subscription);
+          } catch (err: any) {
+            console.error(`Failed to fetch subscription ${session.subscription}:`, err.message);
+            // Re-throw original error to preserve Stripe metadata (type, statusCode)
+            // isTransientError() needs these fields to classify rate limits and 5xx errors
+            throw err;
+          }
+        } else {
+          // Subscription is already expanded - use it directly (no need to fetch)
+          preloadedSubscription = session.subscription as Stripe.Subscription;
         }
       }
     }
@@ -334,12 +340,21 @@ async function handleCheckoutCompleted(
   }
 
   // Validate Stripe customer ID format (must start with 'cus_')
+  // session.customer can be a string (customer ID) or expanded Customer object
   const customerId = typeof session.customer === 'string' ? session.customer : session.customer.id;
   if (!customerId || !/^cus_/.test(customerId)) {
     throw new Error(`Invalid Stripe customer ID format: ${customerId}`);
   }
 
-  const subscriptionId = session.subscription as string;
+  // Extract subscription ID (can be string or expanded Subscription object)
+  // When Stripe expands objects via expand[] parameter, session.subscription is an object
+  const subscriptionId = typeof session.subscription === 'string'
+    ? session.subscription
+    : (session.subscription as Stripe.Subscription).id;
+
+  if (!subscriptionId) {
+    throw new Error(`Checkout session ${session.id} missing subscription ID`);
+  }
 
   // Use preloaded subscription (fetched BEFORE outer transaction) or fetch now
   // Preloaded subscription avoids holding database locks during external API call
@@ -408,7 +423,7 @@ async function handleCheckoutCompleted(
       RETURNING id`,
       [
         organizationId,
-        session.customer,
+        customerId,
         subscriptionId,
         subscription.items.data[0].price.id,
         planTier,
