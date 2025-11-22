@@ -290,14 +290,17 @@ async function handleCheckoutCompleted(
       throw new Error(`Subscription amount ${amountCents} exceeds max integer value`);
     }
 
+    // Get currency from subscription (defaults to USD if not specified)
+    const currency = subscription.currency?.toUpperCase() || 'USD';
+
     // Create subscription record
     const { rows } = await client.query(
       `INSERT INTO subscriptions (
         organization_id, stripe_customer_id, stripe_subscription_id,
         stripe_price_id, plan_tier, billing_cycle, status,
         current_period_start, current_period_end, cancel_at_period_end,
-        amount_cents
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        amount_cents, currency
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       ON CONFLICT (stripe_subscription_id) DO UPDATE
       SET status = EXCLUDED.status,
           current_period_start = EXCLUDED.current_period_start,
@@ -316,6 +319,7 @@ async function handleCheckoutCompleted(
         new Date((subscription as any).current_period_end * 1000),
         (subscription as any).cancel_at_period_end,
         amountCents,
+        currency,
       ]
     );
 
@@ -388,6 +392,9 @@ async function handleSubscriptionUpdated(
       throw new Error(`Subscription amount ${amountCents} exceeds max integer value`);
     }
 
+    // Get currency from subscription (defaults to USD if not specified)
+    const currency = subscription.currency?.toUpperCase() || 'USD';
+
     // If we have full metadata, use UPSERT (handles both created and updated)
     if (organizationId && !isNaN(organizationId) && planTier && billingCycle) {
       const result = await client.query(
@@ -395,8 +402,8 @@ async function handleSubscriptionUpdated(
           organization_id, stripe_customer_id, stripe_subscription_id,
           stripe_price_id, plan_tier, billing_cycle, status,
           current_period_start, current_period_end, cancel_at_period_end,
-          canceled_at, amount_cents
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          canceled_at, amount_cents, currency
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (stripe_subscription_id) DO UPDATE
         SET stripe_price_id = EXCLUDED.stripe_price_id,
             plan_tier = EXCLUDED.plan_tier,
@@ -407,6 +414,7 @@ async function handleSubscriptionUpdated(
             cancel_at_period_end = EXCLUDED.cancel_at_period_end,
             canceled_at = EXCLUDED.canceled_at,
             amount_cents = EXCLUDED.amount_cents,
+            currency = EXCLUDED.currency,
             updated_at = NOW()
         RETURNING id, organization_id`,
         [
@@ -422,6 +430,7 @@ async function handleSubscriptionUpdated(
           (subscription as any).cancel_at_period_end,
           (subscription as any).canceled_at ? new Date((subscription as any).canceled_at * 1000) : null,
           amountCents,
+          currency,
         ]
       );
       rows = result.rows;
