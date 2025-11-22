@@ -289,7 +289,10 @@ async function handleSubscriptionUpdated(
           canceled_at, amount_cents
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         ON CONFLICT (stripe_subscription_id) DO UPDATE
-        SET status = EXCLUDED.status,
+        SET stripe_price_id = EXCLUDED.stripe_price_id,
+            plan_tier = EXCLUDED.plan_tier,
+            billing_cycle = EXCLUDED.billing_cycle,
+            status = EXCLUDED.status,
             current_period_start = EXCLUDED.current_period_start,
             current_period_end = EXCLUDED.current_period_end,
             cancel_at_period_end = EXCLUDED.cancel_at_period_end,
