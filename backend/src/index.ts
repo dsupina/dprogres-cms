@@ -1,3 +1,7 @@
+// Load environment variables FIRST (before any imports that need them)
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -5,9 +9,8 @@ import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
-import dotenv from 'dotenv';
 
-// Import routes
+// Import routes (webhooksRoutes loads config/stripe which validates env vars)
 import authRoutes from './routes/auth';
 import postsRoutes from './routes/posts';
 import categoriesRoutes from './routes/categories';
@@ -22,6 +25,7 @@ import sitesRoutes from './routes/sites';
 import versionsRoutes from './routes/versions_simple';
 import autosaveRoutes from './routes/autosave';
 import { createVersionRoutes } from './routes/versions';
+import webhooksRoutes from './routes/webhooks';
 
 // Import domain middleware
 import { validateDomain, resolveDomain } from './middleware/domainValidation';
@@ -29,9 +33,6 @@ import { siteResolver } from './middleware/siteResolver';
 
 // Import database pool
 import pool from './utils/database';
-
-// Load environment variables
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -90,20 +91,24 @@ app.use(cors({
 app.use(compression());
 app.use(morgan('combined'));
 app.use(limiter);
+
+// Webhook route MUST come before express.json() to preserve raw body for signature verification
+app.use('/api/webhooks', express.raw({ type: 'application/json' }), webhooksRoutes);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Domain validation and resolution middleware
-// Skip for health check and static files
+// Skip for health check, static files, and webhooks
 app.use((req, res, next) => {
-  if (req.path === '/api/health' || req.path.startsWith('/uploads')) {
+  if (req.path === '/api/health' || req.path.startsWith('/uploads') || req.path.startsWith('/api/webhooks')) {
     return next();
   }
   validateDomain(req, res, next);
 });
 
 app.use((req, res, next) => {
-  if (req.path === '/api/health' || req.path.startsWith('/uploads')) {
+  if (req.path === '/api/health' || req.path.startsWith('/uploads') || req.path.startsWith('/api/webhooks')) {
     return next();
   }
   resolveDomain(req, res, next);

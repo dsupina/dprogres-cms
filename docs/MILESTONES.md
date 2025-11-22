@@ -92,8 +92,66 @@
 4. ✅ STRIPE_SETUP.md - Created comprehensive setup guide for developers
 
 **Next Steps**:
-- SF-004: Webhook handler with idempotency
 - SF-005: OrganizationService implementation (org management, team invites)
+- SF-006: Billing API routes (expose subscription methods via REST)
+
+---
+
+**Recently Completed: SF-004 Webhook Handler with Idempotency** (January 2025)
+
+**Implementation Achievements**:
+- ✅ Stripe webhook endpoint at /api/webhooks/stripe
+- ✅ Signature verification using stripe.webhooks.constructEvent()
+- ✅ Idempotency protection via subscription_events table (stripe_event_id UNIQUE constraint)
+- ✅ 5 event handlers implemented (checkout.session.completed, subscription.created/updated/deleted, invoice.payment_succeeded/failed)
+- ✅ Atomic database transactions with rollback on failure
+- ✅ Event audit logging in subscription_events table
+- ✅ Comprehensive unit test suite (10 tests, 100% passing)
+- ✅ Returns 200 OK within 5 seconds (Stripe timeout requirement)
+- ✅ Graceful error handling (logs errors but returns 200 to prevent retries)
+
+**Event Handlers**:
+1. `handleCheckoutCompleted()` - Creates subscription record from checkout session
+2. `handleSubscriptionUpdated()` - Updates subscription status and period dates
+3. `handleSubscriptionDeleted()` - Marks subscription as canceled
+4. `handleInvoicePaid()` - Creates invoice record, ready for receipt emails
+5. `handleInvoiceFailed()` - Marks subscription as past_due, ready for warning emails
+
+**Key Features**:
+- **Idempotency**: ON CONFLICT (stripe_event_id) DO NOTHING ensures duplicate events are safely ignored
+- **Transactional**: All database operations wrapped in transactions with BEGIN/COMMIT/ROLLBACK
+- **Raw Body Parsing**: Webhook route uses express.raw() before express.json() to preserve signature
+- **Domain Bypass**: Webhooks skip domain validation middleware (come from Stripe, not our domains)
+- **Type Safety**: Proper handling of Stripe SDK types with type assertions for nested properties
+
+**Technical Implementation**:
+- Route: `backend/src/routes/webhooks.ts` (460 lines)
+- Tests: `backend/src/__tests__/routes/webhooks.test.ts` (410 lines)
+- Integration: Registered in index.ts before JSON middleware
+- Database: Uses subscription_events table from SF-001 migration
+
+**Test Coverage** (All Tests Passing):
+- ✅ Signature verification (reject missing/invalid signatures)
+- ✅ Idempotency check (duplicate events ignored)
+- ✅ Checkout completed (subscription creation)
+- ✅ Subscription updated (status and period changes)
+- ✅ Subscription deleted (cancellation)
+- ✅ Invoice paid (invoice recording)
+- ✅ Invoice failed (past_due status)
+- ✅ Unknown event types (graceful handling)
+- ✅ Error logging (errors logged but 200 returned)
+- ✅ Transaction rollback (on failure)
+
+**Security & Reliability**:
+- Webhook signature verification prevents unauthorized requests
+- Idempotency prevents duplicate processing
+- Always returns 200 OK to prevent Stripe retries for unrecoverable errors
+- All errors logged to subscription_events.processing_error for debugging
+
+**Next Integration Points**:
+- SF-005: OrganizationService will emit events consumed by webhook handlers
+- SF-006: API routes will trigger Stripe operations that generate webhooks
+- SF-007: Email service will send receipts/warnings based on invoice events
 
 ---
 
