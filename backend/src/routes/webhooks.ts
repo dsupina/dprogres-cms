@@ -5,6 +5,18 @@ import type Stripe from 'stripe';
 
 const router = Router();
 
+// Extend Stripe types with webhook-specific properties that exist in API but not in TypeScript defs
+type StripeSubscriptionWithPeriod = Stripe.Subscription & {
+  current_period_start: number;
+  current_period_end: number;
+  cancel_at_period_end: boolean;
+  canceled_at: number | null;
+};
+
+type StripeInvoiceWithSubscription = Stripe.Invoice & {
+  subscription: string | Stripe.Subscription | null;
+};
+
 // PostgreSQL INTEGER max value (2^31 - 1)
 const MAX_INT = 2147483647;
 
@@ -142,12 +154,12 @@ router.post('/stripe', async (req: Request, res: Response) => {
     // For checkout.session.completed, fetch subscription from Stripe BEFORE transaction
     // to avoid holding database locks during external API call
     // Only do this AFTER confirming event is not already processed
-    let preloadedSubscription: any = null;
+    let preloadedSubscription: Stripe.Subscription | null = null;
     if (event.type === 'checkout.session.completed') {
-      const session = event.data.object as any;
-      if (session.subscription) {
+      const session = event.data.object as Stripe.Checkout.Session;
+      if (session.subscription && typeof session.subscription === 'string') {
         try {
-          preloadedSubscription = await stripe.subscriptions.retrieve(session.subscription as string);
+          preloadedSubscription = await stripe.subscriptions.retrieve(session.subscription);
         } catch (err: any) {
           console.error(`Failed to fetch subscription ${session.subscription}:`, err.message);
           // Re-throw original error to preserve Stripe metadata (type, statusCode)
@@ -402,9 +414,9 @@ async function handleCheckoutCompleted(
         planTier,
         billingCycle,
         subscription.status,
-        fromUnixTimestamp((subscription as any).current_period_start),
-        fromUnixTimestamp((subscription as any).current_period_end),
-        (subscription as any).cancel_at_period_end,
+        fromUnixTimestamp((subscription as StripeSubscriptionWithPeriod).current_period_start),
+        fromUnixTimestamp((subscription as StripeSubscriptionWithPeriod).current_period_end),
+        (subscription as StripeSubscriptionWithPeriod).cancel_at_period_end,
         amountCents,
         currency,
       ]
@@ -461,7 +473,7 @@ async function handleSubscriptionUpdated(
     }
 
     // Extract metadata for new subscriptions (may not exist for updates)
-    const orgIdStr = (subscription as any).metadata?.organization_id;
+    const orgIdStr = subscription.metadata?.organization_id;
     let organizationId: number | undefined;
 
     // Parse and validate organization ID if present
@@ -472,8 +484,8 @@ async function handleSubscriptionUpdated(
       }
     }
 
-    const planTier = (subscription as any).metadata?.plan_tier as 'free' | 'starter' | 'pro' | 'enterprise' | undefined;
-    const billingCycle = (subscription as any).metadata?.billing_cycle as 'monthly' | 'annual' | undefined;
+    const planTier = subscription.metadata?.plan_tier as 'free' | 'starter' | 'pro' | 'enterprise' | undefined;
+    const billingCycle = subscription.metadata?.billing_cycle as 'monthly' | 'annual' | undefined;
 
     let rows;
 
@@ -522,10 +534,10 @@ async function handleSubscriptionUpdated(
           planTier,
           billingCycle,
           subscription.status,
-          fromUnixTimestamp((subscription as any).current_period_start),
-          fromUnixTimestamp((subscription as any).current_period_end),
-          (subscription as any).cancel_at_period_end,
-          fromUnixTimestamp((subscription as any).canceled_at),
+          fromUnixTimestamp((subscription as StripeSubscriptionWithPeriod).current_period_start),
+          fromUnixTimestamp((subscription as StripeSubscriptionWithPeriod).current_period_end),
+          (subscription as StripeSubscriptionWithPeriod).cancel_at_period_end,
+          fromUnixTimestamp((subscription as StripeSubscriptionWithPeriod).canceled_at),
           amountCents,
           currency,
         ]
@@ -553,10 +565,10 @@ async function handleSubscriptionUpdated(
           amountCents,
           currency,
           subscription.status,
-          fromUnixTimestamp((subscription as any).current_period_start),
-          fromUnixTimestamp((subscription as any).current_period_end),
-          (subscription as any).cancel_at_period_end,
-          fromUnixTimestamp((subscription as any).canceled_at),
+          fromUnixTimestamp((subscription as StripeSubscriptionWithPeriod).current_period_start),
+          fromUnixTimestamp((subscription as StripeSubscriptionWithPeriod).current_period_end),
+          (subscription as StripeSubscriptionWithPeriod).cancel_at_period_end,
+          fromUnixTimestamp((subscription as StripeSubscriptionWithPeriod).canceled_at),
           subscription.id,
         ]
       );
@@ -681,7 +693,11 @@ async function handleInvoicePaid(
     }
 
     // Find subscription in our database
-    const stripeSubId = typeof (invoice as any).subscription === 'string' ? (invoice as any).subscription : (invoice as any).subscription?.id;
+    // invoice.subscription can be string (subscription ID) or Stripe.Subscription object or null
+    const invoiceWithSub = invoice as StripeInvoiceWithSubscription;
+    const stripeSubId = typeof invoiceWithSub.subscription === 'string'
+      ? invoiceWithSub.subscription
+      : invoiceWithSub.subscription?.id;
 
     if (!stripeSubId || stripeSubId.trim() === '') {
       throw new Error(`No valid subscription ID found for invoice ${invoice.id}. Event will be retried.`);
@@ -813,7 +829,11 @@ async function handleInvoiceFailed(
     }
 
     // Find subscription in our database
-    const stripeSubId = typeof (invoice as any).subscription === 'string' ? (invoice as any).subscription : (invoice as any).subscription?.id;
+    // invoice.subscription can be string (subscription ID) or Stripe.Subscription object or null
+    const invoiceWithSub = invoice as StripeInvoiceWithSubscription;
+    const stripeSubId = typeof invoiceWithSub.subscription === 'string'
+      ? invoiceWithSub.subscription
+      : invoiceWithSub.subscription?.id;
 
     if (!stripeSubId || stripeSubId.trim() === '') {
       throw new Error(`No valid subscription ID found for failed invoice ${invoice.id}. Event will be retried.`);
