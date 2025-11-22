@@ -234,7 +234,8 @@ describe('MemberService', () => {
       mockClientQuery.mockResolvedValueOnce({
         rows: [{ email: 'newuser@example.com' }],
       }); // user check
-      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // existing member check
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // active member check
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // soft-deleted member check
       mockClientQuery.mockResolvedValueOnce({
         rows: [
           {
@@ -404,6 +405,50 @@ describe('MemberService', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBe('You are already a member of this organization');
       expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
+    });
+
+    it('should re-activate soft-deleted membership when accepting invite', async () => {
+      (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // BEGIN
+      mockClientQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            organization_id: 1,
+            email: 'newuser@example.com',
+            accepted_at: null,
+            expires_at: new Date(Date.now() + 86400000),
+          },
+        ],
+      }); // invite check
+      mockClientQuery.mockResolvedValueOnce({
+        rows: [{ email: 'newuser@example.com' }],
+      }); // user check
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // no active members
+      mockClientQuery.mockResolvedValueOnce({
+        rows: [{ id: 10 }],
+      }); // soft-deleted member found
+      mockClientQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 10,
+            organization_id: 1,
+            user_id: userId,
+            role: 'editor',
+            deleted_at: null, // Re-activated
+          },
+        ],
+      }); // UPDATE soft-deleted member
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE invite accepted_at
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+      const result = await memberService.acceptInvite(validToken, userId);
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBeDefined();
+      expect(result.data?.id).toBe(10); // Same ID as soft-deleted member
+      expect(result.data?.deleted_at).toBeNull();
+      expect(mockClientQuery).toHaveBeenCalledWith('COMMIT');
     });
   });
 
