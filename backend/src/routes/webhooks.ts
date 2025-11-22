@@ -764,7 +764,14 @@ async function handleInvoicePaid(
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (stripe_invoice_id) DO UPDATE
       SET status = EXCLUDED.status,
+          amount_cents = EXCLUDED.amount_cents,
           amount_paid_cents = EXCLUDED.amount_paid_cents,
+          currency = EXCLUDED.currency,
+          invoice_pdf_url = EXCLUDED.invoice_pdf_url,
+          hosted_invoice_url = EXCLUDED.hosted_invoice_url,
+          billing_reason = EXCLUDED.billing_reason,
+          period_start = EXCLUDED.period_start,
+          period_end = EXCLUDED.period_end,
           paid_at = EXCLUDED.paid_at`,
       [
         organizationId,
@@ -900,7 +907,15 @@ async function handleInvoiceFailed(
         period_start, period_end
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       ON CONFLICT (stripe_invoice_id) DO UPDATE
-      SET status = EXCLUDED.status`,
+      SET status = EXCLUDED.status,
+          amount_cents = EXCLUDED.amount_cents,
+          amount_paid_cents = EXCLUDED.amount_paid_cents,
+          currency = EXCLUDED.currency,
+          invoice_pdf_url = EXCLUDED.invoice_pdf_url,
+          hosted_invoice_url = EXCLUDED.hosted_invoice_url,
+          billing_reason = EXCLUDED.billing_reason,
+          period_start = EXCLUDED.period_start,
+          period_end = EXCLUDED.period_end`,
       [
         organizationId,
         dbSubscriptionId,
