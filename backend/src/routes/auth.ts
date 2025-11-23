@@ -16,7 +16,7 @@ router.post('/login', validate(loginSchema), async (req: Request, res: Response)
   try {
     const { email, password } = req.body;
 
-    // Find user by email
+    // Find user by email - include current_organization_id for quota enforcement
     const userResult = await query('SELECT * FROM users WHERE email = $1', [email]);
 
     if (userResult.rows.length === 0) {
@@ -46,11 +46,12 @@ router.post('/login', validate(loginSchema), async (req: Request, res: Response)
       });
     }
 
-    // Generate JWT token
+    // Generate JWT token with organizationId for quota enforcement (SF-010)
     const token = generateToken({
       userId: user.id,
       email: user.email,
-      role: user.role
+      role: user.role,
+      organizationId: user.current_organization_id
     });
 
     // Remove password from response
