@@ -4,6 +4,7 @@ import { query } from '../utils/database';
 import { authenticateToken, requireAuthor } from '../middleware/auth';
 import { validate, createPostSchema, updatePostSchema } from '../middleware/validation';
 import { enforceQuota } from '../middleware/quota';
+import { quotaService } from '../services/QuotaService';
 import { generateSlug, generateUniqueSlug } from '../utils/slug';
 import { Post, CreatePostData, UpdatePostData, QueryParams } from '../types';
 
@@ -248,6 +249,16 @@ router.post('/', authenticateToken, requireAuthor, enforceQuota('posts'), valida
     // Handle tags
     if (postData.tags && postData.tags.length > 0) {
       await handlePostTags(newPost.id, postData.tags);
+    }
+
+    // Increment quota after successful creation (SF-010)
+    const organizationId = req.user?.organizationId;
+    if (organizationId) {
+      await quotaService.incrementQuota({
+        organizationId,
+        dimension: 'posts',
+        amount: 1
+      });
     }
 
     res.status(201).json({

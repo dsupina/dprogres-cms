@@ -3,6 +3,7 @@ import { authenticateToken, requireAdmin } from '../middleware/auth';
 import { validateRequest } from '../middleware/validation';
 import { enforceQuota } from '../middleware/quota';
 import { siteService } from '../services/siteService';
+import { quotaService } from '../services/QuotaService';
 import Joi from 'joi';
 
 const router = Router();
@@ -90,6 +91,17 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const site = await siteService.createSite(req.body);
+
+      // Increment quota after successful creation (SF-010)
+      const organizationId = req.user?.organizationId;
+      if (organizationId) {
+        await quotaService.incrementQuota({
+          organizationId,
+          dimension: 'sites',
+          amount: 1
+        });
+      }
+
       res.status(201).json(site);
     } catch (error: any) {
       console.error('Error creating site:', error);

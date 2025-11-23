@@ -7,6 +7,7 @@ import fs from 'fs';
 import { query } from '../utils/database';
 import { authenticateToken, requireAuthor } from '../middleware/auth';
 import { enforceStorageQuota } from '../middleware/quota';
+import { quotaService } from '../services/QuotaService';
 
 const router = express.Router();
 
@@ -187,6 +188,16 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
     const result = await query(insertQuery, values);
     const mediaFile = result.rows[0];
 
+    // Increment quota after successful upload (SF-010)
+    const organizationId = req.user?.organizationId;
+    if (organizationId) {
+      await quotaService.incrementQuota({
+        organizationId,
+        dimension: 'storage_bytes',
+        amount: req.file.size
+      });
+    }
+
     res.status(201).json({
       message: 'File uploaded successfully',
       data: mediaFile
@@ -209,6 +220,7 @@ router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('
     const userId = req.user?.userId;
     const uploadedFiles = [];
 
+    let totalBytes = 0;
     for (const file of files) {
       const insertQuery = `
         INSERT INTO media_files (
@@ -228,6 +240,17 @@ router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('
 
       const result = await query(insertQuery, values);
       uploadedFiles.push(result.rows[0]);
+      totalBytes += file.size;
+    }
+
+    // Increment quota after successful upload (SF-010)
+    const organizationId = req.user?.organizationId;
+    if (organizationId && totalBytes > 0) {
+      await quotaService.incrementQuota({
+        organizationId,
+        dimension: 'storage_bytes',
+        amount: totalBytes
+      });
     }
 
     res.status(201).json({
