@@ -145,6 +145,7 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
 
     // If image, generate a web-optimized copy (webp) and a thumbnail
     let storedPath = `/uploads/${req.file.filename}`;
+    let totalStorageBytes = req.file.size; // Start with original file size
     const fullPath = path.join(__dirname, '../../uploads', req.file.filename);
     const ext = path.extname(req.file.originalname).toLowerCase();
     const isImage = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext);
@@ -160,11 +161,21 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
         await sharp(fullPath).rotate().resize({ width: 1600, withoutEnlargement: true }).webp({ quality: 82 }).toFile(webpPath);
         await sharp(fullPath).rotate().resize({ width: 480, withoutEnlargement: true }).webp({ quality: 78 }).toFile(thumbPath);
 
+        // P1 bug fix: Account for all derivative files in storage quota (SF-010)
+        // Calculate actual total storage: original + webp + thumbnail
+        if (fs.existsSync(webpPath)) {
+          totalStorageBytes += fs.statSync(webpPath).size;
+        }
+        if (fs.existsSync(thumbPath)) {
+          totalStorageBytes += fs.statSync(thumbPath).size;
+        }
+
         // prefer webp as canonical path
         storedPath = `/uploads/${webpName}`;
       }
     } catch (e) {
       // If optimization fails, fall back to original upload
+      // totalStorageBytes already set to req.file.size
     }
 
     const insertQuery = `
@@ -194,7 +205,7 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
       const incrementResult = await quotaService.incrementQuota({
         organizationId,
         dimension: 'storage_bytes',
-        amount: req.file.size
+        amount: totalStorageBytes // P1 fix: Use actual total including derivatives
       });
 
       // P2 bug fix: Handle quota increment failures
@@ -204,7 +215,7 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
         console.error('[CRITICAL] Media uploaded but quota increment failed:', {
           mediaId: mediaFile.id,
           organizationId,
-          fileSize: req.file.size,
+          fileSize: totalStorageBytes,
           error: incrementResult.error,
         });
       }
