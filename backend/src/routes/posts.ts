@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import { query } from '../utils/database';
 import { authenticateToken, requireAuthor } from '../middleware/auth';
 import { validate, createPostSchema, updatePostSchema } from '../middleware/validation';
+import { enforceQuota } from '../middleware/quota';
 import { generateSlug, generateUniqueSlug } from '../utils/slug';
 import { Post, CreatePostData, UpdatePostData, QueryParams } from '../types';
 
@@ -200,7 +201,7 @@ router.get('/:slug', async (req: Request, res: Response) => {
 });
 
 // Create post (admin only)
-router.post('/', authenticateToken, requireAuthor, validate(createPostSchema), async (req: Request, res: Response) => {
+router.post('/', authenticateToken, requireAuthor, enforceQuota('posts'), validate(createPostSchema), async (req: Request, res: Response) => {
   try {
     const postData: CreatePostData = req.body;
     const authorId = req.user?.userId;

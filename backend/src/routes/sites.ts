@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authenticateToken, requireAdmin } from '../middleware/auth';
 import { validateRequest } from '../middleware/validation';
+import { enforceQuota } from '../middleware/quota';
 import { siteService } from '../services/siteService';
 import Joi from 'joi';
 
@@ -84,6 +85,7 @@ router.post(
   '/',
   authenticateToken,
   requireAdmin,
+  enforceQuota('sites'),
   validateRequest(createSiteSchema),
   async (req: Request, res: Response) => {
     try {
