@@ -6,7 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import { query } from '../utils/database';
 import { authenticateToken, requireAuthor } from '../middleware/auth';
-import { enforceQuota } from '../middleware/quota';
+import { enforceStorageQuota } from '../middleware/quota';
 
 const router = express.Router();
 
@@ -119,7 +119,7 @@ router.get('/', authenticateToken, requireAuthor, async (req: Request, res: Resp
 
 // Upload single file (admin only) with basic image optimization
 // Custom wrapper to handle multer errors and return friendly messages
-router.post('/upload', authenticateToken, requireAuthor, enforceQuota('storage_bytes'), (req: Request, res: Response, next) => {
+router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Response, next) => {
   const handler = upload.single('file');
   handler(req as any, res as any, function(err: any) {
     if (err) {
@@ -133,7 +133,7 @@ router.post('/upload', authenticateToken, requireAuthor, enforceQuota('storage_b
     }
     next();
   });
-}, async (req: Request, res: Response) => {
+}, enforceStorageQuota(), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -198,7 +198,7 @@ router.post('/upload', authenticateToken, requireAuthor, enforceQuota('storage_b
 });
 
 // Upload multiple files (admin only)
-router.post('/upload-multiple', authenticateToken, requireAuthor, enforceQuota('storage_bytes'), upload.array('files', 10), async (req: Request, res: Response) => {
+router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('files', 10), enforceStorageQuota(), async (req: Request, res: Response) => {
   try {
     const files = req.files as Express.Multer.File[];
     

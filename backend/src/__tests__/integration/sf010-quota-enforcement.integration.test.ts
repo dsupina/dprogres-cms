@@ -337,7 +337,7 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
       expect(mockQuotaService.checkQuota).toHaveBeenCalledWith({
         organizationId: 1,
         dimension: 'storage_bytes',
-        amount: 1,
+        amount: 1024, // FIXED: Should use actual file size from multer
       });
     });
 
@@ -361,10 +361,40 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
       expect(response.status).toBe(402);
       expect(response.body).toMatchObject({
         success: false,
-        error: 'Quota exceeded for storage_bytes',
+        error: 'Storage quota exceeded',
         quota: {
           dimension: 'storage_bytes',
+          uploadSize: 1024, // Should include upload size
         },
+      });
+    });
+
+    it('should check quota with actual file size from multer', async () => {
+      // Note: The multer mock returns a fixed size of 1024 bytes
+      // In a real scenario, multer would return the actual buffer size
+
+      // Mock quota service - quota exceeded
+      mockQuotaService.checkQuota = jest.fn().mockResolvedValue({
+        success: true,
+        data: {
+          allowed: false,
+          current: 8 * 1024 * 1024, // Already used 8MB
+          limit: 10 * 1024 * 1024, // 10MB limit
+          remaining: 2 * 1024 * 1024, // Only 2MB remaining
+          percentage_used: 80,
+        },
+      });
+
+      const response = await request(app)
+        .post('/api/media/upload')
+        .attach('file', Buffer.from('test'), 'test-file.jpg');
+
+      expect(response.status).toBe(402);
+      // Verify quota was checked with file size from multer mock (1024 bytes)
+      expect(mockQuotaService.checkQuota).toHaveBeenCalledWith({
+        organizationId: 1,
+        dimension: 'storage_bytes',
+        amount: 1024, // File size from multer mock
       });
     });
   });
@@ -412,7 +442,7 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
       expect(mockQuotaService.checkQuota).toHaveBeenCalledWith({
         organizationId: 1,
         dimension: 'storage_bytes',
-        amount: 1,
+        amount: 1024, // File size from multer mock
       });
     });
 
@@ -436,7 +466,7 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
       expect(response.status).toBe(402);
       expect(response.body).toMatchObject({
         success: false,
-        error: 'Quota exceeded for storage_bytes',
+        error: 'Storage quota exceeded',
       });
     });
   });
