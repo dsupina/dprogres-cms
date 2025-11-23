@@ -209,6 +209,16 @@ export function enforceStorageQuota() {
       const organizationId = req.user?.organizationId;
 
       if (!organizationId) {
+        // Clean up uploaded files before returning error (P2 bug fix)
+        const uploadedFiles: string[] = [];
+        if (req.file) {
+          uploadedFiles.push(req.file.path);
+        } else if (req.files) {
+          const files = Array.isArray(req.files) ? req.files : Object.values(req.files).flat();
+          uploadedFiles.push(...files.map(f => f.path));
+        }
+        cleanupFiles(uploadedFiles);
+
         return res.status(400).json({
           success: false,
           error: 'Organization ID is required for quota enforcement',

@@ -254,11 +254,22 @@ router.post('/', authenticateToken, requireAuthor, enforceQuota('posts'), valida
     // Increment quota after successful creation (SF-010)
     const organizationId = req.user?.organizationId;
     if (organizationId) {
-      await quotaService.incrementQuota({
+      const incrementResult = await quotaService.incrementQuota({
         organizationId,
         dimension: 'posts',
         amount: 1
       });
+
+      // P2 bug fix: Handle quota increment failures
+      if (!incrementResult.success || !incrementResult.data) {
+        // This is a critical data inconsistency - post created but quota not incremented
+        // TODO: Implement proper rollback (delete post + post_tags) in future iteration
+        console.error('[CRITICAL] Post created but quota increment failed:', {
+          postId: newPost.id,
+          organizationId,
+          error: incrementResult.error,
+        });
+      }
     }
 
     res.status(201).json({

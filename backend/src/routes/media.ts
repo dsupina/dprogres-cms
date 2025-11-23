@@ -191,11 +191,23 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
     // Increment quota after successful upload (SF-010)
     const organizationId = req.user?.organizationId;
     if (organizationId) {
-      await quotaService.incrementQuota({
+      const incrementResult = await quotaService.incrementQuota({
         organizationId,
         dimension: 'storage_bytes',
         amount: req.file.size
       });
+
+      // P2 bug fix: Handle quota increment failures
+      if (!incrementResult.success || !incrementResult.data) {
+        // This is a critical data inconsistency - media uploaded but quota not incremented
+        // TODO: Implement proper rollback (delete media record + file) in future iteration
+        console.error('[CRITICAL] Media uploaded but quota increment failed:', {
+          mediaId: mediaFile.id,
+          organizationId,
+          fileSize: req.file.size,
+          error: incrementResult.error,
+        });
+      }
     }
 
     res.status(201).json({
@@ -246,11 +258,23 @@ router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('
     // Increment quota after successful upload (SF-010)
     const organizationId = req.user?.organizationId;
     if (organizationId && totalBytes > 0) {
-      await quotaService.incrementQuota({
+      const incrementResult = await quotaService.incrementQuota({
         organizationId,
         dimension: 'storage_bytes',
         amount: totalBytes
       });
+
+      // P2 bug fix: Handle quota increment failures
+      if (!incrementResult.success || !incrementResult.data) {
+        // This is a critical data inconsistency - media uploaded but quota not incremented
+        // TODO: Implement proper rollback (delete media records + files) in future iteration
+        console.error('[CRITICAL] Multiple media uploaded but quota increment failed:', {
+          fileCount: uploadedFiles.length,
+          organizationId,
+          totalBytes,
+          error: incrementResult.error,
+        });
+      }
     }
 
     res.status(201).json({

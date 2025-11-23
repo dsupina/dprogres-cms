@@ -121,6 +121,16 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
         },
       });
 
+      // Mock quota increment (P2 fix)
+      mockQuotaService.incrementQuota = jest.fn().mockResolvedValue({
+        success: true,
+        data: {
+          current: 4,
+          limit: 10,
+          remaining: 6,
+        },
+      });
+
       // Mock site service - successful creation
       mockSiteService.createSite = jest.fn().mockResolvedValue({
         id: 1,
@@ -183,6 +193,16 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
         rows: [{ plan_tier: 'enterprise', status: 'active' }],
       });
 
+      // Mock quota increment (P2 fix) - enterprise still needs this
+      mockQuotaService.incrementQuota = jest.fn().mockResolvedValue({
+        success: true,
+        data: {
+          current: 100,
+          limit: 999999,
+          remaining: 999899,
+        },
+      });
+
       // Mock successful site creation
       mockSiteService.createSite = jest.fn().mockResolvedValue({
         id: 1,
@@ -240,6 +260,16 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
           limit: 100,
           remaining: 50,
           percentage_used: 50,
+        },
+      });
+
+      // Mock quota increment (P2 fix)
+      mockQuotaService.incrementQuota = jest.fn().mockResolvedValue({
+        success: true,
+        data: {
+          current: 51,
+          limit: 100,
+          remaining: 49,
         },
       });
 
@@ -326,6 +356,16 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
           limit: 10485760, // 10MB
           remaining: 9437184,
           percentage_used: 10,
+        },
+      });
+
+      // Mock quota increment (P2 fix)
+      mockQuotaService.incrementQuota = jest.fn().mockResolvedValue({
+        success: true,
+        data: {
+          current: 1049600, // 1MB + 1024 bytes
+          limit: 10485760,
+          remaining: 9436160,
         },
       });
 
@@ -430,6 +470,16 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
           limit: 10485760, // 10MB
           remaining: 8388608,
           percentage_used: 20,
+        },
+      });
+
+      // Mock quota increment (P2 fix)
+      mockQuotaService.incrementQuota = jest.fn().mockResolvedValue({
+        success: true,
+        data: {
+          current: 2098176, // 2MB + 1024 bytes
+          limit: 10485760,
+          remaining: 8387584,
         },
       });
 
