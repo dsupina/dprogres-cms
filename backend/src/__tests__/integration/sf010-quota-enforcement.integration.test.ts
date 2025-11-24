@@ -492,7 +492,7 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
       expect(mockQuotaService.checkQuota).toHaveBeenCalledWith({
         organizationId: 1,
         dimension: 'storage_bytes',
-        amount: 1844, // Estimated size: 1024 * 1.8 (includes derivatives)
+        amount: 1024, // Original size only (no derivatives for multi-upload)
       });
     });
 

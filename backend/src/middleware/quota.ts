@@ -195,14 +195,17 @@ export function enforceQuota(dimension: QuotaDimension) {
  * Usage:
  *   router.post('/upload',
  *     auth,
- *     upload.single('file'),        // Multer processes file first
- *     enforceStorageQuota(),         // Then check quota with file size
- *     uploadHandler                  // Finally handle upload
+ *     upload.single('file'),                      // Multer processes file first
+ *     enforceStorageQuota({ derivatives: true }), // Check quota with derivatives
+ *     uploadHandler                               // Finally handle upload
  *   );
  *
+ * @param options - Configuration options
+ * @param options.derivatives - Whether derivatives (webp, thumbnails) will be created (default: false)
  * @returns Express middleware
  */
-export function enforceStorageQuota() {
+export function enforceStorageQuota(options?: { derivatives?: boolean }) {
+  const createDerivatives = options?.derivatives ?? false;
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
       // Extract organizationId from JWT
@@ -227,20 +230,22 @@ export function enforceStorageQuota() {
       }
 
       // P1 bug fix: Calculate ESTIMATED total file size including derivatives (SF-010)
-      // For images, Sharp will create webp + thumbnail derivatives
+      // For images with Sharp processing: webp + thumbnail derivatives
       // Estimate: webp ~70% of original, thumbnail ~10%, total = 1.8x original
+      // For images without derivatives (multi-upload): use original size only
       let totalBytes = 0;
       const uploadedFiles: string[] = [];
 
       /**
-       * Estimate total storage for file including derivatives
-       * Images: original + webp (~70%) + thumbnail (~10%) = 1.8x
-       * Non-images: no derivatives = 1.0x
+       * Estimate total storage for file including derivatives (if applicable)
+       * With derivatives (single upload): original + webp (~70%) + thumbnail (~10%) = 1.8x
+       * Without derivatives (multi-upload): original only = 1.0x
+       * Non-images: always 1.0x (no derivatives)
        */
       const estimateStorageSize = (file: Express.Multer.File): number => {
         const isImage = file.mimetype.startsWith('image/');
-        const imageMultiplier = 1.8; // Conservative estimate for derivatives
-        return isImage ? Math.ceil(file.size * imageMultiplier) : file.size;
+        const imageMultiplier = createDerivatives && isImage ? 1.8 : 1.0;
+        return Math.ceil(file.size * imageMultiplier);
       };
 
       if (req.file) {

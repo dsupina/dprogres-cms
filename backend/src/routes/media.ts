@@ -134,7 +134,7 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
     }
     next();
   });
-}, enforceStorageQuota(), async (req: Request, res: Response) => {
+}, enforceStorageQuota({ derivatives: true }), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -261,7 +261,7 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
 });
 
 // Upload multiple files (admin only)
-router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('files', 10), enforceStorageQuota(), async (req: Request, res: Response) => {
+router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('files', 10), enforceStorageQuota({ derivatives: false }), async (req: Request, res: Response) => {
   try {
     const files = req.files as Express.Multer.File[];
     
