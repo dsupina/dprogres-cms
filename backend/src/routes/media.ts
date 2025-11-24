@@ -343,10 +343,27 @@ router.delete('/:id', authenticateToken, requireAuthor, async (req: Request, res
 
     const mediaFile = existingFile.rows[0];
 
-    // Delete file from filesystem
+    // P2 bug fix: Delete all derivative files, not just original (SF-010)
+    // For images, we create: original, webp, and thumbnail
     const filePath = path.join(__dirname, '../../uploads', mediaFile.filename);
+    const ext = path.extname(mediaFile.filename);
+    const baseName = path.basename(mediaFile.filename, ext);
+
+    // Delete original file
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
+    }
+
+    // Delete webp version if it exists
+    const webpPath = path.join(__dirname, '../../uploads', `${baseName}.webp`);
+    if (fs.existsSync(webpPath)) {
+      fs.unlinkSync(webpPath);
+    }
+
+    // Delete thumbnail if it exists
+    const thumbPath = path.join(__dirname, '../../uploads', `${baseName}-thumb.webp`);
+    if (fs.existsSync(thumbPath)) {
+      fs.unlinkSync(thumbPath);
     }
 
     // Delete from database

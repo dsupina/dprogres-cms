@@ -226,18 +226,31 @@ export function enforceStorageQuota() {
         });
       }
 
-      // Calculate total file size from uploaded files
+      // P1 bug fix: Calculate ESTIMATED total file size including derivatives (SF-010)
+      // For images, Sharp will create webp + thumbnail derivatives
+      // Estimate: webp ~70% of original, thumbnail ~10%, total = 1.8x original
       let totalBytes = 0;
       const uploadedFiles: string[] = [];
 
+      /**
+       * Estimate total storage for file including derivatives
+       * Images: original + webp (~70%) + thumbnail (~10%) = 1.8x
+       * Non-images: no derivatives = 1.0x
+       */
+      const estimateStorageSize = (file: Express.Multer.File): number => {
+        const isImage = file.mimetype.startsWith('image/');
+        const imageMultiplier = 1.8; // Conservative estimate for derivatives
+        return isImage ? Math.ceil(file.size * imageMultiplier) : file.size;
+      };
+
       if (req.file) {
         // Single file upload
-        totalBytes = req.file.size;
+        totalBytes = estimateStorageSize(req.file);
         uploadedFiles.push(req.file.path);
       } else if (req.files) {
         // Multiple file upload
         const files = Array.isArray(req.files) ? req.files : Object.values(req.files).flat();
-        totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+        totalBytes = files.reduce((sum, file) => sum + estimateStorageSize(file), 0);
         uploadedFiles.push(...files.map(f => f.path));
       } else {
         // No files uploaded - let the route handler deal with this

@@ -377,7 +377,7 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
       expect(mockQuotaService.checkQuota).toHaveBeenCalledWith({
         organizationId: 1,
         dimension: 'storage_bytes',
-        amount: 1024, // FIXED: Should use actual file size from multer
+        amount: 1844, // Estimated size: 1024 * 1.8 (includes derivatives)
       });
     });
 
@@ -404,7 +404,7 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
         error: 'Storage quota exceeded',
         quota: {
           dimension: 'storage_bytes',
-          uploadSize: 1024, // Should include upload size
+          uploadSize: 1844, // Estimated size: 1024 * 1.8 (includes derivatives)
         },
       });
     });
@@ -430,11 +430,11 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
         .attach('file', Buffer.from('test'), 'test-file.jpg');
 
       expect(response.status).toBe(402);
-      // Verify quota was checked with file size from multer mock (1024 bytes)
+      // Verify quota was checked with ESTIMATED file size (1024 * 1.8 for images)
       expect(mockQuotaService.checkQuota).toHaveBeenCalledWith({
         organizationId: 1,
         dimension: 'storage_bytes',
-        amount: 1024, // File size from multer mock
+        amount: 1844, // Estimated size: 1024 * 1.8 (includes derivatives)
       });
     });
   });
@@ -492,7 +492,7 @@ describe('SF-010 Quota Enforcement Integration Tests', () => {
       expect(mockQuotaService.checkQuota).toHaveBeenCalledWith({
         organizationId: 1,
         dimension: 'storage_bytes',
-        amount: 1024, // File size from multer mock
+        amount: 1844, // Estimated size: 1024 * 1.8 (includes derivatives)
       });
     });
 
