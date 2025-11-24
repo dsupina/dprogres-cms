@@ -100,11 +100,11 @@ export function enforceQuota(dimension: QuotaDimension) {
         // Legacy JWT without organizationId - look up from database
         try {
           const { rows } = await pool.query(
-            'SELECT organization_id FROM users WHERE id = $1',
+            'SELECT current_organization_id FROM users WHERE id = $1',
             [req.user.userId]
           );
-          if (rows.length > 0 && rows[0].organization_id) {
-            organizationId = rows[0].organization_id;
+          if (rows.length > 0 && rows[0].current_organization_id) {
+            organizationId = rows[0].current_organization_id;
             // Cache in request for subsequent middleware
             req.user.organizationId = organizationId;
           }
@@ -236,11 +236,11 @@ export function enforceStorageQuota(options?: { derivatives?: boolean }) {
         // Legacy JWT without organizationId - look up from database
         try {
           const { rows } = await pool.query(
-            'SELECT organization_id FROM users WHERE id = $1',
+            'SELECT current_organization_id FROM users WHERE id = $1',
             [req.user.userId]
           );
-          if (rows.length > 0 && rows[0].organization_id) {
-            organizationId = rows[0].organization_id;
+          if (rows.length > 0 && rows[0].current_organization_id) {
+            organizationId = rows[0].current_organization_id;
             // Cache in request for subsequent middleware
             req.user.organizationId = organizationId;
           }
