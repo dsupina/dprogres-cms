@@ -208,15 +208,44 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
         amount: totalStorageBytes // P1 fix: Use actual total including derivatives
       });
 
-      // P2 bug fix: Handle quota increment failures
+      // P1 bug fix: Rollback upload if quota increment fails (SF-010)
       if (!incrementResult.success || !incrementResult.data) {
-        // This is a critical data inconsistency - media uploaded but quota not incremented
-        // TODO: Implement proper rollback (delete media record + file) in future iteration
-        console.error('[CRITICAL] Media uploaded but quota increment failed:', {
+        console.error('[CRITICAL] Quota increment failed, rolling back upload:', {
           mediaId: mediaFile.id,
           organizationId,
           fileSize: totalStorageBytes,
           error: incrementResult.error,
+        });
+
+        // Rollback: Delete database record
+        try {
+          await query('DELETE FROM media_files WHERE id = $1', [mediaFile.id]);
+        } catch (dbError) {
+          console.error('[CRITICAL] Failed to delete media record during rollback:', dbError);
+        }
+
+        // Rollback: Delete all uploaded files (original + derivatives)
+        const ext = path.extname(req.file.filename);
+        const baseName = path.basename(req.file.filename, ext);
+        const filesToDelete = [
+          path.join(__dirname, '../../uploads', req.file.filename), // Original
+          path.join(__dirname, '../../uploads', `${baseName}.webp`), // WebP
+          path.join(__dirname, '../../uploads', `${baseName}-thumb.webp`), // Thumbnail
+        ];
+
+        for (const filePath of filesToDelete) {
+          try {
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+            }
+          } catch (fileError) {
+            console.error(`[CRITICAL] Failed to delete file during rollback: ${filePath}`, fileError);
+          }
+        }
+
+        return res.status(500).json({
+          error: 'Upload failed due to quota tracking error',
+          details: incrementResult.error,
         });
       }
     }
@@ -275,15 +304,38 @@ router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('
         amount: totalBytes
       });
 
-      // P2 bug fix: Handle quota increment failures
+      // P1 bug fix: Rollback uploads if quota increment fails (SF-010)
       if (!incrementResult.success || !incrementResult.data) {
-        // This is a critical data inconsistency - media uploaded but quota not incremented
-        // TODO: Implement proper rollback (delete media records + files) in future iteration
-        console.error('[CRITICAL] Multiple media uploaded but quota increment failed:', {
+        console.error('[CRITICAL] Quota increment failed, rolling back multiple uploads:', {
           fileCount: uploadedFiles.length,
           organizationId,
           totalBytes,
           error: incrementResult.error,
+        });
+
+        // Rollback: Delete all database records
+        const mediaIds = uploadedFiles.map(f => f.id);
+        try {
+          await query('DELETE FROM media_files WHERE id = ANY($1::int[])', [mediaIds]);
+        } catch (dbError) {
+          console.error('[CRITICAL] Failed to delete media records during rollback:', dbError);
+        }
+
+        // Rollback: Delete all uploaded files
+        for (const file of files) {
+          try {
+            const filePath = path.join(__dirname, '../../uploads', file.filename);
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+            }
+          } catch (fileError) {
+            console.error(`[CRITICAL] Failed to delete file during rollback: ${file.filename}`, fileError);
+          }
+        }
+
+        return res.status(500).json({
+          error: 'Upload failed due to quota tracking error',
+          details: incrementResult.error,
         });
       }
     }
