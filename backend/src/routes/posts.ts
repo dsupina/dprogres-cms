@@ -394,6 +394,25 @@ router.delete('/:id', authenticateToken, requireAuthor, async (req: Request, res
 
     await query('DELETE FROM posts WHERE id = $1', [id]);
 
+    // P1 bug fix: Decrement post quota after deletion (SF-010)
+    const organizationId = req.user?.organizationId;
+    if (organizationId) {
+      const decrementResult = await quotaService.decrementQuota({
+        organizationId,
+        dimension: 'posts',
+        amount: 1,
+      });
+
+      if (!decrementResult.success) {
+        // Log error but don't fail the deletion - post is already deleted
+        console.error('[WARNING] Post deleted but quota decrement failed:', {
+          postId: id,
+          organizationId,
+          error: decrementResult.error,
+        });
+      }
+    }
+
     res.json({ message: 'Post deleted successfully' });
   } catch (error) {
     console.error('Delete post error:', error);

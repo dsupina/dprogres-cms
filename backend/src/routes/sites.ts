@@ -192,6 +192,25 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req: Request, res:
       return res.status(404).json({ error: 'Site not found' });
     }
 
+    // P1 bug fix: Decrement site quota after deletion (SF-010)
+    const organizationId = req.user?.organizationId;
+    if (organizationId) {
+      const decrementResult = await quotaService.decrementQuota({
+        organizationId,
+        dimension: 'sites',
+        amount: 1,
+      });
+
+      if (!decrementResult.success) {
+        // Log error but don't fail the deletion - site is already deleted
+        console.error('[WARNING] Site deleted but quota decrement failed:', {
+          siteId: id,
+          organizationId,
+          error: decrementResult.error,
+        });
+      }
+    }
+
     res.status(204).send();
   } catch (error: any) {
     console.error('Error deleting site:', error);

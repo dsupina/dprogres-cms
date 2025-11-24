@@ -395,31 +395,59 @@ router.delete('/:id', authenticateToken, requireAuthor, async (req: Request, res
 
     const mediaFile = existingFile.rows[0];
 
-    // P2 bug fix: Delete all derivative files, not just original (SF-010)
-    // For images, we create: original, webp, and thumbnail
+    // P1 bug fix: Calculate total storage before deletion for quota decrement (SF-010)
+    // For images, we created: original, webp, and thumbnail
     const filePath = path.join(__dirname, '../../uploads', mediaFile.filename);
     const ext = path.extname(mediaFile.filename);
     const baseName = path.basename(mediaFile.filename, ext);
+    const webpPath = path.join(__dirname, '../../uploads', `${baseName}.webp`);
+    const thumbPath = path.join(__dirname, '../../uploads', `${baseName}-thumb.webp`);
 
-    // Delete original file
+    // Calculate total storage used (before deletion)
+    let totalStorageBytes = 0;
+    if (fs.existsSync(filePath)) {
+      totalStorageBytes += fs.statSync(filePath).size;
+    }
+    if (fs.existsSync(webpPath)) {
+      totalStorageBytes += fs.statSync(webpPath).size;
+    }
+    if (fs.existsSync(thumbPath)) {
+      totalStorageBytes += fs.statSync(thumbPath).size;
+    }
+
+    // Delete files
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
-
-    // Delete webp version if it exists
-    const webpPath = path.join(__dirname, '../../uploads', `${baseName}.webp`);
     if (fs.existsSync(webpPath)) {
       fs.unlinkSync(webpPath);
     }
-
-    // Delete thumbnail if it exists
-    const thumbPath = path.join(__dirname, '../../uploads', `${baseName}-thumb.webp`);
     if (fs.existsSync(thumbPath)) {
       fs.unlinkSync(thumbPath);
     }
 
     // Delete from database
     await query('DELETE FROM media_files WHERE id = $1', [id]);
+
+    // P1 bug fix: Decrement storage quota after deletion (SF-010)
+    const organizationId = req.user?.organizationId;
+    if (organizationId && totalStorageBytes > 0) {
+      const decrementResult = await quotaService.decrementQuota({
+        organizationId,
+        dimension: 'storage_bytes',
+        amount: totalStorageBytes,
+      });
+
+      if (!decrementResult.success) {
+        // Log error but don't fail the deletion - media is already deleted
+        console.error('[WARNING] Media deleted but quota decrement failed:', {
+          mediaId: id,
+          organizationId,
+          storageBytes: totalStorageBytes,
+          error: decrementResult.error,
+        });
+      }
+    }
 
     res.json({ message: 'Media file deleted successfully' });
   } catch (error) {
