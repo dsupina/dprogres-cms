@@ -6,7 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import { query } from '../utils/database';
 import { authenticateToken, requireAuthor } from '../middleware/auth';
-import { enforceStorageQuota } from '../middleware/quota';
+import { enforceStorageQuota, isEnterpriseTier } from '../middleware/quota';
 import { quotaService } from '../services/QuotaService';
 
 const router = express.Router();
@@ -438,7 +438,7 @@ router.delete('/:id', authenticateToken, requireAuthor, async (req: Request, res
     // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
     // Decrement storage quota after deletion (SF-010)
     const organizationId = req.user?.organizationId;
-    const isEnterprise = (req as any).isEnterpriseTier;
+    const isEnterprise = organizationId ? await isEnterpriseTier(organizationId) : false;
 
     if (organizationId && !isEnterprise && totalStorageBytes > 0) {
       const decrementResult = await quotaService.decrementQuota({

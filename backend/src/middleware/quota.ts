@@ -428,3 +428,22 @@ function cleanupFiles(filePaths: string[]): void {
 export function invalidateSubscriptionCache(organizationId: number): void {
   subscriptionCache.invalidateTier(organizationId);
 }
+
+/**
+ * Check if organization is on enterprise tier
+ *
+ * P1 bug fix: DELETE endpoints don't run quota middleware, so req.isEnterpriseTier
+ * is never set. This helper allows route handlers to check tier status directly.
+ *
+ * @param organizationId - Organization ID to check
+ * @returns true if enterprise tier, false otherwise
+ */
+export async function isEnterpriseTier(organizationId: number): Promise<boolean> {
+  try {
+    const tier = await getSubscriptionTier(organizationId);
+    return tier?.planTier === 'enterprise';
+  } catch (error) {
+    console.error('[QuotaEnforcement] Error checking enterprise tier:', error);
+    return false; // Fail-safe: assume not enterprise
+  }
+}

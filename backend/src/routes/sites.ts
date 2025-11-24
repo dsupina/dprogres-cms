@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authenticateToken, requireAdmin } from '../middleware/auth';
 import { validateRequest } from '../middleware/validation';
-import { enforceQuota } from '../middleware/quota';
+import { enforceQuota, isEnterpriseTier } from '../middleware/quota';
 import { siteService } from '../services/siteService';
 import { quotaService } from '../services/QuotaService';
 import Joi from 'joi';
@@ -198,7 +198,7 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req: Request, res:
     // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
     // Decrement site quota after deletion (SF-010)
     const organizationId = req.user?.organizationId;
-    const isEnterprise = (req as any).isEnterpriseTier;
+    const isEnterprise = organizationId ? await isEnterpriseTier(organizationId) : false;
 
     if (organizationId && !isEnterprise) {
       const decrementResult = await quotaService.decrementQuota({
