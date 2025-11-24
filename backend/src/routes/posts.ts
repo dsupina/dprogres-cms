@@ -260,14 +260,24 @@ router.post('/', authenticateToken, requireAuthor, enforceQuota('posts'), valida
         amount: 1
       });
 
-      // P2 bug fix: Handle quota increment failures
+      // P1 bug fix: Rollback post creation if quota increment fails (SF-010)
       if (!incrementResult.success || !incrementResult.data) {
-        // This is a critical data inconsistency - post created but quota not incremented
-        // TODO: Implement proper rollback (delete post + post_tags) in future iteration
-        console.error('[CRITICAL] Post created but quota increment failed:', {
+        console.error('[CRITICAL] Quota increment failed, rolling back post creation:', {
           postId: newPost.id,
           organizationId,
           error: incrementResult.error,
+        });
+
+        // Rollback: Delete post (cascades to post_tags due to foreign key constraint)
+        try {
+          await query('DELETE FROM posts WHERE id = $1', [newPost.id]);
+        } catch (dbError) {
+          console.error('[CRITICAL] Failed to delete post during rollback:', dbError);
+        }
+
+        return res.status(500).json({
+          error: 'Post creation failed due to quota tracking error',
+          details: incrementResult.error,
         });
       }
     }

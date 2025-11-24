@@ -101,14 +101,24 @@ router.post(
           amount: 1
         });
 
-        // P2 bug fix: Handle quota increment failures
+        // P1 bug fix: Rollback site creation if quota increment fails (SF-010)
         if (!incrementResult.success || !incrementResult.data) {
-          // This is a critical data inconsistency - site created but quota not incremented
-          // TODO: Implement proper rollback (delete site) in future iteration
-          console.error('[CRITICAL] Site created but quota increment failed:', {
+          console.error('[CRITICAL] Quota increment failed, rolling back site creation:', {
             siteId: site.id,
             organizationId,
             error: incrementResult.error,
+          });
+
+          // Rollback: Delete site (cascades to related records via foreign key constraints)
+          try {
+            await siteService.deleteSite(site.id);
+          } catch (dbError) {
+            console.error('[CRITICAL] Failed to delete site during rollback:', dbError);
+          }
+
+          return res.status(500).json({
+            error: 'Site creation failed due to quota tracking error',
+            details: incrementResult.error,
           });
         }
       }
