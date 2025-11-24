@@ -88,13 +88,29 @@ router.post('/register', authenticateToken, validate(registerSchema), async (req
     // Hash password
     const hashedPassword = await hashPassword(password);
 
-    // Create user
+    // P1 bug fix: Inherit admin's organization (SF-010)
+    // New users must have current_organization_id set or they can't create content
+    const organizationId = req.user?.organizationId;
+
+    if (!organizationId) {
+      return res.status(400).json({
+        error: 'Cannot create user: Admin has no organization context'
+      });
+    }
+
+    // Create user with organization context
     const result = await query(
-      'INSERT INTO users (email, password_hash, first_name, last_name, role) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, first_name, last_name, role, created_at',
-      [email, hashedPassword, first_name, last_name, 'author']
+      'INSERT INTO users (email, password_hash, first_name, last_name, role, current_organization_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, first_name, last_name, role, created_at, current_organization_id',
+      [email, hashedPassword, first_name, last_name, 'author', organizationId]
     );
 
     const newUser = result.rows[0];
+
+    // Add user to organization members table
+    await query(
+      'INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, $3)',
+      [organizationId, newUser.id, 'member']
+    );
 
     res.status(201).json({
       message: 'User created successfully',
