@@ -92,8 +92,26 @@ async function getSubscriptionTier(organizationId: number): Promise<Subscription
 export function enforceQuota(dimension: QuotaDimension) {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // Extract organizationId from JWT
-      const organizationId = req.user?.organizationId;
+      // P1 bug fix: Support legacy JWTs without organizationId claim (SF-010)
+      // Extract organizationId from JWT, fallback to database lookup for legacy tokens
+      let organizationId = req.user?.organizationId;
+
+      if (!organizationId && req.user?.userId) {
+        // Legacy JWT without organizationId - look up from database
+        try {
+          const { rows } = await pool.query(
+            'SELECT organization_id FROM users WHERE id = $1',
+            [req.user.userId]
+          );
+          if (rows.length > 0 && rows[0].organization_id) {
+            organizationId = rows[0].organization_id;
+            // Cache in request for subsequent middleware
+            req.user.organizationId = organizationId;
+          }
+        } catch (dbError) {
+          console.error('[QuotaEnforcement] Failed to lookup organizationId:', dbError);
+        }
+      }
 
       if (!organizationId) {
         return res.status(400).json({
@@ -119,6 +137,8 @@ export function enforceQuota(dimension: QuotaDimension) {
       // Enterprise tier bypasses quota checks
       if (tier.planTier === 'enterprise') {
         console.log(`[QuotaEnforcement] Enterprise tier - bypassing quota check for org ${organizationId}, dimension ${dimension}`);
+        // P1 bug fix: Store enterprise flag so route handlers can skip increment/decrement (SF-010)
+        (req as any).isEnterpriseTier = true;
         return next();
       }
 
@@ -208,8 +228,26 @@ export function enforceStorageQuota(options?: { derivatives?: boolean }) {
   const createDerivatives = options?.derivatives ?? false;
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // Extract organizationId from JWT
-      const organizationId = req.user?.organizationId;
+      // P1 bug fix: Support legacy JWTs without organizationId claim (SF-010)
+      // Extract organizationId from JWT, fallback to database lookup for legacy tokens
+      let organizationId = req.user?.organizationId;
+
+      if (!organizationId && req.user?.userId) {
+        // Legacy JWT without organizationId - look up from database
+        try {
+          const { rows } = await pool.query(
+            'SELECT organization_id FROM users WHERE id = $1',
+            [req.user.userId]
+          );
+          if (rows.length > 0 && rows[0].organization_id) {
+            organizationId = rows[0].organization_id;
+            // Cache in request for subsequent middleware
+            req.user.organizationId = organizationId;
+          }
+        } catch (dbError) {
+          console.error('[QuotaEnforcement] Failed to lookup organizationId:', dbError);
+        }
+      }
 
       if (!organizationId) {
         // Clean up uploaded files before returning error (P2 bug fix)
@@ -280,6 +318,8 @@ export function enforceStorageQuota(options?: { derivatives?: boolean }) {
       // Enterprise tier bypasses quota checks
       if (tier.planTier === 'enterprise') {
         console.log(`[QuotaEnforcement] Enterprise tier - bypassing storage quota check for org ${organizationId}`);
+        // P1 bug fix: Store enterprise flag so route handlers can skip increment/decrement (SF-010)
+        (req as any).isEnterpriseTier = true;
         return next();
       }
 

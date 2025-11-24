@@ -251,9 +251,12 @@ router.post('/', authenticateToken, requireAuthor, enforceQuota('posts'), valida
       await handlePostTags(newPost.id, postData.tags);
     }
 
+    // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
     // Increment quota after successful creation (SF-010)
     const organizationId = req.user?.organizationId;
-    if (organizationId) {
+    const isEnterprise = (req as any).isEnterpriseTier;
+
+    if (organizationId && !isEnterprise) {
       const incrementResult = await quotaService.incrementQuota({
         organizationId,
         dimension: 'posts',
@@ -394,9 +397,12 @@ router.delete('/:id', authenticateToken, requireAuthor, async (req: Request, res
 
     await query('DELETE FROM posts WHERE id = $1', [id]);
 
-    // P1 bug fix: Decrement post quota after deletion (SF-010)
+    // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
+    // Decrement post quota after deletion (SF-010)
     const organizationId = req.user?.organizationId;
-    if (organizationId) {
+    const isEnterprise = (req as any).isEnterpriseTier;
+
+    if (organizationId && !isEnterprise) {
       const decrementResult = await quotaService.decrementQuota({
         organizationId,
         dimension: 'posts',

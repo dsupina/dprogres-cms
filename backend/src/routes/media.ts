@@ -199,9 +199,12 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
     const result = await query(insertQuery, values);
     const mediaFile = result.rows[0];
 
+    // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
     // Increment quota after successful upload (SF-010)
     const organizationId = req.user?.organizationId;
-    if (organizationId) {
+    const isEnterprise = (req as any).isEnterpriseTier;
+
+    if (organizationId && !isEnterprise) {
       const incrementResult = await quotaService.incrementQuota({
         organizationId,
         dimension: 'storage_bytes',
@@ -295,9 +298,12 @@ router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('
       totalBytes += file.size;
     }
 
+    // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
     // Increment quota after successful upload (SF-010)
     const organizationId = req.user?.organizationId;
-    if (organizationId && totalBytes > 0) {
+    const isEnterprise = (req as any).isEnterpriseTier;
+
+    if (organizationId && !isEnterprise && totalBytes > 0) {
       const incrementResult = await quotaService.incrementQuota({
         organizationId,
         dimension: 'storage_bytes',
@@ -429,9 +435,12 @@ router.delete('/:id', authenticateToken, requireAuthor, async (req: Request, res
     // Delete from database
     await query('DELETE FROM media_files WHERE id = $1', [id]);
 
-    // P1 bug fix: Decrement storage quota after deletion (SF-010)
+    // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
+    // Decrement storage quota after deletion (SF-010)
     const organizationId = req.user?.organizationId;
-    if (organizationId && totalStorageBytes > 0) {
+    const isEnterprise = (req as any).isEnterpriseTier;
+
+    if (organizationId && !isEnterprise && totalStorageBytes > 0) {
       const decrementResult = await quotaService.decrementQuota({
         organizationId,
         dimension: 'storage_bytes',

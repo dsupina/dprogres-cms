@@ -92,9 +92,12 @@ router.post(
     try {
       const site = await siteService.createSite(req.body);
 
+      // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
       // Increment quota after successful creation (SF-010)
       const organizationId = req.user?.organizationId;
-      if (organizationId) {
+      const isEnterprise = (req as any).isEnterpriseTier;
+
+      if (organizationId && !isEnterprise) {
         const incrementResult = await quotaService.incrementQuota({
           organizationId,
           dimension: 'sites',
@@ -192,9 +195,12 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req: Request, res:
       return res.status(404).json({ error: 'Site not found' });
     }
 
-    // P1 bug fix: Decrement site quota after deletion (SF-010)
+    // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
+    // Decrement site quota after deletion (SF-010)
     const organizationId = req.user?.organizationId;
-    if (organizationId) {
+    const isEnterprise = (req as any).isEnterpriseTier;
+
+    if (organizationId && !isEnterprise) {
       const decrementResult = await quotaService.decrementQuota({
         organizationId,
         dimension: 'sites',
