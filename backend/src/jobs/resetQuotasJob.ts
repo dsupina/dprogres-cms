@@ -225,18 +225,18 @@ export class ResetQuotasJob {
    * Start the cron job scheduler
    */
   async start(): Promise<void> {
-    if (!this.config.enabled) {
-      console.log('[ResetQuotasJob] Job is disabled via configuration');
-      return;
-    }
-
     if (this.cronJob) {
       console.log('[ResetQuotasJob] Job already started');
       return;
     }
 
-    // Load config from database first
+    // Load config from database first (before checking enabled flag)
     await this.loadConfigFromDatabase();
+
+    if (!this.config.enabled) {
+      console.log('[ResetQuotasJob] Job is disabled via configuration');
+      return;
+    }
 
     // Validate cron expression
     if (!cron.validate(this.config.schedule)) {
