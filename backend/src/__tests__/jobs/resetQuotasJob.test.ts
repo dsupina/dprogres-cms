@@ -64,7 +64,7 @@ describe('ResetQuotasJob', () => {
       job = new ResetQuotasJob();
       const config = job.getConfig();
 
-      expect(config.schedule).toBe('0 0 * * *');  // Daily at midnight UTC
+      expect(config.schedule).toBe('0 * * * *');  // Hourly at minute 0
       expect(config.enabled).toBe(true);
       expect(config.timezone).toBe('UTC');
     });
@@ -235,7 +235,7 @@ describe('ResetQuotasJob', () => {
     it('should start job with valid configuration', async () => {
       mockPoolQuery.mockResolvedValueOnce({ rows: [] } as any);
 
-      job = new ResetQuotasJob({ schedule: '0 0 * * *', enabled: true });
+      job = new ResetQuotasJob({ schedule: '0 * * * *', enabled: true });
       await job.start();
 
       // Job should be scheduled (not running yet, just scheduled)

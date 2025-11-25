@@ -2,6 +2,16 @@
 -- Epic: EPIC-003 SaaS Foundation (SF-011)
 -- Purpose: Enhance reset_monthly_quotas() function to support per-organization timezone
 -- Created: 2025-01-25
+--
+-- IMPORTANT NOTES:
+-- 1. Existing usage_quotas.period_end values were calculated assuming UTC (or server timezone)
+-- 2. After this migration, all existing organizations have timezone='UTC' (from migration 010)
+-- 3. If an organization's timezone is changed AFTER migration:
+--    - Existing period_end may be interpreted incorrectly until next reset
+--    - On next reset, period_start/period_end will be recalculated correctly
+--    - Maximum inaccuracy: one reset cycle (~1 hour with hourly schedule)
+-- 4. To manually reset quotas after timezone change, run:
+--    UPDATE usage_quotas SET period_end = NOW() - INTERVAL '1 second' WHERE organization_id = <id>;
 
 -- Drop existing function
 DROP FUNCTION IF EXISTS reset_monthly_quotas();

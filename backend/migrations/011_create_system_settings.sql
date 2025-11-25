@@ -22,7 +22,7 @@ CREATE INDEX IF NOT EXISTS idx_system_settings_public ON system_settings(is_publ
 
 -- Insert default settings for quota reset job
 INSERT INTO system_settings (setting_key, setting_value, setting_type, description, is_public) VALUES
-  ('quota_reset_schedule', '0 0 * * *', 'cron', 'Cron schedule for monthly quota reset job (default: daily at 00:00 UTC)', FALSE),
+  ('quota_reset_schedule', '0 * * * *', 'cron', 'Cron schedule for quota reset job (hourly at minute 0, max delay 1h instead of 23h)', FALSE),
   ('quota_reset_enabled', 'true', 'boolean', 'Enable/disable quota reset job', FALSE),
   ('quota_reset_timezone', 'UTC', 'string', 'Default timezone for quota reset (IANA format)', FALSE),
   ('otel_enabled', 'true', 'boolean', 'Enable OpenTelemetry instrumentation', FALSE),

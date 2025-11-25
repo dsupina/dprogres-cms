@@ -24,7 +24,7 @@ const tracer = trace.getTracer('resetQuotasJob', '1.0.0');
  * Interface for job configuration
  */
 export interface ResetQuotasJobConfig {
-  schedule?: string;  // Cron expression (default: '0 0 * * *' - daily at midnight UTC)
+  schedule?: string;  // Cron expression (default: '0 * * * *' - hourly at minute 0, max delay 1h)
   enabled?: boolean;  // Enable/disable job (default: true)
   timezone?: string;  // Job execution timezone (default: 'UTC')
 }
@@ -60,7 +60,7 @@ export class ResetQuotasJob {
 
   constructor(config: ResetQuotasJobConfig = {}) {
     this.config = {
-      schedule: config.schedule || '0 0 * * *',  // Daily at midnight UTC
+      schedule: config.schedule || '0 * * * *',  // Hourly at minute 0 (reduces max delay from 23h to 1h)
       enabled: config.enabled !== false,          // Enabled by default
       timezone: config.timezone || 'UTC',
     };
