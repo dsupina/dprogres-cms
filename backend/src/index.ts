@@ -2,6 +2,10 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+// Initialize OpenTelemetry FIRST (SF-011)
+import { initializeTelemetry } from './config/telemetry';
+const otelSDK = initializeTelemetry();
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -27,6 +31,9 @@ import autosaveRoutes from './routes/autosave';
 import { createVersionRoutes } from './routes/versions';
 import webhooksRoutes from './routes/webhooks';
 import quotasRoutes from './routes/quotas';
+
+// Import scheduled jobs (SF-011)
+import { startResetQuotasJob, stopResetQuotasJob } from './jobs/resetQuotasJob';
 
 // Import domain middleware
 import { validateDomain, resolveDomain } from './middleware/domainValidation';
@@ -164,7 +171,54 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 // Start server
-app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-}); 
+
+  // Start scheduled jobs (SF-011)
+  try {
+    await startResetQuotasJob();
+    console.log('[Server] Scheduled jobs started successfully');
+  } catch (error) {
+    console.error('[Server] Failed to start scheduled jobs:', error);
+  }
+});
+
+// Graceful shutdown handler (SF-011)
+const gracefulShutdown = (signal: string) => {
+  console.log(`\n[Server] ${signal} received, shutting down gracefully...`);
+
+  // Stop accepting new connections
+  server.close(() => {
+    console.log('[Server] HTTP server closed');
+
+    // Stop scheduled jobs
+    stopResetQuotasJob();
+    console.log('[Server] Scheduled jobs stopped');
+
+    // Shutdown OpenTelemetry
+    if (otelSDK) {
+      otelSDK.shutdown()
+        .then(() => {
+          console.log('[Server] OpenTelemetry shut down successfully');
+          process.exit(0);
+        })
+        .catch((error) => {
+          console.error('[Server] Error shutting down OpenTelemetry:', error);
+          process.exit(1);
+        });
+    } else {
+      process.exit(0);
+    }
+  });
+
+  // Force shutdown after 10 seconds
+  setTimeout(() => {
+    console.error('[Server] Forcing shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+};
+
+// Register shutdown handlers
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT')); 
