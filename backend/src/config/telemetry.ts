@@ -75,14 +75,6 @@ export function initializeTelemetry(): NodeSDK | null {
     console.log(`[OTEL] Service: ${process.env.OTEL_SERVICE_NAME || 'dprogres-cms-backend'}`);
     console.log(`[OTEL] Endpoint: ${process.env.OTEL_ENDPOINT || 'http://localhost:4318/v1/traces'}`);
 
-    // Graceful shutdown
-    process.on('SIGTERM', () => {
-      sdk.shutdown()
-        .then(() => console.log('[OTEL] Telemetry shut down successfully'))
-        .catch((error) => console.error('[OTEL] Error shutting down telemetry', error))
-        .finally(() => process.exit(0));
-    });
-
     return sdk;
   } catch (error) {
     console.error('[OTEL] Failed to initialize telemetry:', error);

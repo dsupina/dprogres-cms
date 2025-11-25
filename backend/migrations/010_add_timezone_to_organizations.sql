@@ -16,9 +16,10 @@ UPDATE organizations
 SET timezone = 'UTC'
 WHERE timezone IS NULL;
 
--- Add constraint to validate timezone format (basic validation)
+-- Add constraint to validate timezone format (supports full IANA timezone database)
+-- Examples: UTC, America/New_York, Europe/Zagreb, America/Argentina/Buenos_Aires, Etc/GMT+1
 ALTER TABLE organizations
-  ADD CONSTRAINT valid_timezone CHECK (timezone ~ '^[A-Za-z_]+/[A-Za-z_]+$' OR timezone = 'UTC');
+  ADD CONSTRAINT valid_timezone CHECK (timezone ~ '^[A-Za-z0-9_+\-]+(/[A-Za-z0-9_+\-]+)*$');
 
 -- Comments
 COMMENT ON COLUMN organizations.timezone IS 'IANA timezone for organization (e.g., America/New_York, Europe/Zagreb) - used for quota reset scheduling';
