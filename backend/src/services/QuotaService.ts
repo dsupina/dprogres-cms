@@ -446,24 +446,29 @@ export class QuotaService extends EventEmitter {
   }
 
   /**
-   * Reset monthly quotas for an organization
+   * Reset monthly quotas for an organization (timezone-aware)
    * Only resets dimensions with period_end set (api_calls) AND period expired
+   * Uses organization's timezone for comparison and period calculation
    * Advances period_end by 1 month to prevent repeated resets
    */
   async resetMonthlyQuotas(organizationId: number): Promise<ServiceResponse<number>> {
     try {
+      // Use timezone-aware comparison and period calculation (matches migration 012)
       const { rows } = await pool.query(
-        `UPDATE usage_quotas
+        `UPDATE usage_quotas uq
          SET current_usage = 0,
              last_reset_at = NOW(),
-             period_start = NOW(),
-             period_end = period_end + INTERVAL '1 month',
+             period_start = NOW() AT TIME ZONE o.timezone,
+             period_end = (NOW() AT TIME ZONE o.timezone) + INTERVAL '1 month',
              updated_at = NOW()
-         WHERE organization_id = $1
-           AND dimension = 'api_calls'
-           AND period_end IS NOT NULL
-           AND period_end < NOW()
-         RETURNING dimension`,
+         FROM organizations o
+         WHERE uq.organization_id = $1
+           AND uq.organization_id = o.id
+           AND o.deleted_at IS NULL
+           AND uq.dimension = 'api_calls'
+           AND uq.period_end IS NOT NULL
+           AND uq.period_end < (NOW() AT TIME ZONE o.timezone)
+         RETURNING uq.dimension`,
         [organizationId]
       );
 

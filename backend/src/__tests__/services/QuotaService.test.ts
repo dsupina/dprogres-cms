@@ -556,23 +556,23 @@ describe('QuotaService', () => {
       expect(result.success).toBe(true);
       expect(result.data).toBe(0);
 
-      // Verify SQL includes period_end < NOW() check
+      // Verify SQL includes timezone-aware comparison
       expect(mockPoolQuery).toHaveBeenCalledWith(
-        expect.stringContaining('period_end < NOW()'),
+        expect.stringContaining('period_end < (NOW() AT TIME ZONE'),
         [1]
       );
     });
 
-    it('should advance period_end by 1 month to prevent repeated resets', async () => {
+    it('should advance period_end by 1 month using timezone-aware calculation', async () => {
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ dimension: 'api_calls' }],
       });
 
       await quotaService.resetMonthlyQuotas(1);
 
-      // Verify SQL advances period_end
+      // Verify SQL uses timezone-aware period calculation
       expect(mockPoolQuery).toHaveBeenCalledWith(
-        expect.stringContaining("period_end = period_end + INTERVAL '1 month'"),
+        expect.stringContaining("period_end = (NOW() AT TIME ZONE o.timezone) + INTERVAL '1 month'"),
         [1]
       );
     });
