@@ -5,7 +5,7 @@
 
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { Resource } from '@opentelemetry/resources';
+import { defaultResource, resourceFromAttributes } from '@opentelemetry/resources';
 import { SEMRESATTRS_SERVICE_NAME, SEMRESATTRS_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api';
@@ -46,8 +46,8 @@ export async function initializeTelemetry(): Promise<NodeSDK | null> {
   });
 
   // Configure resource (service identity)
-  const resource = Resource.default().merge(
-    new Resource({
+  const resource = defaultResource().merge(
+    resourceFromAttributes({
       [SEMRESATTRS_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME || 'dprogres-cms-backend',
       [SEMRESATTRS_SERVICE_VERSION]: process.env.npm_package_version || '1.0.0',
       'deployment.environment': process.env.NODE_ENV || 'development',
