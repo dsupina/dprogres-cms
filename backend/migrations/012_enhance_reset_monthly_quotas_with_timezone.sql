@@ -35,11 +35,13 @@ BEGIN
     WHERE o.deleted_at IS NULL  -- Exclude soft-deleted organizations
   LOOP
     -- Reset quotas for organizations where period_end has passed in their timezone
+    -- IMPORTANT: Advance existing period_end to prevent quota window drift
+    -- Using NOW() would shift the period later every cycle (hourly job delay accumulation)
     UPDATE usage_quotas uq
     SET current_usage = 0,
         last_reset_at = NOW(),
-        period_start = NOW() AT TIME ZONE org_record.timezone,
-        period_end = (NOW() AT TIME ZONE org_record.timezone) + INTERVAL '1 month',
+        period_start = uq.period_end,
+        period_end = uq.period_end + INTERVAL '1 month',
         updated_at = NOW()
     WHERE uq.organization_id = org_record.id
       AND uq.dimension = 'api_calls'

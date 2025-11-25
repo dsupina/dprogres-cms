@@ -563,16 +563,20 @@ describe('QuotaService', () => {
       );
     });
 
-    it('should advance period_end by 1 month using timezone-aware calculation', async () => {
+    it('should advance period_end by 1 month to prevent quota window drift', async () => {
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ dimension: 'api_calls' }],
       });
 
       await quotaService.resetMonthlyQuotas(1);
 
-      // Verify SQL uses timezone-aware period calculation
+      // Verify SQL advances existing period boundary (not NOW()) to prevent drift
       expect(mockPoolQuery).toHaveBeenCalledWith(
-        expect.stringContaining("period_end = (NOW() AT TIME ZONE o.timezone) + INTERVAL '1 month'"),
+        expect.stringContaining("period_start = uq.period_end"),
+        [1]
+      );
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining("period_end = uq.period_end + INTERVAL '1 month'"),
         [1]
       );
     });
