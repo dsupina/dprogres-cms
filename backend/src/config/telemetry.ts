@@ -19,7 +19,7 @@ import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api';
  * - OTEL_SERVICE_NAME: Service name (default: dprogres-cms-backend)
  * - OTEL_LOG_LEVEL: Diagnostic log level (default: INFO)
  */
-export function initializeTelemetry(): NodeSDK | null {
+export async function initializeTelemetry(): Promise<NodeSDK | null> {
   const otelEnabled = process.env.OTEL_ENABLED === 'true';
 
   if (!otelEnabled) {
@@ -68,16 +68,18 @@ export function initializeTelemetry(): NodeSDK | null {
     ],
   });
 
-  // Start SDK
+  // Start SDK (await to handle promise rejections gracefully)
   try {
-    sdk.start();
+    await sdk.start();
     console.log('[OTEL] Telemetry initialized successfully');
     console.log(`[OTEL] Service: ${process.env.OTEL_SERVICE_NAME || 'dprogres-cms-backend'}`);
     console.log(`[OTEL] Endpoint: ${process.env.OTEL_ENDPOINT || 'http://localhost:4318/v1/traces'}`);
 
     return sdk;
-  } catch (error) {
-    console.error('[OTEL] Failed to initialize telemetry:', error);
+  } catch (error: any) {
+    // Handle async startup failures (bad endpoint, collector offline, etc.)
+    console.error('[OTEL] Failed to start telemetry SDK:', error);
+    console.warn('[OTEL] Continuing without telemetry - check OTEL_ENDPOINT configuration');
     return null;
   }
 }
