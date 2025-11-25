@@ -1,11 +1,10 @@
 import { useMemo, useRef } from 'react';
-import ReactQuill, { Quill } from 'react-quill';
-import 'react-quill/dist/quill.snow.css';
+import ReactQuill, { Quill } from 'react-quill-new';
+import 'react-quill-new/dist/quill.snow.css';
 import { mediaService } from '@/services/media';
-import ImageResize from 'quill-image-resize-module-react';
 
-// Register the image resize module
-Quill.register('modules/imageResize', ImageResize);
+// Note: quill-image-resize-module-react removed due to Quill 2.0 incompatibility
+// Image upload still works; resize feature temporarily disabled pending Quill 2.0 compatible alternative
 
 interface RichTextEditorProps {
 	value: string;
@@ -60,10 +59,7 @@ export default function RichTextEditor({ value, onChange, placeholder, className
 				image: onSelectLocalImage,
 			},
 		},
-		imageResize: {
-			parchment: Quill.import('parchment'),
-			modules: ['Resize', 'DisplaySize', 'Toolbar']
-		},
+		// imageResize module disabled - awaiting Quill 2.0 compatible alternative
 		history: { delay: 500, maxStack: 100, userOnly: true },
 	}), []);
 
