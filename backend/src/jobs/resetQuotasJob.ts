@@ -122,6 +122,7 @@ export class ResetQuotasJob {
     });
 
     const ctx = trace.setSpan(context.active(), span);
+    let acquiredLock = false;  // Track if this invocation acquired the lock
 
     try {
       if (this.isRunning) {
@@ -141,6 +142,7 @@ export class ResetQuotasJob {
       }
 
       this.isRunning = true;
+      acquiredLock = true;  // Mark that we acquired the lock
       span.addEvent('job.started');
       console.log('[ResetQuotasJob] Starting quota reset job...');
 
@@ -211,7 +213,10 @@ export class ResetQuotasJob {
         error: error.message,
       };
     } finally {
-      this.isRunning = false;
+      // Only release the lock if this invocation acquired it
+      if (acquiredLock) {
+        this.isRunning = false;
+      }
       span.end();
     }
   }

@@ -206,6 +206,43 @@ describe('ResetQuotasJob', () => {
       await execution1;
     });
 
+    it('should properly maintain lock across multiple concurrent attempts', async () => {
+      mockPoolQuery.mockImplementation(
+        () => new Promise(resolve => setTimeout(() => resolve({ rows: [] } as any), 150))
+      );
+
+      job = new ResetQuotasJob();
+
+      // Start first execution
+      const execution1 = job.execute();
+      await new Promise(resolve => setTimeout(resolve, 10)); // Small delay to ensure first started
+
+      // Second execution should be blocked
+      const result2 = await job.execute();
+      expect(result2.success).toBe(false);
+      expect(result2.error).toContain('already running');
+
+      // Third execution should ALSO be blocked (testing the concurrency bug fix)
+      const result3 = await job.execute();
+      expect(result3.success).toBe(false);
+      expect(result3.error).toContain('already running');
+
+      // First execution should still be running
+      expect(job.isJobRunning()).toBe(true);
+
+      // Wait for first to complete
+      const result1 = await execution1;
+      expect(result1.success).toBe(true);
+
+      // After first completes, flag should be clear
+      expect(job.isJobRunning()).toBe(false);
+
+      // Fourth execution should now succeed
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] } as any);
+      const result4 = await job.execute();
+      expect(result4.success).toBe(true);
+    });
+
     it('should set isRunning flag correctly', async () => {
       mockPoolQuery.mockImplementation(
         () => new Promise(resolve => setTimeout(() => resolve({ rows: [] } as any), 50))
