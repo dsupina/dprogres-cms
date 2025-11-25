@@ -47,7 +47,7 @@ jest.mock('../../services/QuotaService', () => ({
 
 describe('ResetQuotasJob', () => {
   let job: ResetQuotasJob;
-  const mockPoolQuery = pool.query as jest.MockedFunction<typeof pool.query>;
+  const mockPoolQuery = pool.query as jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();

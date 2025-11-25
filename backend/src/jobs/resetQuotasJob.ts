@@ -249,10 +249,12 @@ export class ResetQuotasJob {
         });
       },
       {
-        scheduled: true,
         timezone: this.config.timezone,
       }
     );
+
+    // Start the job immediately after scheduling
+    this.cronJob.start();
 
     console.log(`[ResetQuotasJob] ✅ Started with schedule: ${this.config.schedule} (${this.config.timezone})`);
     console.log(`[ResetQuotasJob] Next execution: ${this.getNextExecutionTime()}`);
