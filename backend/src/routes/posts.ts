@@ -3,6 +3,8 @@ import { Request, Response } from 'express';
 import { query } from '../utils/database';
 import { authenticateToken, requireAuthor } from '../middleware/auth';
 import { validate, createPostSchema, updatePostSchema } from '../middleware/validation';
+import { enforceQuota } from '../middleware/quota';
+import { quotaService } from '../services/QuotaService';
 import { generateSlug, generateUniqueSlug } from '../utils/slug';
 import { Post, CreatePostData, UpdatePostData, QueryParams } from '../types';
 
@@ -200,7 +202,7 @@ router.get('/:slug', async (req: Request, res: Response) => {
 });
 
 // Create post (admin only)
-router.post('/', authenticateToken, requireAuthor, validate(createPostSchema), async (req: Request, res: Response) => {
+router.post('/', authenticateToken, requireAuthor, enforceQuota('posts'), validate(createPostSchema), async (req: Request, res: Response) => {
   try {
     const postData: CreatePostData = req.body;
     const authorId = req.user?.userId;
@@ -247,6 +249,40 @@ router.post('/', authenticateToken, requireAuthor, validate(createPostSchema), a
     // Handle tags
     if (postData.tags && postData.tags.length > 0) {
       await handlePostTags(newPost.id, postData.tags);
+    }
+
+    // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
+    // Increment quota after successful creation (SF-010)
+    const organizationId = req.user?.organizationId;
+    const isEnterprise = (req as any).isEnterpriseTier;
+
+    if (organizationId && !isEnterprise) {
+      const incrementResult = await quotaService.incrementQuota({
+        organizationId,
+        dimension: 'posts',
+        amount: 1
+      });
+
+      // P1 bug fix: Rollback post creation if quota increment fails (SF-010)
+      if (!incrementResult.success || !incrementResult.data) {
+        console.error('[CRITICAL] Quota increment failed, rolling back post creation:', {
+          postId: newPost.id,
+          organizationId,
+          error: incrementResult.error,
+        });
+
+        // Rollback: Delete post (cascades to post_tags due to foreign key constraint)
+        try {
+          await query('DELETE FROM posts WHERE id = $1', [newPost.id]);
+        } catch (dbError) {
+          console.error('[CRITICAL] Failed to delete post during rollback:', dbError);
+        }
+
+        return res.status(500).json({
+          error: 'Post creation failed due to quota tracking error',
+          details: incrementResult.error,
+        });
+      }
     }
 
     res.status(201).json({
@@ -360,6 +396,28 @@ router.delete('/:id', authenticateToken, requireAuthor, async (req: Request, res
     }
 
     await query('DELETE FROM posts WHERE id = $1', [id]);
+
+    // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
+    // Decrement post quota after deletion (SF-010)
+    const organizationId = req.user?.organizationId;
+    const isEnterprise = (req as any).isEnterpriseTier;
+
+    if (organizationId && !isEnterprise) {
+      const decrementResult = await quotaService.decrementQuota({
+        organizationId,
+        dimension: 'posts',
+        amount: 1,
+      });
+
+      if (!decrementResult.success) {
+        // Log error but don't fail the deletion - post is already deleted
+        console.error('[WARNING] Post deleted but quota decrement failed:', {
+          postId: id,
+          organizationId,
+          error: decrementResult.error,
+        });
+      }
+    }
 
     res.json({ message: 'Post deleted successfully' });
   } catch (error) {

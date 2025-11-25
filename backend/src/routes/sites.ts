@@ -1,7 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { authenticateToken, requireAdmin } from '../middleware/auth';
 import { validateRequest } from '../middleware/validation';
+import { enforceQuota } from '../middleware/quota';
 import { siteService } from '../services/siteService';
+import { quotaService } from '../services/QuotaService';
 import Joi from 'joi';
 
 const router = Router();
@@ -84,10 +86,46 @@ router.post(
   '/',
   authenticateToken,
   requireAdmin,
+  enforceQuota('sites'),
   validateRequest(createSiteSchema),
   async (req: Request, res: Response) => {
     try {
       const site = await siteService.createSite(req.body);
+
+      // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
+      // Increment quota after successful creation (SF-010)
+      const organizationId = req.user?.organizationId;
+      const isEnterprise = (req as any).isEnterpriseTier;
+
+      if (organizationId && !isEnterprise) {
+        const incrementResult = await quotaService.incrementQuota({
+          organizationId,
+          dimension: 'sites',
+          amount: 1
+        });
+
+        // P1 bug fix: Rollback site creation if quota increment fails (SF-010)
+        if (!incrementResult.success || !incrementResult.data) {
+          console.error('[CRITICAL] Quota increment failed, rolling back site creation:', {
+            siteId: site.id,
+            organizationId,
+            error: incrementResult.error,
+          });
+
+          // Rollback: Delete site (cascades to related records via foreign key constraints)
+          try {
+            await siteService.deleteSite(site.id);
+          } catch (dbError) {
+            console.error('[CRITICAL] Failed to delete site during rollback:', dbError);
+          }
+
+          return res.status(500).json({
+            error: 'Site creation failed due to quota tracking error',
+            details: incrementResult.error,
+          });
+        }
+      }
+
       res.status(201).json(site);
     } catch (error: any) {
       console.error('Error creating site:', error);
@@ -155,6 +193,28 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req: Request, res:
 
     if (!deleted) {
       return res.status(404).json({ error: 'Site not found' });
+    }
+
+    // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
+    // Decrement site quota after deletion (SF-010)
+    const organizationId = req.user?.organizationId;
+    const isEnterprise = (req as any).isEnterpriseTier;
+
+    if (organizationId && !isEnterprise) {
+      const decrementResult = await quotaService.decrementQuota({
+        organizationId,
+        dimension: 'sites',
+        amount: 1,
+      });
+
+      if (!decrementResult.success) {
+        // Log error but don't fail the deletion - site is already deleted
+        console.error('[WARNING] Site deleted but quota decrement failed:', {
+          siteId: id,
+          organizationId,
+          error: decrementResult.error,
+        });
+      }
     }
 
     res.status(204).send();

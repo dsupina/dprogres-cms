@@ -6,6 +6,8 @@ import path from 'path';
 import fs from 'fs';
 import { query } from '../utils/database';
 import { authenticateToken, requireAuthor } from '../middleware/auth';
+import { enforceStorageQuota } from '../middleware/quota';
+import { quotaService } from '../services/QuotaService';
 
 const router = express.Router();
 
@@ -132,7 +134,7 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
     }
     next();
   });
-}, async (req: Request, res: Response) => {
+}, enforceStorageQuota({ derivatives: true }), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -143,6 +145,7 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
 
     // If image, generate a web-optimized copy (webp) and a thumbnail
     let storedPath = `/uploads/${req.file.filename}`;
+    let totalStorageBytes = req.file.size; // Start with original file size
     const fullPath = path.join(__dirname, '../../uploads', req.file.filename);
     const ext = path.extname(req.file.originalname).toLowerCase();
     const isImage = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext);
@@ -158,11 +161,21 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
         await sharp(fullPath).rotate().resize({ width: 1600, withoutEnlargement: true }).webp({ quality: 82 }).toFile(webpPath);
         await sharp(fullPath).rotate().resize({ width: 480, withoutEnlargement: true }).webp({ quality: 78 }).toFile(thumbPath);
 
+        // P1 bug fix: Account for all derivative files in storage quota (SF-010)
+        // Calculate actual total storage: original + webp + thumbnail
+        if (fs.existsSync(webpPath)) {
+          totalStorageBytes += fs.statSync(webpPath).size;
+        }
+        if (fs.existsSync(thumbPath)) {
+          totalStorageBytes += fs.statSync(thumbPath).size;
+        }
+
         // prefer webp as canonical path
         storedPath = `/uploads/${webpName}`;
       }
     } catch (e) {
       // If optimization fails, fall back to original upload
+      // totalStorageBytes already set to req.file.size
     }
 
     const insertQuery = `
@@ -186,6 +199,60 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
     const result = await query(insertQuery, values);
     const mediaFile = result.rows[0];
 
+    // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
+    // Increment quota after successful upload (SF-010)
+    const organizationId = req.user?.organizationId;
+    const isEnterprise = (req as any).isEnterpriseTier;
+
+    if (organizationId && !isEnterprise) {
+      const incrementResult = await quotaService.incrementQuota({
+        organizationId,
+        dimension: 'storage_bytes',
+        amount: totalStorageBytes // P1 fix: Use actual total including derivatives
+      });
+
+      // P1 bug fix: Rollback upload if quota increment fails (SF-010)
+      if (!incrementResult.success || !incrementResult.data) {
+        console.error('[CRITICAL] Quota increment failed, rolling back upload:', {
+          mediaId: mediaFile.id,
+          organizationId,
+          fileSize: totalStorageBytes,
+          error: incrementResult.error,
+        });
+
+        // Rollback: Delete database record
+        try {
+          await query('DELETE FROM media_files WHERE id = $1', [mediaFile.id]);
+        } catch (dbError) {
+          console.error('[CRITICAL] Failed to delete media record during rollback:', dbError);
+        }
+
+        // Rollback: Delete all uploaded files (original + derivatives)
+        const ext = path.extname(req.file.filename);
+        const baseName = path.basename(req.file.filename, ext);
+        const filesToDelete = [
+          path.join(__dirname, '../../uploads', req.file.filename), // Original
+          path.join(__dirname, '../../uploads', `${baseName}.webp`), // WebP
+          path.join(__dirname, '../../uploads', `${baseName}-thumb.webp`), // Thumbnail
+        ];
+
+        for (const filePath of filesToDelete) {
+          try {
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+            }
+          } catch (fileError) {
+            console.error(`[CRITICAL] Failed to delete file during rollback: ${filePath}`, fileError);
+          }
+        }
+
+        return res.status(500).json({
+          error: 'Upload failed due to quota tracking error',
+          details: incrementResult.error,
+        });
+      }
+    }
+
     res.status(201).json({
       message: 'File uploaded successfully',
       data: mediaFile
@@ -197,7 +264,7 @@ router.post('/upload', authenticateToken, requireAuthor, (req: Request, res: Res
 });
 
 // Upload multiple files (admin only)
-router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('files', 10), async (req: Request, res: Response) => {
+router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('files', 10), enforceStorageQuota({ derivatives: false }), async (req: Request, res: Response) => {
   try {
     const files = req.files as Express.Multer.File[];
     
@@ -208,6 +275,7 @@ router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('
     const userId = req.user?.userId;
     const uploadedFiles = [];
 
+    let totalBytes = 0;
     for (const file of files) {
       const insertQuery = `
         INSERT INTO media_files (
@@ -227,6 +295,55 @@ router.post('/upload-multiple', authenticateToken, requireAuthor, upload.array('
 
       const result = await query(insertQuery, values);
       uploadedFiles.push(result.rows[0]);
+      totalBytes += file.size;
+    }
+
+    // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
+    // Increment quota after successful upload (SF-010)
+    const organizationId = req.user?.organizationId;
+    const isEnterprise = (req as any).isEnterpriseTier;
+
+    if (organizationId && !isEnterprise && totalBytes > 0) {
+      const incrementResult = await quotaService.incrementQuota({
+        organizationId,
+        dimension: 'storage_bytes',
+        amount: totalBytes
+      });
+
+      // P1 bug fix: Rollback uploads if quota increment fails (SF-010)
+      if (!incrementResult.success || !incrementResult.data) {
+        console.error('[CRITICAL] Quota increment failed, rolling back multiple uploads:', {
+          fileCount: uploadedFiles.length,
+          organizationId,
+          totalBytes,
+          error: incrementResult.error,
+        });
+
+        // Rollback: Delete all database records
+        const mediaIds = uploadedFiles.map(f => f.id);
+        try {
+          await query('DELETE FROM media_files WHERE id = ANY($1::int[])', [mediaIds]);
+        } catch (dbError) {
+          console.error('[CRITICAL] Failed to delete media records during rollback:', dbError);
+        }
+
+        // Rollback: Delete all uploaded files
+        for (const file of files) {
+          try {
+            const filePath = path.join(__dirname, '../../uploads', file.filename);
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+            }
+          } catch (fileError) {
+            console.error(`[CRITICAL] Failed to delete file during rollback: ${file.filename}`, fileError);
+          }
+        }
+
+        return res.status(500).json({
+          error: 'Upload failed due to quota tracking error',
+          details: incrementResult.error,
+        });
+      }
     }
 
     res.status(201).json({
@@ -284,14 +401,62 @@ router.delete('/:id', authenticateToken, requireAuthor, async (req: Request, res
 
     const mediaFile = existingFile.rows[0];
 
-    // Delete file from filesystem
+    // P1 bug fix: Calculate total storage before deletion for quota decrement (SF-010)
+    // For images, we created: original, webp, and thumbnail
     const filePath = path.join(__dirname, '../../uploads', mediaFile.filename);
+    const ext = path.extname(mediaFile.filename);
+    const baseName = path.basename(mediaFile.filename, ext);
+    const webpPath = path.join(__dirname, '../../uploads', `${baseName}.webp`);
+    const thumbPath = path.join(__dirname, '../../uploads', `${baseName}-thumb.webp`);
+
+    // Calculate total storage used (before deletion)
+    let totalStorageBytes = 0;
+    if (fs.existsSync(filePath)) {
+      totalStorageBytes += fs.statSync(filePath).size;
+    }
+    if (fs.existsSync(webpPath)) {
+      totalStorageBytes += fs.statSync(webpPath).size;
+    }
+    if (fs.existsSync(thumbPath)) {
+      totalStorageBytes += fs.statSync(thumbPath).size;
+    }
+
+    // Delete files
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
+    }
+    if (fs.existsSync(webpPath)) {
+      fs.unlinkSync(webpPath);
+    }
+    if (fs.existsSync(thumbPath)) {
+      fs.unlinkSync(thumbPath);
     }
 
     // Delete from database
     await query('DELETE FROM media_files WHERE id = $1', [id]);
+
+    // P1 bug fix: Skip quota tracking for enterprise tier (SF-010)
+    // Decrement storage quota after deletion (SF-010)
+    const organizationId = req.user?.organizationId;
+    const isEnterprise = (req as any).isEnterpriseTier;
+
+    if (organizationId && !isEnterprise && totalStorageBytes > 0) {
+      const decrementResult = await quotaService.decrementQuota({
+        organizationId,
+        dimension: 'storage_bytes',
+        amount: totalStorageBytes,
+      });
+
+      if (!decrementResult.success) {
+        // Log error but don't fail the deletion - media is already deleted
+        console.error('[WARNING] Media deleted but quota decrement failed:', {
+          mediaId: id,
+          organizationId,
+          storageBytes: totalStorageBytes,
+          error: decrementResult.error,
+        });
+      }
+    }
 
     res.json({ message: 'Media file deleted successfully' });
   } catch (error) {
