@@ -70,6 +70,24 @@ export interface SetQuotaOverrideInput {
 }
 
 /**
+ * Warning thresholds for quota alerts
+ */
+export type WarningThreshold = 80 | 90 | 95;
+
+/**
+ * Warning event data emitted when quota approaches limit
+ */
+export interface QuotaWarningEvent {
+  organizationId: number;
+  dimension: QuotaDimension;
+  percentage: WarningThreshold;
+  current: number;
+  limit: number;
+  remaining: number;
+  timestamp: Date;
+}
+
+/**
  * QuotaService - Manages usage quotas with atomic operations
  *
  * Features:
@@ -82,14 +100,127 @@ export interface SetQuotaOverrideInput {
  * - Emit events when approaching limits (80%, 90%, 95%, 100%)
  *
  * Events:
- * - quota:approaching_limit (at 80%, 90%, 95%)
- * - quota:exceeded (at 100%)
- * - quota:reset (monthly reset)
- * - quota:override_set (when limit is manually changed)
+ * - quota:warning (at 80%, 90%, 95% with spam prevention - SF-012)
+ * - quota:limit_reached (at exactly 100%)
+ * - quota:exceeded (when increment is rejected - over limit)
  * - quota:incremented (when usage is incremented)
  * - quota:decremented (when usage is decremented)
+ * - quota:reset (monthly reset for single org)
+ * - quota:global_reset (monthly reset for all orgs - clears warning cache)
+ * - quota:override_set (when limit is manually changed - clears warning cache)
  */
 export class QuotaService extends EventEmitter {
+  /**
+   * Cache to track sent warnings and prevent spam
+   * Key format: `${orgId}:${dimension}:${threshold}`
+   * Value: timestamp when warning was sent
+   *
+   * LIMITATION: This in-memory cache is per-process only.
+   * In multi-instance deployments, each Node process maintains its own state,
+   * which could lead to duplicate warnings after restarts or across instances.
+   *
+   * TODO (SF-013): For production multi-instance deployments, migrate to Redis
+   * or database-backed cache to ensure warnings are truly sent only once.
+   * For now, this is acceptable because:
+   * 1. Monthly reset clears the cache anyway
+   * 2. Duplicate warnings are better than no warnings
+   * 3. Single-instance deployments work correctly
+   */
+  private warningCache: Map<string, Date> = new Map();
+
+  /**
+   * Warning thresholds in descending order for priority checking
+   */
+  private static readonly WARNING_THRESHOLDS: WarningThreshold[] = [95, 90, 80];
+
+  /**
+   * Generate cache key for warning tracking
+   */
+  private getWarningCacheKey(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): string {
+    return `${orgId}:${dimension}:${threshold}`;
+  }
+
+  /**
+   * Check if a warning was already sent for this threshold
+   */
+  wasWarningSent(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): boolean {
+    const key = this.getWarningCacheKey(orgId, dimension, threshold);
+    return this.warningCache.has(key);
+  }
+
+  /**
+   * Mark a warning as sent for this threshold
+   */
+  markWarningSent(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): void {
+    const key = this.getWarningCacheKey(orgId, dimension, threshold);
+    this.warningCache.set(key, new Date());
+  }
+
+  /**
+   * Clear all warnings for an organization/dimension (called on quota reset)
+   */
+  clearWarnings(orgId: number, dimension?: QuotaDimension): void {
+    const prefix = dimension ? `${orgId}:${dimension}:` : `${orgId}:`;
+    for (const key of this.warningCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.warningCache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Clear all warnings across all organizations (called on global quota reset)
+   */
+  clearAllWarnings(): void {
+    this.warningCache.clear();
+  }
+
+  /**
+   * Check quota status and emit warnings at thresholds (80%, 90%, 95%)
+   * Only emits one warning per threshold to prevent spam
+   * @param orgId - Organization ID
+   * @param dimension - Quota dimension
+   * @param existingStatus - Optional pre-fetched quota status to avoid duplicate queries
+   */
+  async checkAndWarn(orgId: number, dimension: QuotaDimension, existingStatus?: QuotaStatus): Promise<void> {
+    let status: QuotaStatus;
+
+    if (existingStatus) {
+      // Use pre-fetched status to avoid duplicate DB query
+      status = existingStatus;
+    } else {
+      // Fetch status if not provided
+      const statusResult = await this.getQuotaStatusForDimension(orgId, dimension);
+      if (!statusResult.success || !statusResult.data) {
+        return;
+      }
+      status = statusResult.data;
+    }
+
+    const { current_usage, quota_limit, remaining, percentage_used } = status;
+
+    // Check thresholds in descending order, emit only the highest applicable threshold
+    for (const threshold of QuotaService.WARNING_THRESHOLDS) {
+      if (percentage_used >= threshold && !this.wasWarningSent(orgId, dimension, threshold)) {
+        const warningEvent: QuotaWarningEvent = {
+          organizationId: orgId,
+          dimension,
+          percentage: threshold,
+          current: current_usage,
+          limit: quota_limit,
+          remaining,
+          timestamp: new Date(),
+        };
+
+        this.emit('quota:warning', warningEvent);
+        this.markWarningSent(orgId, dimension, threshold);
+
+        // Only emit the highest threshold warning
+        break;
+      }
+    }
+  }
+
   /**
    * Check if organization can perform action (within quota)
    * Does NOT increment - use incrementQuota after successful action
@@ -186,7 +317,7 @@ export class QuotaService extends EventEmitter {
         };
       }
 
-      // Get updated quota status to check thresholds
+      // Get updated quota status for events
       const statusResult = await this.getQuotaStatusForDimension(organizationId, dimension);
 
       if (statusResult.success && statusResult.data) {
@@ -199,38 +330,14 @@ export class QuotaService extends EventEmitter {
             dimension,
             current: statusResult.data.current_usage,
             limit: statusResult.data.quota_limit,
+            remaining: statusResult.data.remaining,
             timestamp: new Date(),
           });
         }
-        // Emit approaching limit events at thresholds
-        else if (percentageUsed >= 95) {
-          this.emit('quota:approaching_limit', {
-            organizationId,
-            dimension,
-            percentage: 95,
-            current: statusResult.data.current_usage,
-            limit: statusResult.data.quota_limit,
-            timestamp: new Date(),
-          });
-        } else if (percentageUsed >= 90) {
-          this.emit('quota:approaching_limit', {
-            organizationId,
-            dimension,
-            percentage: 90,
-            current: statusResult.data.current_usage,
-            limit: statusResult.data.quota_limit,
-            timestamp: new Date(),
-          });
-        } else if (percentageUsed >= 80) {
-          this.emit('quota:approaching_limit', {
-            organizationId,
-            dimension,
-            percentage: 80,
-            current: statusResult.data.current_usage,
-            limit: statusResult.data.quota_limit,
-            timestamp: new Date(),
-          });
-        }
+
+        // Check and emit warnings with spam prevention (SF-012)
+        // Pass existing status to avoid duplicate DB query
+        await this.checkAndWarn(organizationId, dimension, statusResult.data);
 
         // Emit incremented event
         this.emit('quota:incremented', {
@@ -469,6 +576,11 @@ export class QuotaService extends EventEmitter {
 
       const resetCount = rows.length;
 
+      // Clear warning cache for reset dimensions (SF-012)
+      for (const row of rows) {
+        this.clearWarnings(organizationId, row.dimension);
+      }
+
       // Emit reset event
       this.emit('quota:reset', {
         organizationId,
@@ -498,6 +610,9 @@ export class QuotaService extends EventEmitter {
     try {
       const { rows } = await pool.query('SELECT reset_monthly_quotas() as rows_updated');
       const rowsUpdated = rows[0].rows_updated;
+
+      // Clear all warning cache so warnings re-arm for the new period (SF-012 fix)
+      this.clearAllWarnings();
 
       // Emit global reset event
       this.emit('quota:global_reset', {
@@ -569,6 +684,14 @@ export class QuotaService extends EventEmitter {
         period_end: row.period_end,
         last_reset_at: row.last_reset_at,
       };
+
+      // Clear warning cache when limit changes (SF-012)
+      // This allows warnings to fire again based on new limit
+      this.clearWarnings(organizationId, dimension);
+
+      // Immediately check and emit warnings if new limit puts usage over threshold (SF-012)
+      // This handles the case where admin lowers limit below current usage
+      await this.checkAndWarn(organizationId, dimension, quotaStatus);
 
       // Emit override set event
       this.emit('quota:override_set', {

@@ -4,9 +4,10 @@
 **Phase**: Phase 3 (Quota System & Enforcement)
 **Priority**: P0
 **Estimated Effort**: 2 days
-**Status**: Not Started
+**Status**: ✅ Completed
 **Dependencies**: SF-009
 **Assigned To**: Backend Engineer
+**Completed**: 2025-11-26
 
 ---
 
@@ -47,11 +48,11 @@ async checkAndWarn(orgId: number, dimension: string) {
 
 ## Acceptance Criteria
 
-- [ ] Warnings emitted at 80%, 90%, 95%
-- [ ] Only one warning per threshold
-- [ ] Warning events captured by EmailService
-- [ ] Warning data includes remaining quota
-- [ ] Unit tests verify warning logic
+- [x] Warnings emitted at 80%, 90%, 95%
+- [x] Only one warning per threshold
+- [x] Warning events captured by EmailService
+- [x] Warning data includes remaining quota
+- [x] Unit tests verify warning logic
 
 ---
 
@@ -95,13 +96,55 @@ List any database migrations or schema changes.
 ### Testing Checklist
 
 Provide checklist for validating deployment:
-- [ ] Unit tests pass
-- [ ] Integration tests pass
-- [ ] Manual testing complete
-- [ ] Documentation updated
+- [x] Unit tests pass (61 tests - 35 QuotaService + 26 QuotaWarning)
+- [x] Integration tests pass
+- [x] Manual testing complete
+- [x] Documentation updated (COMPONENTS.md, PATTERNS.md)
 - [ ] Code review approved
 
 ---
 
+## Implementation Notes
+
+### Files Changed
+
+1. **QuotaService.ts** - Added warning system with spam prevention:
+   - `WarningThreshold` type (80 | 90 | 95)
+   - `QuotaWarningEvent` interface
+   - `warningCache` Map for tracking sent warnings
+   - `checkAndWarn()`, `wasWarningSent()`, `markWarningSent()`, `clearWarnings()` methods
+   - Warning cache cleared on `resetMonthlyQuotas()` and `setQuotaOverride()`
+   - Changed event from `quota:approaching_limit` to `quota:warning`
+
+2. **EmailService.ts** - New service for email notifications:
+   - Subscribes to `quota:warning` events from QuotaService
+   - Template-based email generation
+   - Stub implementation ready for AWS SES integration
+   - Human-readable dimension labels
+
+3. **QuotaWarning.test.ts** - Comprehensive test suite (26 tests):
+   - Spam prevention tests
+   - Warning cache management tests
+   - Warning event data tests
+   - Edge case tests (exactly 80%, below threshold, missing quota, etc.)
+   - EmailService integration tests
+
+4. **QuotaService.test.ts** - Updated existing tests (35 tests):
+   - Changed event listener from `quota:approaching_limit` to `quota:warning`
+   - Added mock for `checkAndWarn()` query
+   - Added `remaining` field assertions
+
+### Key Decisions
+
+1. **In-memory cache for warnings**: Chose in-memory Map over database storage for performance. Cache is cleared on quota reset anyway.
+
+2. **Highest threshold first**: When quota jumps from <80% to >95%, only the 95% warning is emitted (not all three).
+
+3. **Event name change**: Changed from `quota:approaching_limit` to `quota:warning` for clearer semantics.
+
+4. **EmailService as stub**: Created skeleton ready for email provider integration (SF-013).
+
+---
+
 **Created**: 2025-01-21
-**Last Updated**: 2025-01-21
+**Last Updated**: 2025-11-26

@@ -203,18 +203,43 @@ $$ LANGUAGE plpgsql;
 ```
 
 ### Event-Driven Quota Monitoring
-**Proactive threshold notifications**
+**Proactive threshold notifications with spam prevention (SF-012)**
 
 ```typescript
-// Listen for quota threshold events
-quotaService.on('quota:approaching_limit', async (event) => {
-  const { organizationId, dimension, percentage, current, limit } = event;
+import { emailService } from './services/EmailService';
+import { quotaService, QuotaWarningEvent } from './services/QuotaService';
 
-  // Send warning email to organization owner
-  await emailService.sendQuotaWarning({
+// RECOMMENDED: Use EmailService's built-in subscription (handles warnings automatically)
+emailService.initialize();
+emailService.subscribeToQuotaWarnings(quotaService);
+
+// EmailService automatically:
+// 1. Listens for quota:warning events
+// 2. Logs warnings with human-readable dimension labels
+// 3. Emits email:quota_warning_sent for tracking
+
+// ALTERNATIVE: Manual event handling for custom logic
+quotaService.on('quota:warning', async (event: QuotaWarningEvent) => {
+  const { organizationId, dimension, percentage, current, limit, remaining } = event;
+
+  // Use EmailService helpers for subject and template
+  const emailData = {
     organizationId,
-    subject: `${dimension} quota at ${percentage}%`,
-    message: `You've used ${current} of ${limit} ${dimension}. Consider upgrading your plan.`,
+    dimension,
+    dimensionLabel: 'Posts', // Use DIMENSION_LABELS mapping
+    percentage,
+    current,
+    limit,
+    remaining,
+    timestamp: event.timestamp,
+  };
+
+  // Send using the generic sendEmail method
+  await emailService.sendEmail({
+    to: [{ email: 'admin@example.com', name: 'Admin' }],
+    subject: emailService.getQuotaWarningSubject(emailData),
+    template: emailService.getQuotaWarningTemplate(percentage),
+    templateData: emailData,
   });
 
   // Log for analytics
@@ -222,17 +247,15 @@ quotaService.on('quota:approaching_limit', async (event) => {
     organization_id: organizationId,
     dimension,
     percentage,
+    remaining,
   });
 });
 
 quotaService.on('quota:exceeded', async (event) => {
   const { organizationId, dimension } = event;
 
-  // Alert owner immediately
-  await emailService.sendQuotaExceeded({
-    organizationId,
-    dimension,
-  });
+  // Handle quota exceeded (implement as needed)
+  console.log(`Quota exceeded for org ${organizationId}: ${dimension}`);
 
   // Create support ticket if Enterprise
   const org = await getOrganization(organizationId);
@@ -244,6 +267,109 @@ quotaService.on('quota:exceeded', async (event) => {
     });
   }
 });
+```
+
+### Quota Warning Spam Prevention Pattern (SF-012)
+**Emit warnings only once per threshold per org/dimension**
+
+```typescript
+// Warning thresholds in descending order
+const WARNING_THRESHOLDS: WarningThreshold[] = [95, 90, 80];
+
+// In-memory cache for warning tracking
+private warningCache: Map<string, Date> = new Map();
+
+/**
+ * Generate cache key for warning tracking
+ */
+private getWarningCacheKey(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): string {
+  return `${orgId}:${dimension}:${threshold}`;
+}
+
+/**
+ * Check if warning was already sent
+ */
+wasWarningSent(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): boolean {
+  const key = this.getWarningCacheKey(orgId, dimension, threshold);
+  return this.warningCache.has(key);
+}
+
+/**
+ * Mark warning as sent
+ */
+markWarningSent(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): void {
+  const key = this.getWarningCacheKey(orgId, dimension, threshold);
+  this.warningCache.set(key, new Date());
+}
+
+/**
+ * Clear warnings for org/dimension (on quota reset or limit change)
+ */
+clearWarnings(orgId: number, dimension?: QuotaDimension): void {
+  const prefix = dimension ? `${orgId}:${dimension}:` : `${orgId}:`;
+  for (const key of this.warningCache.keys()) {
+    if (key.startsWith(prefix)) {
+      this.warningCache.delete(key);
+    }
+  }
+}
+
+/**
+ * Clear all warnings across all organizations (on global quota reset)
+ */
+clearAllWarnings(): void {
+  this.warningCache.clear();
+}
+
+/**
+ * Check and emit warnings with spam prevention
+ */
+async checkAndWarn(orgId: number, dimension: QuotaDimension): Promise<void> {
+  const statusResult = await this.getQuotaStatusForDimension(orgId, dimension);
+  if (!statusResult.success || !statusResult.data) return;
+
+  const { percentage_used, current_usage, quota_limit, remaining } = statusResult.data;
+
+  // Check thresholds in descending order, emit only highest applicable
+  for (const threshold of WARNING_THRESHOLDS) {
+    if (percentage_used >= threshold && !this.wasWarningSent(orgId, dimension, threshold)) {
+      this.emit('quota:warning', {
+        organizationId: orgId,
+        dimension,
+        percentage: threshold,
+        current: current_usage,
+        limit: quota_limit,
+        remaining,
+        timestamp: new Date(),
+      });
+      this.markWarningSent(orgId, dimension, threshold);
+      break; // Only emit highest threshold
+    }
+  }
+}
+```
+
+**Key Features**:
+- Warnings only emitted once per threshold per org/dimension
+- Cache cleared on quota reset (`resetMonthlyQuotas`)
+- Cache cleared on global reset (`resetAllMonthlyQuotas`) - critical for monthly cron
+- Cache cleared on limit change (`setQuotaOverride`)
+- Highest applicable threshold emitted first (95% before 90%)
+- Warning data includes `remaining` quota for user-friendly messaging
+
+**Integration with EmailService**:
+```typescript
+// Initialize and subscribe EmailService to quota warnings (done in index.ts)
+import { emailService } from './services/EmailService';
+import { quotaService } from './services/QuotaService';
+
+emailService.initialize();
+emailService.subscribeToQuotaWarnings(quotaService);
+
+// EmailService internally handles quota:warning events and:
+// - Logs warning with human-readable labels
+// - Emits 'email:quota_warning_sent' for tracking/testing
+// - Ready for AWS SES integration (SF-013)
 ```
 
 ### Quota Dimensions and Reset Policies
