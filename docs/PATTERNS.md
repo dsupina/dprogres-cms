@@ -203,18 +203,18 @@ $$ LANGUAGE plpgsql;
 ```
 
 ### Event-Driven Quota Monitoring
-**Proactive threshold notifications**
+**Proactive threshold notifications with spam prevention (SF-012)**
 
 ```typescript
-// Listen for quota threshold events
-quotaService.on('quota:approaching_limit', async (event) => {
-  const { organizationId, dimension, percentage, current, limit } = event;
+// Listen for quota:warning events (emitted with spam prevention)
+quotaService.on('quota:warning', async (event: QuotaWarningEvent) => {
+  const { organizationId, dimension, percentage, current, limit, remaining } = event;
 
   // Send warning email to organization owner
   await emailService.sendQuotaWarning({
     organizationId,
     subject: `${dimension} quota at ${percentage}%`,
-    message: `You've used ${current} of ${limit} ${dimension}. Consider upgrading your plan.`,
+    message: `You've used ${current} of ${limit} ${dimension}. ${remaining} remaining.`,
   });
 
   // Log for analytics
@@ -222,6 +222,7 @@ quotaService.on('quota:approaching_limit', async (event) => {
     organization_id: organizationId,
     dimension,
     percentage,
+    remaining,
   });
 });
 
@@ -243,6 +244,97 @@ quotaService.on('quota:exceeded', async (event) => {
       priority: 'high',
     });
   }
+});
+```
+
+### Quota Warning Spam Prevention Pattern (SF-012)
+**Emit warnings only once per threshold per org/dimension**
+
+```typescript
+// Warning thresholds in descending order
+const WARNING_THRESHOLDS: WarningThreshold[] = [95, 90, 80];
+
+// In-memory cache for warning tracking
+private warningCache: Map<string, Date> = new Map();
+
+/**
+ * Generate cache key for warning tracking
+ */
+private getWarningCacheKey(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): string {
+  return `${orgId}:${dimension}:${threshold}`;
+}
+
+/**
+ * Check if warning was already sent
+ */
+wasWarningSent(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): boolean {
+  const key = this.getWarningCacheKey(orgId, dimension, threshold);
+  return this.warningCache.has(key);
+}
+
+/**
+ * Mark warning as sent
+ */
+markWarningSent(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): void {
+  const key = this.getWarningCacheKey(orgId, dimension, threshold);
+  this.warningCache.set(key, new Date());
+}
+
+/**
+ * Clear warnings for org/dimension (on quota reset or limit change)
+ */
+clearWarnings(orgId: number, dimension?: QuotaDimension): void {
+  const prefix = dimension ? `${orgId}:${dimension}:` : `${orgId}:`;
+  for (const key of this.warningCache.keys()) {
+    if (key.startsWith(prefix)) {
+      this.warningCache.delete(key);
+    }
+  }
+}
+
+/**
+ * Check and emit warnings with spam prevention
+ */
+async checkAndWarn(orgId: number, dimension: QuotaDimension): Promise<void> {
+  const statusResult = await this.getQuotaStatusForDimension(orgId, dimension);
+  if (!statusResult.success || !statusResult.data) return;
+
+  const { percentage_used, current_usage, quota_limit, remaining } = statusResult.data;
+
+  // Check thresholds in descending order, emit only highest applicable
+  for (const threshold of WARNING_THRESHOLDS) {
+    if (percentage_used >= threshold && !this.wasWarningSent(orgId, dimension, threshold)) {
+      this.emit('quota:warning', {
+        organizationId: orgId,
+        dimension,
+        percentage: threshold,
+        current: current_usage,
+        limit: quota_limit,
+        remaining,
+        timestamp: new Date(),
+      });
+      this.markWarningSent(orgId, dimension, threshold);
+      break; // Only emit highest threshold
+    }
+  }
+}
+```
+
+**Key Features**:
+- Warnings only emitted once per threshold per org/dimension
+- Cache cleared on quota reset (`resetMonthlyQuotas`)
+- Cache cleared on limit change (`setQuotaOverride`)
+- Highest applicable threshold emitted first (95% before 90%)
+- Warning data includes `remaining` quota for user-friendly messaging
+
+**Integration with EmailService**:
+```typescript
+// EmailService subscribes to quota warnings
+emailService.subscribeToQuotaWarnings(quotaService);
+
+// Automatically handles quota:warning events
+quotaService.on('quota:warning', (event) => {
+  this.handleQuotaWarning(event);
 });
 ```
 

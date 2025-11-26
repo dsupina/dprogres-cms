@@ -763,11 +763,11 @@ const rowsUpdated = await quotaService.resetAllMonthlyQuotas();
 7. `setQuotaOverride(input)` - Set custom quota limit (Enterprise)
 
 **Lifecycle Events**:
-- `quota:approaching_limit` - Fired at 80%, 90%, 95% thresholds
-- `quota:limit_reached` - Fired when usage reaches exactly 100% (NEW)
+- `quota:warning` - Fired at 80%, 90%, 95% with spam prevention (SF-012)
+- `quota:limit_reached` - Fired when usage reaches exactly 100%
 - `quota:exceeded` - Fired when increment attempt is rejected (over limit)
-- `quota:reset` - Fired when monthly quotas are reset
-- `quota:override_set` - Fired when quota limit is manually changed
+- `quota:reset` - Fired when monthly quotas are reset (clears warning cache)
+- `quota:override_set` - Fired when quota limit is manually changed (clears warning cache)
 - `quota:incremented` - Fired when usage is incremented
 - `quota:decremented` - Fired when usage is decremented
 
@@ -779,6 +779,15 @@ const rowsUpdated = await quotaService.resetAllMonthlyQuotas();
 - `IncrementQuotaInput` - Input for incrementing quota
 - `DecrementQuotaInput` - Input for decrementing quota
 - `SetQuotaOverrideInput` - Input for setting quota override
+- `WarningThreshold` - Type for warning thresholds (80 | 90 | 95) (SF-012)
+- `QuotaWarningEvent` - Warning event data with remaining quota (SF-012)
+
+**Warning System (SF-012)**:
+The QuotaService includes a spam-prevention mechanism for quota warnings:
+- Warnings are emitted only once per threshold per org/dimension
+- Warning cache is cleared on quota reset or limit override
+- `checkAndWarn(orgId, dimension)` method for manual warning checks
+- `wasWarningSent()`, `markWarningSent()`, `clearWarnings()` for cache management
 
 **Integration Points**:
 - Uses SF-001 database schema (usage_quotas table)
@@ -795,13 +804,87 @@ const rowsUpdated = await quotaService.resetAllMonthlyQuotas();
 - `PUT /api/quotas/:organizationId/:dimension/override` - Set quota override
 - `POST /api/quotas/reset-all` - Reset all monthly quotas (admin only)
 
-**Tests**: `backend/src/__tests__/services/QuotaService.test.ts` (26 tests, 100% passing)
+**Tests**:
+- `backend/src/__tests__/services/QuotaService.test.ts` (35 tests, 100% passing)
+- `backend/src/__tests__/services/QuotaWarning.test.ts` (26 tests, 100% passing) - SF-012
 
 **Performance Metrics**:
 - Quota check: <50ms (target met)
 - Atomic increment: ~85ms average
 - Event emission: <5ms overhead
 - Test coverage: 100% of all methods and edge cases
+
+---
+
+#### Email Service (SF-012)
+**Purpose**: Email notifications for quota warnings and other system events
+**Location**: `backend/src/services/EmailService.ts`
+**Status**: ✅ Completed (November 2025)
+
+```typescript
+// Usage Example
+import { emailService } from '../services/EmailService';
+import { quotaService } from '../services/QuotaService';
+
+// Initialize and subscribe to quota warnings
+emailService.initialize();
+emailService.subscribeToQuotaWarnings(quotaService);
+
+// Email service automatically handles quota:warning events
+// and sends notifications to organization admins
+
+// Manual email sending (stub implementation)
+const result = await emailService.sendEmail({
+  to: [{ email: 'admin@example.com', name: 'Admin' }],
+  subject: 'Quota Warning',
+  template: 'quota_warning_80',
+  templateData: { /* ... */ },
+});
+```
+
+**Key Features**:
+- **Event-Driven Architecture**: Listens to `quota:warning` events from QuotaService
+- **Template-Based Emails**: Three templates for 80%, 90%, 95% thresholds
+- **Human-Readable Labels**: Converts dimension codes to user-friendly names
+- **Stub Implementation**: Ready for integration with email providers (SendGrid, AWS SES, etc.)
+- **Event Emission**: Emits `email:quota_warning_sent` for tracking/testing
+
+**Service Methods**:
+1. `initialize()` - Initialize the email service
+2. `subscribeToQuotaWarnings(quotaServiceEmitter)` - Subscribe to quota warning events
+3. `sendEmail(options)` - Send email (stub implementation)
+4. `getQuotaWarningSubject(data)` - Generate email subject
+5. `getQuotaWarningTemplate(percentage)` - Get template for percentage
+
+**Dimension Labels**:
+- `sites` → "Sites"
+- `posts` → "Posts"
+- `users` → "Users"
+- `storage_bytes` → "Storage"
+- `api_calls` → "API Calls"
+
+**Lifecycle Events**:
+- `email:quota_warning_sent` - Fired when quota warning email is processed
+
+**Exported Interfaces**:
+- `QuotaEmailTemplate` - Template types for quota warnings
+- `EmailRecipient` - Email recipient with name
+- `SendEmailOptions` - Options for sending email
+- `EmailSendResult` - Result of email send operation
+- `QuotaWarningEmailData` - Processed warning data for email
+
+**Integration Points**:
+- Subscribes to QuotaService `quota:warning` events
+- Ready for AWS SES, SendGrid, or other email provider integration
+- Uses QuotaWarningEvent from QuotaService
+
+**Tests**: `backend/src/__tests__/services/QuotaWarning.test.ts` (EmailService section: 8 tests, 100% passing)
+
+**Future Enhancements** (SF-013):
+- Integration with actual email provider (AWS SES)
+- HTML email templates with branding
+- Organization admin lookup for recipients
+- Email delivery tracking and retry logic
 
 ---
 

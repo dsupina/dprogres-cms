@@ -70,6 +70,24 @@ export interface SetQuotaOverrideInput {
 }
 
 /**
+ * Warning thresholds for quota alerts
+ */
+export type WarningThreshold = 80 | 90 | 95;
+
+/**
+ * Warning event data emitted when quota approaches limit
+ */
+export interface QuotaWarningEvent {
+  organizationId: number;
+  dimension: QuotaDimension;
+  percentage: WarningThreshold;
+  current: number;
+  limit: number;
+  remaining: number;
+  timestamp: Date;
+}
+
+/**
  * QuotaService - Manages usage quotas with atomic operations
  *
  * Features:
@@ -88,8 +106,91 @@ export interface SetQuotaOverrideInput {
  * - quota:override_set (when limit is manually changed)
  * - quota:incremented (when usage is incremented)
  * - quota:decremented (when usage is decremented)
+ * - quota:warning (at 80%, 90%, 95% with spam prevention)
  */
 export class QuotaService extends EventEmitter {
+  /**
+   * Cache to track sent warnings and prevent spam
+   * Key format: `${orgId}:${dimension}:${threshold}`
+   * Value: timestamp when warning was sent
+   */
+  private warningCache: Map<string, Date> = new Map();
+
+  /**
+   * Warning thresholds in descending order for priority checking
+   */
+  private static readonly WARNING_THRESHOLDS: WarningThreshold[] = [95, 90, 80];
+
+  /**
+   * Generate cache key for warning tracking
+   */
+  private getWarningCacheKey(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): string {
+    return `${orgId}:${dimension}:${threshold}`;
+  }
+
+  /**
+   * Check if a warning was already sent for this threshold
+   */
+  wasWarningSent(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): boolean {
+    const key = this.getWarningCacheKey(orgId, dimension, threshold);
+    return this.warningCache.has(key);
+  }
+
+  /**
+   * Mark a warning as sent for this threshold
+   */
+  markWarningSent(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): void {
+    const key = this.getWarningCacheKey(orgId, dimension, threshold);
+    this.warningCache.set(key, new Date());
+  }
+
+  /**
+   * Clear all warnings for an organization/dimension (called on quota reset)
+   */
+  clearWarnings(orgId: number, dimension?: QuotaDimension): void {
+    const prefix = dimension ? `${orgId}:${dimension}:` : `${orgId}:`;
+    for (const key of this.warningCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.warningCache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Check quota status and emit warnings at thresholds (80%, 90%, 95%)
+   * Only emits one warning per threshold to prevent spam
+   */
+  async checkAndWarn(orgId: number, dimension: QuotaDimension): Promise<void> {
+    const statusResult = await this.getQuotaStatusForDimension(orgId, dimension);
+
+    if (!statusResult.success || !statusResult.data) {
+      return;
+    }
+
+    const { current_usage, quota_limit, remaining, percentage_used } = statusResult.data;
+
+    // Check thresholds in descending order, emit only the highest applicable threshold
+    for (const threshold of QuotaService.WARNING_THRESHOLDS) {
+      if (percentage_used >= threshold && !this.wasWarningSent(orgId, dimension, threshold)) {
+        const warningEvent: QuotaWarningEvent = {
+          organizationId: orgId,
+          dimension,
+          percentage: threshold,
+          current: current_usage,
+          limit: quota_limit,
+          remaining,
+          timestamp: new Date(),
+        };
+
+        this.emit('quota:warning', warningEvent);
+        this.markWarningSent(orgId, dimension, threshold);
+
+        // Only emit the highest threshold warning
+        break;
+      }
+    }
+  }
+
   /**
    * Check if organization can perform action (within quota)
    * Does NOT increment - use incrementQuota after successful action
@@ -186,7 +287,7 @@ export class QuotaService extends EventEmitter {
         };
       }
 
-      // Get updated quota status to check thresholds
+      // Get updated quota status for events
       const statusResult = await this.getQuotaStatusForDimension(organizationId, dimension);
 
       if (statusResult.success && statusResult.data) {
@@ -199,38 +300,13 @@ export class QuotaService extends EventEmitter {
             dimension,
             current: statusResult.data.current_usage,
             limit: statusResult.data.quota_limit,
+            remaining: statusResult.data.remaining,
             timestamp: new Date(),
           });
         }
-        // Emit approaching limit events at thresholds
-        else if (percentageUsed >= 95) {
-          this.emit('quota:approaching_limit', {
-            organizationId,
-            dimension,
-            percentage: 95,
-            current: statusResult.data.current_usage,
-            limit: statusResult.data.quota_limit,
-            timestamp: new Date(),
-          });
-        } else if (percentageUsed >= 90) {
-          this.emit('quota:approaching_limit', {
-            organizationId,
-            dimension,
-            percentage: 90,
-            current: statusResult.data.current_usage,
-            limit: statusResult.data.quota_limit,
-            timestamp: new Date(),
-          });
-        } else if (percentageUsed >= 80) {
-          this.emit('quota:approaching_limit', {
-            organizationId,
-            dimension,
-            percentage: 80,
-            current: statusResult.data.current_usage,
-            limit: statusResult.data.quota_limit,
-            timestamp: new Date(),
-          });
-        }
+
+        // Check and emit warnings with spam prevention (SF-012)
+        await this.checkAndWarn(organizationId, dimension);
 
         // Emit incremented event
         this.emit('quota:incremented', {
@@ -469,6 +545,11 @@ export class QuotaService extends EventEmitter {
 
       const resetCount = rows.length;
 
+      // Clear warning cache for reset dimensions (SF-012)
+      for (const row of rows) {
+        this.clearWarnings(organizationId, row.dimension);
+      }
+
       // Emit reset event
       this.emit('quota:reset', {
         organizationId,
@@ -569,6 +650,10 @@ export class QuotaService extends EventEmitter {
         period_end: row.period_end,
         last_reset_at: row.last_reset_at,
       };
+
+      // Clear warning cache when limit changes (SF-012)
+      // This allows warnings to fire again based on new limit
+      this.clearWarnings(organizationId, dimension);
 
       // Emit override set event
       this.emit('quota:override_set', {
