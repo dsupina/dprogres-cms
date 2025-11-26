@@ -140,20 +140,7 @@ describe('QuotaService', () => {
       });
 
       // Mock getQuotaStatusForDimension call in incrementQuota
-      mockPoolQuery.mockResolvedValueOnce({
-        rows: [
-          {
-            dimension: 'sites',
-            current_usage: 51,
-            quota_limit: 100,
-            period_start: new Date(),
-            period_end: null,
-            last_reset_at: null,
-          },
-        ],
-      });
-
-      // Mock for getQuotaStatusForDimension in checkAndWarn
+      // (checkAndWarn reuses this status, no duplicate query needed)
       mockPoolQuery.mockResolvedValueOnce({
         rows: [
           {
@@ -238,20 +225,7 @@ describe('QuotaService', () => {
       });
 
       // Mock for getQuotaStatusForDimension in incrementQuota
-      mockPoolQuery.mockResolvedValueOnce({
-        rows: [
-          {
-            dimension: 'posts',
-            current_usage: 85,
-            quota_limit: 100,
-            period_start: new Date(),
-            period_end: null,
-            last_reset_at: null,
-          },
-        ],
-      });
-
-      // Mock for getQuotaStatusForDimension in checkAndWarn
+      // (checkAndWarn reuses this status, no duplicate query needed)
       mockPoolQuery.mockResolvedValueOnce({
         rows: [
           {
@@ -293,20 +267,7 @@ describe('QuotaService', () => {
       });
 
       // Mock for getQuotaStatusForDimension in incrementQuota
-      mockPoolQuery.mockResolvedValueOnce({
-        rows: [
-          {
-            dimension: 'posts',
-            current_usage: 92,
-            quota_limit: 100,
-            period_start: new Date(),
-            period_end: null,
-            last_reset_at: null,
-          },
-        ],
-      });
-
-      // Mock for getQuotaStatusForDimension in checkAndWarn
+      // (checkAndWarn reuses this status, no duplicate query needed)
       mockPoolQuery.mockResolvedValueOnce({
         rows: [
           {
@@ -348,20 +309,7 @@ describe('QuotaService', () => {
       });
 
       // Mock for getQuotaStatusForDimension in incrementQuota
-      mockPoolQuery.mockResolvedValueOnce({
-        rows: [
-          {
-            dimension: 'posts',
-            current_usage: 97,
-            quota_limit: 100,
-            period_start: new Date(),
-            period_end: null,
-            last_reset_at: null,
-          },
-        ],
-      });
-
-      // Mock for getQuotaStatusForDimension in checkAndWarn
+      // (checkAndWarn reuses this status, no duplicate query needed)
       mockPoolQuery.mockResolvedValueOnce({
         rows: [
           {
@@ -403,20 +351,7 @@ describe('QuotaService', () => {
       });
 
       // Mock for getQuotaStatusForDimension in incrementQuota
-      mockPoolQuery.mockResolvedValueOnce({
-        rows: [
-          {
-            dimension: 'posts',
-            current_usage: 100,
-            quota_limit: 100,
-            period_start: new Date(),
-            period_end: null,
-            last_reset_at: null,
-          },
-        ],
-      });
-
-      // Mock for getQuotaStatusForDimension in checkAndWarn
+      // (checkAndWarn reuses this status, no duplicate query needed)
       mockPoolQuery.mockResolvedValueOnce({
         rows: [
           {

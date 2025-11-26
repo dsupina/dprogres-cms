@@ -166,15 +166,26 @@ export class QuotaService extends EventEmitter {
   /**
    * Check quota status and emit warnings at thresholds (80%, 90%, 95%)
    * Only emits one warning per threshold to prevent spam
+   * @param orgId - Organization ID
+   * @param dimension - Quota dimension
+   * @param existingStatus - Optional pre-fetched quota status to avoid duplicate queries
    */
-  async checkAndWarn(orgId: number, dimension: QuotaDimension): Promise<void> {
-    const statusResult = await this.getQuotaStatusForDimension(orgId, dimension);
+  async checkAndWarn(orgId: number, dimension: QuotaDimension, existingStatus?: QuotaStatus): Promise<void> {
+    let status: QuotaStatus;
 
-    if (!statusResult.success || !statusResult.data) {
-      return;
+    if (existingStatus) {
+      // Use pre-fetched status to avoid duplicate DB query
+      status = existingStatus;
+    } else {
+      // Fetch status if not provided
+      const statusResult = await this.getQuotaStatusForDimension(orgId, dimension);
+      if (!statusResult.success || !statusResult.data) {
+        return;
+      }
+      status = statusResult.data;
     }
 
-    const { current_usage, quota_limit, remaining, percentage_used } = statusResult.data;
+    const { current_usage, quota_limit, remaining, percentage_used } = status;
 
     // Check thresholds in descending order, emit only the highest applicable threshold
     for (const threshold of QuotaService.WARNING_THRESHOLDS) {
@@ -313,7 +324,8 @@ export class QuotaService extends EventEmitter {
         }
 
         // Check and emit warnings with spam prevention (SF-012)
-        await this.checkAndWarn(organizationId, dimension);
+        // Pass existing status to avoid duplicate DB query
+        await this.checkAndWarn(organizationId, dimension, statusResult.data);
 
         // Emit incremented event
         this.emit('quota:incremented', {
