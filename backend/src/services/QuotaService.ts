@@ -100,13 +100,14 @@ export interface QuotaWarningEvent {
  * - Emit events when approaching limits (80%, 90%, 95%, 100%)
  *
  * Events:
- * - quota:approaching_limit (at 80%, 90%, 95%)
- * - quota:exceeded (at 100%)
- * - quota:reset (monthly reset)
- * - quota:override_set (when limit is manually changed)
+ * - quota:warning (at 80%, 90%, 95% with spam prevention - SF-012)
+ * - quota:limit_reached (at exactly 100%)
+ * - quota:exceeded (when increment is rejected - over limit)
  * - quota:incremented (when usage is incremented)
  * - quota:decremented (when usage is decremented)
- * - quota:warning (at 80%, 90%, 95% with spam prevention)
+ * - quota:reset (monthly reset for single org)
+ * - quota:global_reset (monthly reset for all orgs - clears warning cache)
+ * - quota:override_set (when limit is manually changed - clears warning cache)
  */
 export class QuotaService extends EventEmitter {
   /**
