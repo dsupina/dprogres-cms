@@ -206,15 +206,40 @@ $$ LANGUAGE plpgsql;
 **Proactive threshold notifications with spam prevention (SF-012)**
 
 ```typescript
-// Listen for quota:warning events (emitted with spam prevention)
+import { emailService } from './services/EmailService';
+import { quotaService, QuotaWarningEvent } from './services/QuotaService';
+
+// RECOMMENDED: Use EmailService's built-in subscription (handles warnings automatically)
+emailService.initialize();
+emailService.subscribeToQuotaWarnings(quotaService);
+
+// EmailService automatically:
+// 1. Listens for quota:warning events
+// 2. Logs warnings with human-readable dimension labels
+// 3. Emits email:quota_warning_sent for tracking
+
+// ALTERNATIVE: Manual event handling for custom logic
 quotaService.on('quota:warning', async (event: QuotaWarningEvent) => {
   const { organizationId, dimension, percentage, current, limit, remaining } = event;
 
-  // Send warning email to organization owner
-  await emailService.sendQuotaWarning({
+  // Use EmailService helpers for subject and template
+  const emailData = {
     organizationId,
-    subject: `${dimension} quota at ${percentage}%`,
-    message: `You've used ${current} of ${limit} ${dimension}. ${remaining} remaining.`,
+    dimension,
+    dimensionLabel: 'Posts', // Use DIMENSION_LABELS mapping
+    percentage,
+    current,
+    limit,
+    remaining,
+    timestamp: event.timestamp,
+  };
+
+  // Send using the generic sendEmail method
+  await emailService.sendEmail({
+    to: [{ email: 'admin@example.com', name: 'Admin' }],
+    subject: emailService.getQuotaWarningSubject(emailData),
+    template: emailService.getQuotaWarningTemplate(percentage),
+    templateData: emailData,
   });
 
   // Log for analytics
@@ -229,11 +254,8 @@ quotaService.on('quota:warning', async (event: QuotaWarningEvent) => {
 quotaService.on('quota:exceeded', async (event) => {
   const { organizationId, dimension } = event;
 
-  // Alert owner immediately
-  await emailService.sendQuotaExceeded({
-    organizationId,
-    dimension,
-  });
+  // Handle quota exceeded (implement as needed)
+  console.log(`Quota exceeded for org ${organizationId}: ${dimension}`);
 
   // Create support ticket if Enterprise
   const org = await getOrganization(organizationId);
@@ -337,13 +359,17 @@ async checkAndWarn(orgId: number, dimension: QuotaDimension): Promise<void> {
 
 **Integration with EmailService**:
 ```typescript
-// EmailService subscribes to quota warnings
+// Initialize and subscribe EmailService to quota warnings (done in index.ts)
+import { emailService } from './services/EmailService';
+import { quotaService } from './services/QuotaService';
+
+emailService.initialize();
 emailService.subscribeToQuotaWarnings(quotaService);
 
-// Automatically handles quota:warning events
-quotaService.on('quota:warning', (event) => {
-  this.handleQuotaWarning(event);
-});
+// EmailService internally handles quota:warning events and:
+// - Logs warning with human-readable labels
+// - Emits 'email:quota_warning_sent' for tracking/testing
+// - Ready for AWS SES integration (SF-013)
 ```
 
 ### Quota Dimensions and Reset Policies
