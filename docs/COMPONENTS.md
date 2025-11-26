@@ -786,8 +786,9 @@ const rowsUpdated = await quotaService.resetAllMonthlyQuotas();
 The QuotaService includes a spam-prevention mechanism for quota warnings:
 - Warnings are emitted only once per threshold per org/dimension
 - Warning cache is cleared on quota reset or limit override
+- Warning cache is cleared on global reset (`resetAllMonthlyQuotas`)
 - `checkAndWarn(orgId, dimension)` method for manual warning checks
-- `wasWarningSent()`, `markWarningSent()`, `clearWarnings()` for cache management
+- `wasWarningSent()`, `markWarningSent()`, `clearWarnings()`, `clearAllWarnings()` for cache management
 
 **Integration Points**:
 - Uses SF-001 database schema (usage_quotas table)

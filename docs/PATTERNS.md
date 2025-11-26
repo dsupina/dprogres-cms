@@ -293,6 +293,13 @@ clearWarnings(orgId: number, dimension?: QuotaDimension): void {
 }
 
 /**
+ * Clear all warnings across all organizations (on global quota reset)
+ */
+clearAllWarnings(): void {
+  this.warningCache.clear();
+}
+
+/**
  * Check and emit warnings with spam prevention
  */
 async checkAndWarn(orgId: number, dimension: QuotaDimension): Promise<void> {
@@ -323,6 +330,7 @@ async checkAndWarn(orgId: number, dimension: QuotaDimension): Promise<void> {
 **Key Features**:
 - Warnings only emitted once per threshold per org/dimension
 - Cache cleared on quota reset (`resetMonthlyQuotas`)
+- Cache cleared on global reset (`resetAllMonthlyQuotas`) - critical for monthly cron
 - Cache cleared on limit change (`setQuotaOverride`)
 - Highest applicable threshold emitted first (95% before 90%)
 - Warning data includes `remaining` quota for user-friendly messaging
