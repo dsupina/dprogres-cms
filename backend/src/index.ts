@@ -26,9 +26,16 @@ let otelSDK: Awaited<ReturnType<typeof initializeTelemetry>> | null = null;
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
     });
 
+    // Start background jobs AFTER server is listening (SF-011)
+    const { startAllJobs, stopAllJobs } = await import('./jobs');
+    const jobs = startAllJobs();
+
     // Graceful shutdown handler (SF-011)
     const gracefulShutdown = (signal: string) => {
       console.log(`\n[Server] ${signal} received, shutting down gracefully...`);
+
+      // Stop background jobs first
+      stopAllJobs(jobs);
 
       server.close(() => {
         console.log('[Server] HTTP server closed');
