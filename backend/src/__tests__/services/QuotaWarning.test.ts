@@ -272,6 +272,20 @@ describe('QuotaService Warning System (SF-012)', () => {
       expect(quotaService.wasWarningSent(1, 'sites', 90)).toBe(false);
       expect(quotaService.wasWarningSent(2, 'posts', 80)).toBe(true);
     });
+
+    it('clearAllWarnings should clear warnings for all organizations', () => {
+      quotaService.markWarningSent(1, 'posts', 80);
+      quotaService.markWarningSent(1, 'sites', 90);
+      quotaService.markWarningSent(2, 'posts', 80);
+      quotaService.markWarningSent(3, 'api_calls', 95);
+
+      quotaService.clearAllWarnings();
+
+      expect(quotaService.wasWarningSent(1, 'posts', 80)).toBe(false);
+      expect(quotaService.wasWarningSent(1, 'sites', 90)).toBe(false);
+      expect(quotaService.wasWarningSent(2, 'posts', 80)).toBe(false);
+      expect(quotaService.wasWarningSent(3, 'api_calls', 95)).toBe(false);
+    });
   });
 
   describe('Warning Event Data', () => {
@@ -372,6 +386,31 @@ describe('QuotaService Warning System (SF-012)', () => {
 
       // Warning should be cleared
       expect(quotaService.wasWarningSent(1, 'api_calls', 80)).toBe(false);
+    });
+
+    it('should clear ALL warnings when global monthly quota reset is performed', async () => {
+      // Mark warnings for multiple orgs and dimensions
+      quotaService.markWarningSent(1, 'api_calls', 80);
+      quotaService.markWarningSent(1, 'api_calls', 90);
+      quotaService.markWarningSent(2, 'api_calls', 95);
+      quotaService.markWarningSent(3, 'posts', 80);
+
+      expect(quotaService.wasWarningSent(1, 'api_calls', 80)).toBe(true);
+      expect(quotaService.wasWarningSent(2, 'api_calls', 95)).toBe(true);
+      expect(quotaService.wasWarningSent(3, 'posts', 80)).toBe(true);
+
+      // Mock successful global quota reset
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ rows_updated: 50 }],
+      });
+
+      await quotaService.resetAllMonthlyQuotas();
+
+      // ALL warnings should be cleared so they re-arm for the new period
+      expect(quotaService.wasWarningSent(1, 'api_calls', 80)).toBe(false);
+      expect(quotaService.wasWarningSent(1, 'api_calls', 90)).toBe(false);
+      expect(quotaService.wasWarningSent(2, 'api_calls', 95)).toBe(false);
+      expect(quotaService.wasWarningSent(3, 'posts', 80)).toBe(false);
     });
   });
 

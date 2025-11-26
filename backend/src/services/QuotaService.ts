@@ -157,6 +157,13 @@ export class QuotaService extends EventEmitter {
   }
 
   /**
+   * Clear all warnings across all organizations (called on global quota reset)
+   */
+  clearAllWarnings(): void {
+    this.warningCache.clear();
+  }
+
+  /**
    * Check quota status and emit warnings at thresholds (80%, 90%, 95%)
    * Only emits one warning per threshold to prevent spam
    */
@@ -579,6 +586,9 @@ export class QuotaService extends EventEmitter {
     try {
       const { rows } = await pool.query('SELECT reset_monthly_quotas() as rows_updated');
       const rowsUpdated = rows[0].rows_updated;
+
+      // Clear all warning cache so warnings re-arm for the new period (SF-012 fix)
+      this.clearAllWarnings();
 
       // Emit global reset event
       this.emit('quota:global_reset', {
