@@ -15,11 +15,13 @@ import { CronJob } from 'cron';
 import { quotaService } from '../services/QuotaService';
 import { trace, context, SpanStatusCode } from '../config/telemetry';
 
-// Configuration
-const CRON_SCHEDULE = process.env.QUOTA_RESET_SCHEDULE || '0 0 * * *'; // Daily at 00:00 UTC
+// Configuration - static values only
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 5000; // 5 seconds base delay
-const ENABLED = process.env.QUOTA_RESET_ENABLED !== 'false'; // Enabled by default
+
+// Dynamic config getters - read env vars at call time for testability and runtime changes
+const getSchedule = (): string => process.env.QUOTA_RESET_SCHEDULE || '0 0 * * *'; // Daily at 00:00 UTC
+const isEnabled = (): boolean => process.env.QUOTA_RESET_ENABLED !== 'false'; // Enabled by default
 
 // Get tracer for manual instrumentation
 const tracer = trace.getTracer('quota-reset-job');
@@ -139,15 +141,19 @@ async function executeQuotaReset(): Promise<void> {
  * Create and configure the cron job
  */
 export function createQuotaResetJob(): CronJob | null {
-  if (!ENABLED) {
+  // Read env vars at call time for testability and runtime configuration
+  const schedule = getSchedule();
+  const enabled = isEnabled();
+
+  if (!enabled) {
     console.log('[QuotaReset] Job disabled via QUOTA_RESET_ENABLED=false');
     return null;
   }
 
-  console.log(`[QuotaReset] Initializing cron job with schedule: ${CRON_SCHEDULE}`);
+  console.log(`[QuotaReset] Initializing cron job with schedule: ${schedule}`);
 
   const job = new CronJob(
-    CRON_SCHEDULE,
+    schedule,
     async () => {
       await executeQuotaReset();
     },
@@ -175,7 +181,7 @@ export function startQuotaResetJob(): CronJob | null {
 
   job.start();
   console.log('[QuotaReset] Job started');
-  console.log(`[QuotaReset] Schedule: ${CRON_SCHEDULE} (UTC)`);
+  console.log(`[QuotaReset] Schedule: ${getSchedule()} (UTC)`);
   console.log(`[QuotaReset] Next run: ${job.nextDate().toISO()}`);
 
   return job;
