@@ -114,6 +114,17 @@ export class QuotaService extends EventEmitter {
    * Cache to track sent warnings and prevent spam
    * Key format: `${orgId}:${dimension}:${threshold}`
    * Value: timestamp when warning was sent
+   *
+   * LIMITATION: This in-memory cache is per-process only.
+   * In multi-instance deployments, each Node process maintains its own state,
+   * which could lead to duplicate warnings after restarts or across instances.
+   *
+   * TODO (SF-013): For production multi-instance deployments, migrate to Redis
+   * or database-backed cache to ensure warnings are truly sent only once.
+   * For now, this is acceptable because:
+   * 1. Monthly reset clears the cache anyway
+   * 2. Duplicate warnings are better than no warnings
+   * 3. Single-instance deployments work correctly
    */
   private warningCache: Map<string, Date> = new Map();
 
@@ -677,6 +688,10 @@ export class QuotaService extends EventEmitter {
       // Clear warning cache when limit changes (SF-012)
       // This allows warnings to fire again based on new limit
       this.clearWarnings(organizationId, dimension);
+
+      // Immediately check and emit warnings if new limit puts usage over threshold (SF-012)
+      // This handles the case where admin lowers limit below current usage
+      await this.checkAndWarn(organizationId, dimension, quotaStatus);
 
       // Emit override set event
       this.emit('quota:override_set', {

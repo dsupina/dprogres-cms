@@ -412,6 +412,40 @@ describe('QuotaService Warning System (SF-012)', () => {
       expect(quotaService.wasWarningSent(2, 'api_calls', 95)).toBe(false);
       expect(quotaService.wasWarningSent(3, 'posts', 80)).toBe(false);
     });
+
+    it('should emit warning immediately when quota limit is lowered below current usage', async () => {
+      const warningEvents: QuotaWarningEvent[] = [];
+      quotaService.on('quota:warning', (event: QuotaWarningEvent) => {
+        warningEvents.push(event);
+      });
+
+      // Mock the UPDATE query for setQuotaOverride
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            dimension: 'posts',
+            current_usage: 90, // 90 used
+            quota_limit: 100, // New limit is 100, so 90% used
+            period_start: new Date(),
+            period_end: null,
+            last_reset_at: null,
+          },
+        ],
+      });
+
+      // Lower limit from 200 to 100, putting usage at 90%
+      await quotaService.setQuotaOverride({
+        organizationId: 1,
+        dimension: 'posts',
+        newLimit: 100,
+      });
+
+      // Should emit 90% warning immediately
+      expect(warningEvents.length).toBe(1);
+      expect(warningEvents[0].percentage).toBe(90);
+      expect(warningEvents[0].current).toBe(90);
+      expect(warningEvents[0].limit).toBe(100);
+    });
   });
 
   describe('Edge Cases', () => {
