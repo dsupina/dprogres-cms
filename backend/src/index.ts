@@ -20,6 +20,12 @@ let otelSDK: Awaited<ReturnType<typeof initializeTelemetry>> | null = null;
     // This ensures Express and other modules are patched by OTEL auto-instrumentations
     const { default: app } = await import('./app');
 
+    // Wire up EmailService to QuotaService for quota warning notifications (SF-012)
+    const { emailService } = await import('./services/EmailService');
+    const { quotaService } = await import('./services/QuotaService');
+    emailService.initialize();
+    emailService.subscribeToQuotaWarnings(quotaService);
+
     // Start server
     const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);

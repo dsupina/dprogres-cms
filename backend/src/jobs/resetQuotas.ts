@@ -17,11 +17,15 @@ import { trace, context, SpanStatusCode } from '../config/telemetry';
 
 // Configuration - static values only
 const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 5000; // 5 seconds base delay
+const DEFAULT_RETRY_DELAY_MS = 5000; // 5 seconds base delay
 
 // Dynamic config getters - read env vars at call time for testability and runtime changes
 const getSchedule = (): string => process.env.QUOTA_RESET_SCHEDULE || '0 0 * * *'; // Daily at 00:00 UTC
 const isEnabled = (): boolean => process.env.QUOTA_RESET_ENABLED !== 'false'; // Enabled by default
+const getRetryDelay = (): number => {
+  const envDelay = process.env.QUOTA_RESET_RETRY_DELAY_MS;
+  return envDelay ? parseInt(envDelay, 10) : DEFAULT_RETRY_DELAY_MS;
+};
 
 // Get tracer for manual instrumentation
 const tracer = trace.getTracer('quota-reset-job');
@@ -33,8 +37,9 @@ const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(r
 
 /**
  * Execute quota reset with retry logic and OTEL tracing
+ * Exported for direct testing (bypasses cron's async handling)
  */
-async function executeQuotaReset(): Promise<void> {
+export async function executeQuotaReset(): Promise<void> {
   const span = tracer.startSpan('quota_reset.execute');
   const ctx = trace.setSpan(context.active(), span);
 
@@ -109,7 +114,8 @@ async function executeQuotaReset(): Promise<void> {
 
         if (attempt < MAX_RETRIES) {
           // Exponential backoff: delay = base * 2^(attempt-1)
-          const delayMs = RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+          const baseDelay = getRetryDelay();
+          const delayMs = baseDelay * Math.pow(2, attempt - 1);
           console.log(`[QuotaReset] Retrying in ${delayMs}ms...`);
           await sleep(delayMs);
         }

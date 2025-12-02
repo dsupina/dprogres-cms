@@ -139,7 +139,8 @@ describe('QuotaService', () => {
         rows: [{ allowed: true }],
       });
 
-      // Mock getQuotaStatusForDimension call
+      // Mock getQuotaStatusForDimension call in incrementQuota
+      // (checkAndWarn reuses this status, no duplicate query needed)
       mockPoolQuery.mockResolvedValueOnce({
         rows: [
           {
@@ -213,7 +214,7 @@ describe('QuotaService', () => {
       );
     });
 
-    it('should emit approaching_limit event at 80% threshold', async () => {
+    it('should emit quota:warning event at 80% threshold (SF-012)', async () => {
       // Mock quota existence check
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ current_usage: 80, quota_limit: 100 }],
@@ -223,6 +224,8 @@ describe('QuotaService', () => {
         rows: [{ allowed: true }],
       });
 
+      // Mock for getQuotaStatusForDimension in incrementQuota
+      // (checkAndWarn reuses this status, no duplicate query needed)
       mockPoolQuery.mockResolvedValueOnce({
         rows: [
           {
@@ -237,7 +240,7 @@ describe('QuotaService', () => {
       });
 
       const eventSpy = jest.fn();
-      quotaService.on('quota:approaching_limit', eventSpy);
+      quotaService.on('quota:warning', eventSpy);
 
       await quotaService.incrementQuota({
         organizationId: 1,
@@ -248,11 +251,12 @@ describe('QuotaService', () => {
         expect.objectContaining({
           percentage: 80,
           dimension: 'posts',
+          remaining: 15,
         })
       );
     });
 
-    it('should emit approaching_limit event at 90% threshold', async () => {
+    it('should emit quota:warning event at 90% threshold (SF-012)', async () => {
       // Mock quota existence check
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ current_usage: 90, quota_limit: 100 }],
@@ -262,6 +266,8 @@ describe('QuotaService', () => {
         rows: [{ allowed: true }],
       });
 
+      // Mock for getQuotaStatusForDimension in incrementQuota
+      // (checkAndWarn reuses this status, no duplicate query needed)
       mockPoolQuery.mockResolvedValueOnce({
         rows: [
           {
@@ -276,7 +282,7 @@ describe('QuotaService', () => {
       });
 
       const eventSpy = jest.fn();
-      quotaService.on('quota:approaching_limit', eventSpy);
+      quotaService.on('quota:warning', eventSpy);
 
       await quotaService.incrementQuota({
         organizationId: 1,
@@ -287,11 +293,12 @@ describe('QuotaService', () => {
         expect.objectContaining({
           percentage: 90,
           dimension: 'posts',
+          remaining: 8,
         })
       );
     });
 
-    it('should emit approaching_limit event at 95% threshold', async () => {
+    it('should emit quota:warning event at 95% threshold (SF-012)', async () => {
       // Mock quota existence check
       mockPoolQuery.mockResolvedValueOnce({
         rows: [{ current_usage: 95, quota_limit: 100 }],
@@ -301,6 +308,8 @@ describe('QuotaService', () => {
         rows: [{ allowed: true }],
       });
 
+      // Mock for getQuotaStatusForDimension in incrementQuota
+      // (checkAndWarn reuses this status, no duplicate query needed)
       mockPoolQuery.mockResolvedValueOnce({
         rows: [
           {
@@ -315,7 +324,7 @@ describe('QuotaService', () => {
       });
 
       const eventSpy = jest.fn();
-      quotaService.on('quota:approaching_limit', eventSpy);
+      quotaService.on('quota:warning', eventSpy);
 
       await quotaService.incrementQuota({
         organizationId: 1,
@@ -326,6 +335,7 @@ describe('QuotaService', () => {
         expect.objectContaining({
           percentage: 95,
           dimension: 'posts',
+          remaining: 3,
         })
       );
     });
@@ -340,6 +350,8 @@ describe('QuotaService', () => {
         rows: [{ allowed: true }],
       });
 
+      // Mock for getQuotaStatusForDimension in incrementQuota
+      // (checkAndWarn reuses this status, no duplicate query needed)
       mockPoolQuery.mockResolvedValueOnce({
         rows: [
           {
@@ -367,6 +379,7 @@ describe('QuotaService', () => {
           dimension: 'posts',
           current: 100,
           limit: 100,
+          remaining: 0,
         })
       );
     });
