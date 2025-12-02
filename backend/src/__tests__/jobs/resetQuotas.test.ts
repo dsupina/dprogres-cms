@@ -3,7 +3,7 @@
  * SF-011: Unit and integration tests for monthly quota reset job
  */
 
-import { createQuotaResetJob } from '../../jobs/resetQuotas';
+import { createQuotaResetJob, executeQuotaReset } from '../../jobs/resetQuotas';
 import { quotaService } from '../../services/QuotaService';
 import type { ServiceResponse } from '../../types/versioning';
 
@@ -45,6 +45,12 @@ describe('SF-011: Reset Quotas Cron Job', () => {
     // Clear environment variables
     delete process.env.QUOTA_RESET_ENABLED;
     delete process.env.QUOTA_RESET_SCHEDULE;
+    delete process.env.QUOTA_RESET_RETRY_DELAY_MS;
+  });
+
+  afterEach(() => {
+    // Clean up environment variables
+    delete process.env.QUOTA_RESET_RETRY_DELAY_MS;
   });
 
   describe('createQuotaResetJob', () => {
@@ -118,40 +124,38 @@ describe('SF-011: Reset Quotas Cron Job', () => {
     });
 
     it('should retry on failure', async () => {
+      // Use minimal retry delay for fast testing (1ms base = 1ms, 2ms delays)
+      process.env.QUOTA_RESET_RETRY_DELAY_MS = '1';
+
       // First two attempts fail, third succeeds
       (quotaService.resetAllMonthlyQuotas as jest.Mock)
         .mockResolvedValueOnce({ success: false, error: 'Database error' })
         .mockResolvedValueOnce({ success: false, error: 'Database error' })
         .mockResolvedValueOnce({ success: true, data: 3 });
 
-      const job = createQuotaResetJob();
-      expect(job).not.toBeNull();
+      // Call executeQuotaReset directly to bypass cron's async handling
+      await executeQuotaReset();
 
-      if (job) {
-        await job.fireOnTick();
-
-        // Should have retried 3 times
-        expect(quotaService.resetAllMonthlyQuotas).toHaveBeenCalledTimes(3);
-      }
-    }, 30000); // Increase timeout for retry delays
+      // Should have retried 3 times
+      expect(quotaService.resetAllMonthlyQuotas).toHaveBeenCalledTimes(3);
+    });
 
     it('should stop retrying after max attempts', async () => {
+      // Use minimal retry delay for fast testing (1ms base = 1ms, 2ms delays)
+      process.env.QUOTA_RESET_RETRY_DELAY_MS = '1';
+
       // All attempts fail
       (quotaService.resetAllMonthlyQuotas as jest.Mock).mockResolvedValue({
         success: false,
         error: 'Persistent database error',
       });
 
-      const job = createQuotaResetJob();
-      expect(job).not.toBeNull();
+      // Call executeQuotaReset directly to bypass cron's async handling
+      await executeQuotaReset();
 
-      if (job) {
-        await job.fireOnTick();
-
-        // Should have tried 3 times (MAX_RETRIES = 3)
-        expect(quotaService.resetAllMonthlyQuotas).toHaveBeenCalledTimes(3);
-      }
-    }, 30000); // Increase timeout for retry delays
+      // Should have tried 3 times (MAX_RETRIES = 3)
+      expect(quotaService.resetAllMonthlyQuotas).toHaveBeenCalledTimes(3);
+    });
 
     it('should handle exceptions gracefully', async () => {
       (quotaService.resetAllMonthlyQuotas as jest.Mock).mockRejectedValueOnce(
