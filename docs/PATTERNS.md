@@ -203,13 +203,14 @@ $$ LANGUAGE plpgsql;
 ```
 
 ### Event-Driven Quota Monitoring
-**Proactive threshold notifications with spam prevention (SF-012)**
+**Proactive threshold notifications with spam prevention (SF-012, SF-013)**
 
 ```typescript
 import { emailService } from './services/EmailService';
 import { quotaService, QuotaWarningEvent } from './services/QuotaService';
 
 // RECOMMENDED: Use EmailService's built-in subscription (handles warnings automatically)
+// EmailService initializes with SendGrid API (from SENDGRID_API_KEY env var)
 emailService.initialize();
 emailService.subscribeToQuotaWarnings(quotaService);
 
@@ -217,6 +218,7 @@ emailService.subscribeToQuotaWarnings(quotaService);
 // 1. Listens for quota:warning events
 // 2. Logs warnings with human-readable dimension labels
 // 3. Emits email:quota_warning_sent for tracking
+// 4. Sends emails via SendGrid in production (logs in test mode)
 
 // ALTERNATIVE: Manual event handling for custom logic
 quotaService.on('quota:warning', async (event: QuotaWarningEvent) => {
@@ -226,7 +228,7 @@ quotaService.on('quota:warning', async (event: QuotaWarningEvent) => {
   const emailData = {
     organizationId,
     dimension,
-    dimensionLabel: 'Posts', // Use DIMENSION_LABELS mapping
+    dimensionLabel: emailService.getDimensionLabel(dimension),
     percentage,
     current,
     limit,
@@ -234,13 +236,21 @@ quotaService.on('quota:warning', async (event: QuotaWarningEvent) => {
     timestamp: event.timestamp,
   };
 
-  // Send using the generic sendEmail method
-  await emailService.sendEmail({
+  // Generate HTML email with responsive design
+  const html = emailService.generateQuotaWarningHtml(emailData);
+  const text = emailService.generateQuotaWarningText(emailData);
+
+  // Send via SendGrid (or log in test mode)
+  const result = await emailService.sendEmail({
     to: [{ email: 'admin@example.com', name: 'Admin' }],
     subject: emailService.getQuotaWarningSubject(emailData),
-    template: emailService.getQuotaWarningTemplate(percentage),
-    templateData: emailData,
+    html,
+    text,
   });
+
+  if (!result.success) {
+    console.error('Failed to send quota warning email:', result.error);
+  }
 
   // Log for analytics
   await analytics.track('quota_threshold_reached', {
@@ -357,19 +367,32 @@ async checkAndWarn(orgId: number, dimension: QuotaDimension): Promise<void> {
 - Highest applicable threshold emitted first (95% before 90%)
 - Warning data includes `remaining` quota for user-friendly messaging
 
-**Integration with EmailService**:
+**Integration with EmailService (SF-013)**:
 ```typescript
 // Initialize and subscribe EmailService to quota warnings (done in index.ts)
 import { emailService } from './services/EmailService';
 import { quotaService } from './services/QuotaService';
 
+// EmailService automatically detects SENDGRID_API_KEY from environment
+// In development (no API key), runs in test mode (logs instead of sending)
 emailService.initialize();
 emailService.subscribeToQuotaWarnings(quotaService);
 
 // EmailService internally handles quota:warning events and:
 // - Logs warning with human-readable labels
-// - Emits 'email:quota_warning_sent' for tracking/testing
-// - Ready for AWS SES integration (SF-013)
+// - Generates responsive HTML email templates
+// - Sends via SendGrid API in production
+// - Emits 'email:sent' or 'email:failed' for tracking
+// - Emits 'email:quota_warning_sent' for testing
+
+// Listen for delivery events
+emailService.on('email:sent', (data) => {
+  console.log(`Email sent: ${data.messageId} to ${data.to.join(', ')}`);
+});
+
+emailService.on('email:failed', (data) => {
+  console.error(`Email failed: ${data.error}`);
+});
 ```
 
 ### Quota Dimensions and Reset Policies
@@ -2135,3 +2158,254 @@ describe('RBAC Middleware', () => {
 - Easily testable with mocks
 - Scalable to Redis for distributed systems
 - Comprehensive audit trail via events
+
+---
+
+## SendGrid Email Integration Pattern (SF-013)
+
+### Transactional Email Service
+**Purpose**: Reliable email delivery via SendGrid with test mode support
+
+```typescript
+import { emailService, EmailSendResult } from './services/EmailService';
+
+// Initialize (auto-detects SENDGRID_API_KEY from environment)
+emailService.initialize();
+
+// Or initialize with explicit config
+emailService.initialize({
+  apiKey: 'SG.your-api-key',
+  fromEmail: 'noreply@dprogres.com',
+  fromName: 'DProgres CMS',
+  testMode: false, // Set true for development
+});
+```
+
+### Test Mode Pattern
+**Automatically enabled when no API key or in development**
+
+```typescript
+// Test mode behavior:
+// 1. Logs email details instead of sending
+// 2. Returns success with mock messageId
+// 3. Emits events for testing
+// 4. Records delivery logs
+
+const result = await emailService.sendEmail({
+  to: [{ email: 'test@example.com' }],
+  subject: 'Test',
+  html: '<p>Test content</p>',
+});
+
+// Check if running in test mode
+if (emailService.isTestMode()) {
+  console.log('Running in test mode - emails will be logged');
+}
+
+// Access delivery logs for testing
+const logs = emailService.getDeliveryLogs(50);
+expect(logs[0].status).toBe('sent');
+emailService.clearDeliveryLogs(); // Clear after test
+```
+
+### HTML Email with Plain Text Fallback
+**Always provide both for accessibility**
+
+```typescript
+const result = await emailService.sendEmail({
+  to: [{ email: 'user@example.com', name: 'John Doe' }],
+  subject: 'Welcome to DProgres CMS',
+  html: `
+    <h1>Welcome, John!</h1>
+    <p>Your account has been created.</p>
+  `,
+  text: 'Welcome, John! Your account has been created.',
+});
+```
+
+### Dynamic Template Pattern
+**Use SendGrid dynamic templates for complex emails**
+
+```typescript
+const result = await emailService.sendEmail({
+  to: [{ email: 'user@example.com' }],
+  subject: 'Your Weekly Report',
+  templateId: 'd-xxxxxxxxxxxxx', // SendGrid template ID
+  dynamicData: {
+    firstName: 'John',
+    reportDate: new Date().toLocaleDateString(),
+    metrics: {
+      views: 1234,
+      posts: 5,
+    },
+  },
+});
+```
+
+### Event-Driven Email Tracking
+**Listen for delivery events**
+
+```typescript
+// Track sent emails
+emailService.on('email:sent', (data) => {
+  console.log(`Email sent: ${data.messageId}`);
+  console.log(`Recipients: ${data.to.join(', ')}`);
+  if (data.testMode) {
+    console.log('(Test mode - not actually sent)');
+  }
+});
+
+// Track failures
+emailService.on('email:failed', (data) => {
+  console.error(`Email failed: ${data.error}`);
+  await alertService.notify({
+    type: 'email_failure',
+    recipients: data.to,
+    error: data.error,
+  });
+});
+```
+
+### Quota Warning Email Pattern
+**Built-in templates for quota notifications (SF-012)**
+
+```typescript
+import { emailService, QuotaWarningEmailData } from './services/EmailService';
+import { quotaService } from './services/QuotaService';
+
+// Option 1: Automatic subscription (recommended)
+emailService.initialize();
+emailService.subscribeToQuotaWarnings(quotaService);
+
+// Option 2: Manual handling for custom logic
+quotaService.on('quota:warning', async (event) => {
+  const emailData: QuotaWarningEmailData = {
+    organizationId: event.organizationId,
+    dimension: event.dimension,
+    dimensionLabel: emailService.getDimensionLabel(event.dimension),
+    percentage: event.percentage,
+    current: event.current,
+    limit: event.limit,
+    remaining: event.remaining,
+    timestamp: event.timestamp,
+  };
+
+  // Generate responsive HTML email
+  const html = emailService.generateQuotaWarningHtml(emailData);
+  const text = emailService.generateQuotaWarningText(emailData);
+
+  // Send to organization admins
+  const admins = await getOrganizationAdmins(event.organizationId);
+  await emailService.sendEmail({
+    to: admins.map(a => ({ email: a.email, name: a.name })),
+    subject: emailService.getQuotaWarningSubject(emailData),
+    html,
+    text,
+  });
+});
+```
+
+### CC/BCC and Reply-To Pattern
+**Support for additional recipients**
+
+```typescript
+await emailService.sendEmail({
+  to: [{ email: 'primary@example.com', name: 'Primary Contact' }],
+  cc: [
+    { email: 'manager@example.com', name: 'Manager' },
+    { email: 'team@example.com' },
+  ],
+  bcc: [{ email: 'audit@example.com' }],
+  replyTo: 'support@example.com',
+  subject: 'Team Update',
+  html: '<p>Update content</p>',
+});
+```
+
+### Error Handling Pattern
+**Graceful degradation with detailed error info**
+
+```typescript
+const result = await emailService.sendEmail({
+  to: [{ email: 'user@example.com' }],
+  subject: 'Test',
+  html: '<p>Content</p>',
+});
+
+if (!result.success) {
+  // result.error contains user-friendly error message
+  // result.statusCode contains HTTP status from SendGrid
+  console.error(`Email failed: ${result.error}`);
+
+  // Log for debugging
+  if (result.statusCode === 401) {
+    console.error('Invalid API key - check SENDGRID_API_KEY');
+  } else if (result.statusCode === 429) {
+    console.error('Rate limited - consider retry with backoff');
+  }
+}
+```
+
+### Environment Configuration
+**Required environment variables**
+
+```bash
+# SendGrid Configuration (SF-013)
+SENDGRID_API_KEY=SG.your-api-key-here  # Required for production
+SENDGRID_FROM_EMAIL=noreply@dprogres.com
+SENDGRID_FROM_NAME=DProgres CMS
+```
+
+### Testing Pattern
+**Mock SendGrid for unit tests**
+
+```typescript
+// In test file
+const mockSend = jest.fn();
+jest.mock('@sendgrid/mail', () => ({
+  setApiKey: jest.fn(),
+  send: mockSend,
+  default: { setApiKey: jest.fn(), send: mockSend },
+}));
+
+describe('EmailService', () => {
+  let emailService: EmailService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    emailService = new EmailService();
+    emailService.initialize({ apiKey: 'SG.test', testMode: false });
+  });
+
+  it('should send email via SendGrid', async () => {
+    mockSend.mockResolvedValueOnce([{
+      statusCode: 202,
+      headers: { 'x-message-id': 'test-123' },
+    }, {}]);
+
+    const result = await emailService.sendEmail({
+      to: [{ email: 'test@example.com' }],
+      subject: 'Test',
+      html: '<p>Test</p>',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.messageId).toBe('test-123');
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: [{ email: 'test@example.com', name: undefined }],
+        subject: 'Test',
+        html: '<p>Test</p>',
+      })
+    );
+  });
+});
+```
+
+**Benefits**:
+- **Automatic test mode**: No API key needed in development
+- **Event-driven tracking**: Monitor delivery success/failure
+- **Built-in templates**: Quota warning emails ready to use
+- **Delivery logging**: Track all email attempts
+- **Type-safe**: Full TypeScript support
+- **Graceful errors**: User-friendly error messages

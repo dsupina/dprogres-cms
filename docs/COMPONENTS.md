@@ -817,45 +817,101 @@ The QuotaService includes a spam-prevention mechanism for quota warnings:
 
 ---
 
-#### Email Service (SF-012)
-**Purpose**: Email notifications for quota warnings and other system events
+#### Email Service (SF-012, SF-013)
+**Purpose**: Transactional email notifications via SendGrid for quota warnings and system events
 **Location**: `backend/src/services/EmailService.ts`
-**Status**: ✅ Completed (November 2025)
+**Status**: ✅ Completed with SendGrid integration (December 2025)
 
 ```typescript
 // Usage Example
 import { emailService } from '../services/EmailService';
 import { quotaService } from '../services/QuotaService';
 
-// Initialize and subscribe to quota warnings
+// Initialize with SendGrid API key (from environment or config)
 emailService.initialize();
+// Or with explicit config:
+emailService.initialize({
+  apiKey: 'SG.your-api-key',
+  fromEmail: 'noreply@yourapp.com',
+  fromName: 'Your App',
+  testMode: false, // Set true for development
+});
+
+// Subscribe to quota warnings (automatic email on threshold)
 emailService.subscribeToQuotaWarnings(quotaService);
 
-// Email service automatically handles quota:warning events
-// and sends notifications to organization admins
-
-// Manual email sending (stub implementation)
+// Send simple HTML email
 const result = await emailService.sendEmail({
-  to: [{ email: 'admin@example.com', name: 'Admin' }],
-  subject: 'Quota Warning',
-  template: 'quota_warning_80',
-  templateData: { /* ... */ },
+  to: [{ email: 'user@example.com', name: 'John' }],
+  subject: 'Welcome!',
+  html: '<h1>Welcome to DProgres CMS</h1>',
+  text: 'Welcome to DProgres CMS', // Optional fallback
 });
+
+// Send email with SendGrid dynamic template
+const templateResult = await emailService.sendEmail({
+  to: [{ email: 'user@example.com' }],
+  subject: 'Your Report',
+  templateId: 'd-xxxxx', // SendGrid template ID
+  dynamicData: { firstName: 'John', reportUrl: '...' },
+});
+
+// Send with CC/BCC
+await emailService.sendEmail({
+  to: [{ email: 'primary@example.com' }],
+  cc: [{ email: 'cc@example.com' }],
+  bcc: [{ email: 'bcc@example.com' }],
+  subject: 'Team Update',
+  html: '<p>Update content</p>',
+  replyTo: 'support@example.com',
+});
+
+// Generate quota warning email content
+const warningData = {
+  organizationId: 1,
+  dimension: 'posts',
+  dimensionLabel: 'Posts',
+  percentage: 90,
+  current: 90,
+  limit: 100,
+  remaining: 10,
+  timestamp: new Date(),
+};
+const html = emailService.generateQuotaWarningHtml(warningData);
+const text = emailService.generateQuotaWarningText(warningData);
+
+// Access delivery logs
+const logs = emailService.getDeliveryLogs(50); // Last 50
+emailService.clearDeliveryLogs(); // Clear logs
 ```
 
 **Key Features**:
+- **SendGrid Integration**: Full SendGrid API v3 support for transactional emails
+- **Test Mode**: Automatically enabled in development (logs instead of sending)
+- **Dynamic Templates**: Support for SendGrid dynamic template system
 - **Event-Driven Architecture**: Listens to `quota:warning` events from QuotaService
-- **Template-Based Emails**: Three templates for 80%, 90%, 95% thresholds
-- **Human-Readable Labels**: Converts dimension codes to user-friendly names
-- **Stub Implementation**: Ready for integration with email providers (SendGrid, AWS SES, etc.)
-- **Event Emission**: Emits `email:quota_warning_sent` for tracking/testing
+- **Delivery Logging**: In-memory logging of all email attempts (up to 1000 entries)
+- **Graceful Error Handling**: Extracts user-friendly errors from SendGrid responses
+- **Multiple Recipients**: Support for to, cc, bcc fields
+- **HTML Email Templates**: Built-in responsive templates for quota warnings
 
 **Service Methods**:
-1. `initialize()` - Initialize the email service
-2. `subscribeToQuotaWarnings(quotaServiceEmitter)` - Subscribe to quota warning events
-3. `sendEmail(options)` - Send email (stub implementation)
-4. `getQuotaWarningSubject(data)` - Generate email subject
-5. `getQuotaWarningTemplate(percentage)` - Get template for percentage
+1. `initialize(config?)` - Initialize with optional SendGrid configuration
+2. `isTestMode()` - Check if running in test/stub mode
+3. `subscribeToQuotaWarnings(emitter)` - Subscribe to quota warning events
+4. `sendEmail(options)` - Send email via SendGrid or test mode
+5. `getDeliveryLogs(limit?)` - Get recent delivery logs
+6. `clearDeliveryLogs()` - Clear delivery log history
+7. `getQuotaWarningSubject(data)` - Generate email subject for quota warning
+8. `getQuotaWarningTemplate(percentage)` - Get template name for percentage
+9. `generateQuotaWarningHtml(data)` - Generate responsive HTML email
+10. `generateQuotaWarningText(data)` - Generate plain text email
+11. `getDimensionLabel(dimension)` - Get human-readable dimension name
+
+**Email Templates**:
+- **quota_warning_80**: Blue "Notice" styling, informational message
+- **quota_warning_90**: Orange "Warning" styling, action required
+- **quota_warning_95**: Red "Critical" styling, upgrade CTA button
 
 **Dimension Labels**:
 - `sites` → "Sites"
@@ -864,28 +920,38 @@ const result = await emailService.sendEmail({
 - `storage_bytes` → "Storage"
 - `api_calls` → "API Calls"
 
-**Lifecycle Events**:
-- `email:quota_warning_sent` - Fired when quota warning email is processed
+**Lifecycle Events Emitted**:
+- `email:sent` - Fired on successful email send (includes messageId, recipients)
+- `email:failed` - Fired on send failure (includes error, recipients)
+- `email:quota_warning_sent` - Fired when quota warning is processed
 
 **Exported Interfaces**:
+- `EmailTemplate` - All supported template types
 - `QuotaEmailTemplate` - Template types for quota warnings
-- `EmailRecipient` - Email recipient with name
-- `SendEmailOptions` - Options for sending email
-- `EmailSendResult` - Result of email send operation
-- `QuotaWarningEmailData` - Processed warning data for email
+- `EmailRecipient` - Recipient with email and optional name
+- `SendEmailOptions` - Full options for sendEmail method
+- `EmailSendResult` - Result with success, messageId, error, statusCode
+- `QuotaWarningEmailData` - Processed warning data for templates
+- `EmailDeliveryLog` - Delivery log entry structure
+- `EmailServiceConfig` - Configuration options for initialize
+
+**Environment Variables**:
+```bash
+SENDGRID_API_KEY=SG.your-api-key-here
+SENDGRID_FROM_EMAIL=noreply@dprogres.com
+SENDGRID_FROM_NAME=DProgres CMS
+```
 
 **Integration Points**:
+- SendGrid Mail API v3 (@sendgrid/mail package)
 - Subscribes to QuotaService `quota:warning` events
-- Ready for AWS SES, SendGrid, or other email provider integration
-- Uses QuotaWarningEvent from QuotaService
+- Uses ServiceResponse pattern for error handling
+- Auto-initializes on first sendEmail call if not initialized
 
-**Tests**: `backend/src/__tests__/services/QuotaWarning.test.ts` (EmailService section: 8 tests, 100% passing)
-
-**Future Enhancements** (SF-013):
-- Integration with actual email provider (AWS SES)
-- HTML email templates with branding
-- Organization admin lookup for recipients
-- Email delivery tracking and retry logic
+**Tests**:
+- `backend/src/__tests__/services/EmailService.test.ts` (41 tests, 100% passing)
+- `backend/src/__tests__/services/QuotaWarning.test.ts` (EmailService section: 8 tests, 100% passing)
+- **Total Coverage**: 49 tests covering initialization, validation, SendGrid integration, error handling, delivery logging, template generation
 
 ---
 
