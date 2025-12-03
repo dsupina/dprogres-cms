@@ -645,12 +645,25 @@ describe('EmailService (SF-012)', () => {
   });
 
   describe('Email Sending (Stub)', () => {
-    it('should return success for stub email send', async () => {
+    it('should return success for stub email send with html content', async () => {
+      // Quota warning emails should include generated HTML content
+      const warningData = {
+        organizationId: 1,
+        dimension: 'posts' as const,
+        dimensionLabel: 'Posts',
+        percentage: 80,
+        current: 80,
+        limit: 100,
+        remaining: 20,
+        timestamp: new Date(),
+      };
+
       const result = await emailService.sendEmail({
         to: [{ email: 'admin@example.com', name: 'Admin' }],
-        subject: 'Test Subject',
+        subject: emailService.getQuotaWarningSubject(warningData),
         template: 'quota_warning_80',
-        templateData: {},
+        html: emailService.generateQuotaWarningHtml(warningData),
+        text: emailService.generateQuotaWarningText(warningData),
       });
 
       expect(result.success).toBe(true);
