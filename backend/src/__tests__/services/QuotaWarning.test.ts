@@ -10,6 +10,14 @@ jest.mock('../../utils/database', () => ({
   },
 }));
 
+// Mock OrganizationService for EmailService
+const mockGetAdminEmails = jest.fn<() => Promise<any>>();
+jest.mock('../../services/OrganizationService', () => ({
+  organizationService: {
+    getAdminEmails: mockGetAdminEmails,
+  },
+}));
+
 // Import after mocks are defined
 import { QuotaService, QuotaWarningEvent } from '../../services/QuotaService';
 import { EmailService } from '../../services/EmailService';
@@ -20,6 +28,12 @@ describe('QuotaService Warning System (SF-012)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     quotaService = new QuotaService();
+
+    // Default mock for getAdminEmails - returns empty (no admins)
+    mockGetAdminEmails.mockResolvedValue({
+      success: true,
+      data: [],
+    });
   });
 
   describe('Spam Prevention', () => {
@@ -562,7 +576,7 @@ describe('EmailService (SF-012)', () => {
   });
 
   describe('Quota Warning Subscription', () => {
-    it('should subscribe to quota:warning events', () => {
+    it('should subscribe to quota:warning events', async () => {
       const quotaService = new QuotaService();
       const emailEvents: any[] = [];
 
@@ -584,6 +598,9 @@ describe('EmailService (SF-012)', () => {
       };
 
       quotaService.emit('quota:warning', warningEvent);
+
+      // Wait for async handleQuotaWarning to complete
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(emailEvents.length).toBe(1);
       expect(emailEvents[0].organizationId).toBe(1);

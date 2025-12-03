@@ -14,6 +14,14 @@ jest.mock('@sendgrid/mail', () => ({
   },
 }));
 
+// Mock OrganizationService
+const mockGetAdminEmails = jest.fn<() => Promise<any>>();
+jest.mock('../../services/OrganizationService', () => ({
+  organizationService: {
+    getAdminEmails: mockGetAdminEmails,
+  },
+}));
+
 // Import after mocks
 import {
   EmailService,
@@ -34,6 +42,12 @@ describe('EmailService (SF-013)', () => {
     delete process.env.SENDGRID_FROM_EMAIL;
     delete process.env.SENDGRID_FROM_NAME;
     process.env.NODE_ENV = 'test';
+
+    // Default mock for getAdminEmails - returns empty (no admins)
+    mockGetAdminEmails.mockResolvedValue({
+      success: true,
+      data: [],
+    });
   });
 
   afterEach(() => {
@@ -503,7 +517,7 @@ describe('EmailService (SF-013)', () => {
       quotaServiceEmitter = new EventEmitter();
     });
 
-    it('should subscribe to quota warnings', () => {
+    it('should subscribe to quota warnings and emit event', async () => {
       emailService.subscribeToQuotaWarnings(quotaServiceEmitter);
 
       const quotaWarningEvents: any[] = [];
@@ -519,9 +533,74 @@ describe('EmailService (SF-013)', () => {
         timestamp: new Date(),
       });
 
+      // Wait for async handleQuotaWarning to complete
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
       expect(quotaWarningEvents.length).toBe(1);
       expect(quotaWarningEvents[0].dimension).toBe('posts');
       expect(quotaWarningEvents[0].dimensionLabel).toBe('Posts');
+    });
+
+    it('should send email to admins when quota warning is triggered', async () => {
+      // Mock admin emails
+      mockGetAdminEmails.mockResolvedValue({
+        success: true,
+        data: [
+          { email: 'admin1@example.com', name: 'Admin One' },
+          { email: 'admin2@example.com', name: 'Admin Two' },
+        ],
+      });
+
+      emailService.subscribeToQuotaWarnings(quotaServiceEmitter);
+
+      const emailSentEvents: any[] = [];
+      emailService.on('email:sent', (data) => emailSentEvents.push(data));
+
+      quotaServiceEmitter.emit('quota:warning', {
+        organizationId: 1,
+        dimension: 'posts',
+        percentage: 80,
+        current: 80,
+        limit: 100,
+        remaining: 20,
+        timestamp: new Date(),
+      });
+
+      // Wait for async handleQuotaWarning to complete
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(mockGetAdminEmails).toHaveBeenCalledWith(1);
+      expect(emailSentEvents.length).toBe(1);
+      expect(emailSentEvents[0].to).toContain('admin1@example.com');
+      expect(emailSentEvents[0].to).toContain('admin2@example.com');
+    });
+
+    it('should skip email when no admins found', async () => {
+      mockGetAdminEmails.mockResolvedValue({
+        success: true,
+        data: [],
+      });
+
+      emailService.subscribeToQuotaWarnings(quotaServiceEmitter);
+
+      const emailSentEvents: any[] = [];
+      emailService.on('email:sent', (data) => emailSentEvents.push(data));
+
+      quotaServiceEmitter.emit('quota:warning', {
+        organizationId: 1,
+        dimension: 'posts',
+        percentage: 80,
+        current: 80,
+        limit: 100,
+        remaining: 20,
+        timestamp: new Date(),
+      });
+
+      // Wait for async handleQuotaWarning to complete
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(mockGetAdminEmails).toHaveBeenCalledWith(1);
+      expect(emailSentEvents.length).toBe(0); // No email sent
     });
 
     it('should generate correct email subject', () => {

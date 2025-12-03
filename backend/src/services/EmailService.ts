@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import sgMail, { MailDataRequired } from '@sendgrid/mail';
 import type { QuotaWarningEvent, QuotaDimension } from './QuotaService';
+import { organizationService } from './OrganizationService';
 
 /**
  * Email template types for quota warnings
@@ -214,13 +215,45 @@ export class EmailService extends EventEmitter {
         `(${event.current}/${event.limit}, ${event.remaining} remaining)`
     );
 
+    // Send quota warning email to organization admins
+    await this.sendQuotaWarningToAdmins(emailData);
+
     // Emit event for tracking/testing
     this.emit('email:quota_warning_sent', emailData);
+  }
 
-    // In production, this would:
-    // 1. Look up organization admin emails
-    // 2. Send quota warning email
-    // await this.sendQuotaWarningToAdmins(emailData);
+  /**
+   * Send quota warning email to organization administrators
+   */
+  private async sendQuotaWarningToAdmins(data: QuotaWarningEmailData): Promise<void> {
+    // Get admin emails for the organization
+    const adminsResult = await organizationService.getAdminEmails(data.organizationId);
+
+    if (!adminsResult.success || !adminsResult.data || adminsResult.data.length === 0) {
+      console.warn(
+        `[EmailService] No admin emails found for organization ${data.organizationId}, skipping quota warning email`
+      );
+      return;
+    }
+
+    // Send email to all admins
+    const result = await this.sendEmail({
+      to: adminsResult.data,
+      subject: this.getQuotaWarningSubject(data),
+      template: this.getQuotaWarningTemplate(data.percentage),
+      html: this.generateQuotaWarningHtml(data),
+      text: this.generateQuotaWarningText(data),
+    });
+
+    if (result.success) {
+      console.log(
+        `[EmailService] Quota warning email sent to ${adminsResult.data.length} admin(s) for organization ${data.organizationId}`
+      );
+    } else {
+      console.error(
+        `[EmailService] Failed to send quota warning email for organization ${data.organizationId}: ${result.error}`
+      );
+    }
   }
 
   /**
