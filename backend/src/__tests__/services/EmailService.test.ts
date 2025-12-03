@@ -91,6 +91,24 @@ describe('EmailService (SF-013)', () => {
       emailService.initialize({ apiKey: 'SG.test-key', testMode: true });
       expect(emailService.isTestMode()).toBe(true);
     });
+
+    it('should throw error in production when API key is missing', () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.SENDGRID_API_KEY;
+
+      expect(() => emailService.initialize()).toThrow(
+        'SENDGRID_API_KEY environment variable is required in production'
+      );
+    });
+
+    it('should allow stub mode in production if explicitly configured', () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.SENDGRID_API_KEY;
+
+      // Explicitly setting testMode: true should allow stub mode even in production
+      expect(() => emailService.initialize({ testMode: true })).not.toThrow();
+      expect(emailService.isTestMode()).toBe(true);
+    });
   });
 
   describe('Input Validation', () => {

@@ -172,12 +172,20 @@ export class EmailService extends EventEmitter {
     const apiKey = config?.apiKey || process.env.SENDGRID_API_KEY;
     this.fromEmail = config?.fromEmail || process.env.SENDGRID_FROM_EMAIL || 'noreply@dprogres.com';
     this.fromName = config?.fromName || process.env.SENDGRID_FROM_NAME || 'DProgres CMS';
-    this.testMode = config?.testMode ?? process.env.NODE_ENV !== 'production';
+    const isProduction = process.env.NODE_ENV === 'production';
+    this.testMode = config?.testMode ?? !isProduction;
 
     if (apiKey) {
       sgMail.setApiKey(apiKey);
       console.log('[EmailService] Initialized with SendGrid API');
+    } else if (isProduction && !config?.testMode) {
+      // In production, missing API key is a critical configuration error
+      const errorMsg = '[EmailService] CRITICAL: SENDGRID_API_KEY is required in production. Emails will NOT be sent.';
+      console.error(errorMsg);
+      // Throw to prevent silent failures - application should not start without email capability
+      throw new Error('SENDGRID_API_KEY environment variable is required in production');
     } else {
+      // Development/test mode - stub is acceptable
       console.log('[EmailService] Initialized in stub mode (no API key configured)');
       this.testMode = true;
     }
