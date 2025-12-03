@@ -265,8 +265,9 @@ export class EmailService extends EventEmitter {
       };
     }
 
-    // For template emails, templateId or template is required; otherwise html or text is required
-    if (!options.templateId && !options.template && !options.html && !options.text) {
+    // Must have actual content: templateId (SendGrid dynamic template), html, or text
+    // Note: options.template is for internal template type tracking only, not SendGrid template IDs
+    if (!options.templateId && !options.html && !options.text) {
       return {
         success: false,
         error: 'Email must have either html content, text content, or a templateId',

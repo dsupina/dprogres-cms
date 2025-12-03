@@ -157,12 +157,26 @@ describe('EmailService (SF-013)', () => {
       expect(result.success).toBe(true);
     });
 
-    it('should accept email with template (backward compatibility)', async () => {
+    it('should reject email with only template (no actual content)', async () => {
+      // The template field is for internal tracking only, not a SendGrid template ID
+      // Emails must have html, text, or templateId to be sendable
       const result = await emailService.sendEmail({
         to: [{ email: 'test@example.com' }],
         subject: 'Test Subject',
         template: 'quota_warning_80',
         templateData: {},
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Email must have either html content, text content, or a templateId');
+    });
+
+    it('should accept email with template AND html content', async () => {
+      const result = await emailService.sendEmail({
+        to: [{ email: 'test@example.com' }],
+        subject: 'Test Subject',
+        template: 'quota_warning_80',
+        html: '<p>Quota warning content</p>',
       });
 
       expect(result.success).toBe(true);
