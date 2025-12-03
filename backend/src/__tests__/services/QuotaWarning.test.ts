@@ -576,7 +576,13 @@ describe('EmailService (SF-012)', () => {
   });
 
   describe('Quota Warning Subscription', () => {
-    it('should subscribe to quota:warning events', async () => {
+    it('should subscribe to quota:warning events and emit on successful send', async () => {
+      // Must have admins for email to be sent and event to be emitted
+      mockGetAdminEmails.mockResolvedValue({
+        success: true,
+        data: [{ email: 'admin@example.com', name: 'Admin' }],
+      });
+
       const quotaService = new QuotaService();
       const emailEvents: any[] = [];
 

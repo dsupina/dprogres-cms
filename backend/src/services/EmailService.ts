@@ -224,16 +224,20 @@ export class EmailService extends EventEmitter {
     );
 
     // Send quota warning email to organization admins
-    await this.sendQuotaWarningToAdmins(emailData);
+    const sent = await this.sendQuotaWarningToAdmins(emailData);
 
-    // Emit event for tracking/testing
-    this.emit('email:quota_warning_sent', emailData);
+    // Only emit event if email was actually sent successfully
+    // This prevents listeners from incorrectly marking warnings as delivered
+    if (sent) {
+      this.emit('email:quota_warning_sent', emailData);
+    }
   }
 
   /**
    * Send quota warning email to organization administrators
+   * @returns true if email was sent successfully, false otherwise
    */
-  private async sendQuotaWarningToAdmins(data: QuotaWarningEmailData): Promise<void> {
+  private async sendQuotaWarningToAdmins(data: QuotaWarningEmailData): Promise<boolean> {
     // Get admin emails for the organization
     const adminsResult = await organizationService.getAdminEmails(data.organizationId);
 
@@ -241,7 +245,7 @@ export class EmailService extends EventEmitter {
       console.warn(
         `[EmailService] No admin emails found for organization ${data.organizationId}, skipping quota warning email`
       );
-      return;
+      return false;
     }
 
     // Send email to all admins
@@ -257,10 +261,12 @@ export class EmailService extends EventEmitter {
       console.log(
         `[EmailService] Quota warning email sent to ${adminsResult.data.length} admin(s) for organization ${data.organizationId}`
       );
+      return true;
     } else {
       console.error(
         `[EmailService] Failed to send quota warning email for organization ${data.organizationId}: ${result.error}`
       );
+      return false;
     }
   }
 

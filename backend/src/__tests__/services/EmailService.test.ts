@@ -535,7 +535,13 @@ describe('EmailService (SF-013)', () => {
       quotaServiceEmitter = new EventEmitter();
     });
 
-    it('should subscribe to quota warnings and emit event', async () => {
+    it('should subscribe to quota warnings and emit event on successful send', async () => {
+      // Must have admins for email to be sent and event to be emitted
+      mockGetAdminEmails.mockResolvedValue({
+        success: true,
+        data: [{ email: 'admin@example.com', name: 'Admin' }],
+      });
+
       emailService.subscribeToQuotaWarnings(quotaServiceEmitter);
 
       const quotaWarningEvents: any[] = [];
@@ -593,7 +599,7 @@ describe('EmailService (SF-013)', () => {
       expect(emailSentEvents[0].to).toContain('admin2@example.com');
     });
 
-    it('should skip email when no admins found', async () => {
+    it('should skip email and not emit event when no admins found', async () => {
       mockGetAdminEmails.mockResolvedValue({
         success: true,
         data: [],
@@ -602,7 +608,9 @@ describe('EmailService (SF-013)', () => {
       emailService.subscribeToQuotaWarnings(quotaServiceEmitter);
 
       const emailSentEvents: any[] = [];
+      const quotaWarningSentEvents: any[] = [];
       emailService.on('email:sent', (data) => emailSentEvents.push(data));
+      emailService.on('email:quota_warning_sent', (data) => quotaWarningSentEvents.push(data));
 
       quotaServiceEmitter.emit('quota:warning', {
         organizationId: 1,
@@ -619,6 +627,7 @@ describe('EmailService (SF-013)', () => {
 
       expect(mockGetAdminEmails).toHaveBeenCalledWith(1);
       expect(emailSentEvents.length).toBe(0); // No email sent
+      expect(quotaWarningSentEvents.length).toBe(0); // Event not emitted when no admins
     });
 
     it('should generate correct email subject', () => {
