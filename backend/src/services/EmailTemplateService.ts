@@ -196,6 +196,21 @@ interface BrandingConfig {
 }
 
 /**
+ * Required fields for each template type
+ * Used for runtime validation to catch missing required variables
+ */
+const TEMPLATE_REQUIRED_FIELDS: Record<SaaSEmailTemplate, string[]> = {
+  welcome_email: [], // All fields optional
+  subscription_confirmation: ['plan_tier', 'amount'],
+  payment_receipt: ['plan_tier', 'amount'],
+  payment_failed: ['plan_tier', 'amount'],
+  quota_warning: ['quota_dimension', 'quota_percentage', 'current_usage', 'quota_limit', 'remaining'],
+  quota_exceeded: ['quota_dimension', 'current_usage', 'quota_limit'],
+  member_invite: ['inviter_name', 'invite_url'],
+  subscription_canceled: ['plan_tier'],
+};
+
+/**
  * EmailTemplateService class for generating SaaS lifecycle email templates
  */
 export class EmailTemplateService {
@@ -214,13 +229,45 @@ export class EmailTemplateService {
   }
 
   /**
+   * Validate that required fields are present for a template
+   * @throws Error if required fields are missing or template is unknown
+   */
+  private validateRequiredFields(template: SaaSEmailTemplate, variables: TemplateVariables): void {
+    const requiredFields = TEMPLATE_REQUIRED_FIELDS[template];
+
+    // If template is not in our map, it's unknown - let the switch handle that error
+    if (!requiredFields) {
+      return;
+    }
+
+    const missingFields: string[] = [];
+
+    for (const field of requiredFields) {
+      const value = (variables as Record<string, unknown>)[field];
+      if (value === undefined || value === null) {
+        missingFields.push(field);
+      }
+    }
+
+    if (missingFields.length > 0) {
+      throw new Error(
+        `Missing required fields for template '${template}': ${missingFields.join(', ')}`
+      );
+    }
+  }
+
+  /**
    * Generate an email template with the given variables
    *
    * @param template - Template type to generate
    * @param variables - Template variables for interpolation
    * @returns Generated template with subject, html, and text
+   * @throws Error if required fields are missing for the template type or template is unknown
    */
   generateTemplate(template: SaaSEmailTemplate, variables: TemplateVariables): GeneratedTemplate {
+    // Validate required fields before generating template
+    this.validateRequiredFields(template, variables);
+
     switch (template) {
       case 'welcome_email':
         return this.generateWelcomeEmail(variables as WelcomeEmailVariables);

@@ -655,6 +655,60 @@ describe('EmailTemplateService (SF-014)', () => {
         templateService.generateTemplate('unknown_template' as SaaSEmailTemplate, {});
       }).toThrow('Unknown template type: unknown_template');
     });
+
+    it('should throw error when required fields are missing for subscription_confirmation', () => {
+      expect(() => {
+        templateService.generateTemplate('subscription_confirmation', {} as any);
+      }).toThrow("Missing required fields for template 'subscription_confirmation': plan_tier, amount");
+    });
+
+    it('should throw error when required fields are missing for payment_receipt', () => {
+      expect(() => {
+        templateService.generateTemplate('payment_receipt', { plan_tier: 'Pro' } as any);
+      }).toThrow("Missing required fields for template 'payment_receipt': amount");
+    });
+
+    it('should throw error when required fields are missing for payment_failed', () => {
+      expect(() => {
+        templateService.generateTemplate('payment_failed', {} as any);
+      }).toThrow("Missing required fields for template 'payment_failed': plan_tier, amount");
+    });
+
+    it('should throw error when required fields are missing for quota_warning', () => {
+      expect(() => {
+        templateService.generateTemplate('quota_warning', { quota_dimension: 'Sites' } as any);
+      }).toThrow("Missing required fields for template 'quota_warning': quota_percentage, current_usage, quota_limit, remaining");
+    });
+
+    it('should throw error when required fields are missing for quota_exceeded', () => {
+      expect(() => {
+        templateService.generateTemplate('quota_exceeded', {} as any);
+      }).toThrow("Missing required fields for template 'quota_exceeded': quota_dimension, current_usage, quota_limit");
+    });
+
+    it('should throw error when required fields are missing for member_invite', () => {
+      expect(() => {
+        templateService.generateTemplate('member_invite', { inviter_name: 'John' } as any);
+      }).toThrow("Missing required fields for template 'member_invite': invite_url");
+    });
+
+    it('should throw error when required fields are missing for subscription_canceled', () => {
+      expect(() => {
+        templateService.generateTemplate('subscription_canceled', {} as any);
+      }).toThrow("Missing required fields for template 'subscription_canceled': plan_tier");
+    });
+
+    it('should NOT throw error for welcome_email with no fields (all optional)', () => {
+      expect(() => {
+        templateService.generateTemplate('welcome_email', {});
+      }).not.toThrow();
+    });
+
+    it('should treat null values as missing required fields', () => {
+      expect(() => {
+        templateService.generateTemplate('subscription_confirmation', { plan_tier: null, amount: '99' } as any);
+      }).toThrow("Missing required fields for template 'subscription_confirmation': plan_tier");
+    });
   });
 
   describe('getSubject Helper', () => {
