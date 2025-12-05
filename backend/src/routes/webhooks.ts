@@ -1161,6 +1161,7 @@ async function handlePaymentMethodAttached(
     const isDefault = existingMethods.length === 0;
 
     // Insert or update payment method
+    // On conflict (reattach): clear deleted_at to reactivate, update is_default based on current active methods
     await client.query(
       `INSERT INTO payment_methods (
         organization_id, stripe_payment_method_id, type,
@@ -1173,6 +1174,8 @@ async function handlePaymentMethodAttached(
           card_last4 = EXCLUDED.card_last4,
           card_exp_month = EXCLUDED.card_exp_month,
           card_exp_year = EXCLUDED.card_exp_year,
+          deleted_at = NULL,
+          is_default = EXCLUDED.is_default,
           updated_at = NOW()`,
       [
         organizationId,
