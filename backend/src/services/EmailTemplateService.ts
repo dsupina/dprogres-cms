@@ -169,6 +169,8 @@ export interface InvoiceUpcomingVariables extends BaseTemplateVariables {
   billing_date: string;
   billing_period?: string;
   update_payment_url?: string;
+  /** Stripe collection method: 'charge_automatically' or 'send_invoice' */
+  collection_method?: 'charge_automatically' | 'send_invoice';
 }
 
 /**
@@ -1200,6 +1202,16 @@ ${this.branding.websiteUrl}
     const billingDate = variables.billing_date;
     const billingPeriod = variables.billing_period || 'month';
     const updatePaymentUrl = variables.update_payment_url || `${this.branding.dashboardUrl}/billing/payment-methods`;
+    const collectionMethod = variables.collection_method || 'charge_automatically';
+
+    // Different messaging based on collection method
+    const isAutoCharge = collectionMethod === 'charge_automatically';
+    const paymentMessage = isAutoCharge
+      ? `Your payment method on file will be charged automatically on ${this.escapeHtml(billingDate)}.`
+      : `An invoice will be sent to you on ${this.escapeHtml(billingDate)}. Please ensure payment is made by the due date to avoid service interruption.`;
+    const paymentMessageText = isAutoCharge
+      ? `Your payment method on file will be charged automatically on ${billingDate}.`
+      : `An invoice will be sent to you on ${billingDate}. Please ensure payment is made by the due date to avoid service interruption.`;
 
     const subject = `Upcoming invoice: ${currency} ${amount} for ${this.branding.companyName} ${planTier}`;
 
@@ -1228,7 +1240,7 @@ ${this.branding.websiteUrl}
           </div>
         </div>
 
-        <p>Your payment method on file will be charged automatically on ${this.escapeHtml(billingDate)}.</p>
+        <p>${paymentMessage}</p>
 
         <p>Need to update your payment method or change your plan?</p>
 
@@ -1253,7 +1265,7 @@ Plan: ${planTier}
 Amount: ${currency} ${amount}/${billingPeriod}
 Billing Date: ${billingDate}
 
-Your payment method on file will be charged automatically on ${billingDate}.
+${paymentMessageText}
 
 Need to update your payment method or change your plan?
 

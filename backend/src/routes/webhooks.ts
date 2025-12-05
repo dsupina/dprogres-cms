@@ -1510,6 +1510,9 @@ async function handleInvoiceUpcoming(
       // Email delivery is best-effort; failures are logged but don't affect webhook processing
       const adminEmails = adminsResult.data;
       const adminCount = adminEmails.length;
+      // Pass collection_method so email template uses correct messaging
+      // 'charge_automatically' = auto-charge, 'send_invoice' = manual payment
+      const collectionMethod = invoice.collection_method as 'charge_automatically' | 'send_invoice' | undefined;
       emailService.sendInvoiceUpcoming(adminEmails, {
         organization_name: orgName,
         plan_tier: planTier,
@@ -1517,6 +1520,7 @@ async function handleInvoiceUpcoming(
         currency: invoiceCurrency,
         billing_date: billingDate || 'soon',
         billing_period: billingCycle === 'annual' ? 'year' : 'month',
+        collection_method: collectionMethod,
       }).then(() => {
         console.log(`Invoice upcoming email sent to ${adminCount} admin(s) for org ${organizationId}`);
       }).catch((emailError) => {
