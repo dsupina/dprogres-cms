@@ -1332,7 +1332,11 @@ async function handleTrialWillEnd(
         day: 'numeric',
       }) : 'in 3 days';
 
-      await emailService.sendTrialEnding(adminsResult.data, {
+      // Fire-and-forget: don't await to avoid blocking webhook response (Stripe 5s timeout)
+      // Email delivery is best-effort; failures are logged but don't affect webhook processing
+      const adminEmails = adminsResult.data;
+      const adminCount = adminEmails.length;
+      emailService.sendTrialEnding(adminEmails, {
         organization_name: orgName,
         plan_tier: planTier,
         trial_end_date: trialEndDate,
@@ -1343,9 +1347,11 @@ async function handleTrialWillEnd(
           'Advanced collaboration features',
           'Custom branding options',
         ],
+      }).then(() => {
+        console.log(`Trial ending email sent to ${adminCount} admin(s) for org ${organizationId}`);
+      }).catch((emailError) => {
+        console.error(`Failed to send trial ending email for org ${organizationId}:`, emailError);
       });
-
-      console.log(`Trial ending email sent to ${adminsResult.data.length} admin(s) for org ${organizationId}`);
     }
 
     console.log(`Trial will end: subscription ${subscription.id}, org: ${organizationId}, days: ${daysRemaining}`);
@@ -1468,16 +1474,22 @@ async function handleInvoiceUpcoming(
           })
         : 'in approximately 7 days';
 
-      await emailService.sendInvoiceUpcoming(adminsResult.data, {
+      // Fire-and-forget: don't await to avoid blocking webhook response (Stripe 5s timeout)
+      // Email delivery is best-effort; failures are logged but don't affect webhook processing
+      const adminEmails = adminsResult.data;
+      const adminCount = adminEmails.length;
+      emailService.sendInvoiceUpcoming(adminEmails, {
         organization_name: orgName,
         plan_tier: planTier,
         amount,
         currency: invoiceCurrency,
         billing_date: billingDate || 'soon',
         billing_period: billingCycle === 'annual' ? 'year' : 'month',
+      }).then(() => {
+        console.log(`Invoice upcoming email sent to ${adminCount} admin(s) for org ${organizationId}`);
+      }).catch((emailError) => {
+        console.error(`Failed to send invoice upcoming email for org ${organizationId}:`, emailError);
       });
-
-      console.log(`Invoice upcoming email sent to ${adminsResult.data.length} admin(s) for org ${organizationId}`);
     }
 
     console.log(`Invoice upcoming: ${invoice.id}, subscription: ${stripeSubId}, org: ${organizationId}`);
