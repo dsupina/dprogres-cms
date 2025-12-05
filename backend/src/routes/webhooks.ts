@@ -1492,9 +1492,13 @@ async function handleInvoiceUpcoming(
         amount = (invoiceAmountCents / 100).toFixed(2);
       }
 
-      // Calculate billing date (approximately 7 days from now, based on the typical Stripe notification timing)
-      const billingDate = invoice.next_payment_attempt
-        ? fromUnixTimestamp(invoice.next_payment_attempt)?.toLocaleDateString('en-US', {
+      // Calculate billing date from invoice timestamps
+      // - next_payment_attempt: used for auto-charge invoices (collection_method='charge_automatically')
+      // - due_date: used for send-invoice invoices (collection_method='send_invoice')
+      // - Fallback to generic message if neither is available
+      const billingTimestamp = invoice.next_payment_attempt || invoice.due_date;
+      const billingDate = billingTimestamp
+        ? fromUnixTimestamp(billingTimestamp)?.toLocaleDateString('en-US', {
             weekday: 'long',
             year: 'numeric',
             month: 'long',
