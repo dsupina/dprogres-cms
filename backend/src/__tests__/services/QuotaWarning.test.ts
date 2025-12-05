@@ -553,6 +553,42 @@ describe('QuotaService Warning System (SF-012)', () => {
 
       expect(warningEvents.length).toBe(0);
     });
+
+    it('should re-emit warning after clearWarningThreshold is called', async () => {
+      const warningEvents: QuotaWarningEvent[] = [];
+      quotaService.on('quota:warning', (event: QuotaWarningEvent) => {
+        warningEvents.push(event);
+      });
+
+      // Mock quota at 85%
+      mockPoolQuery.mockResolvedValue({
+        rows: [
+          {
+            dimension: 'posts',
+            current_usage: 85,
+            quota_limit: 100,
+            period_start: new Date(),
+            period_end: null,
+            last_reset_at: null,
+          },
+        ],
+      });
+
+      // First check - should emit warning
+      await quotaService.checkAndWarn(1, 'posts');
+      expect(warningEvents.length).toBe(1);
+
+      // Second check - should NOT emit (spam prevention)
+      await quotaService.checkAndWarn(1, 'posts');
+      expect(warningEvents.length).toBe(1);
+
+      // Clear the threshold (simulating email delivery failure)
+      quotaService.clearWarningThreshold(1, 'posts', 80);
+
+      // Third check - should emit again after threshold cleared
+      await quotaService.checkAndWarn(1, 'posts');
+      expect(warningEvents.length).toBe(2);
+    });
   });
 });
 

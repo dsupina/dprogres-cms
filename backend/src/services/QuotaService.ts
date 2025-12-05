@@ -169,6 +169,20 @@ export class QuotaService extends EventEmitter {
   }
 
   /**
+   * Clear a specific warning threshold (called on email delivery failure)
+   * This allows the warning to be re-sent on the next check
+   */
+  clearWarningThreshold(orgId: number, dimension: QuotaDimension, threshold: WarningThreshold): void {
+    const key = this.getWarningCacheKey(orgId, dimension, threshold);
+    if (this.warningCache.has(key)) {
+      this.warningCache.delete(key);
+      console.log(
+        `[QuotaService] Cleared warning cache for org ${orgId}, ${dimension} at ${threshold}% (will retry on next check)`
+      );
+    }
+  }
+
+  /**
    * Clear all warnings across all organizations (called on global quota reset)
    */
   clearAllWarnings(): void {

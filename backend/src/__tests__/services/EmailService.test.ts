@@ -630,6 +630,45 @@ describe('EmailService (SF-013)', () => {
       expect(quotaWarningSentEvents.length).toBe(0); // Event not emitted when no admins
     });
 
+    it('should emit quota_warning_failed and call clearWarningThreshold on failure', async () => {
+      mockGetAdminEmails.mockResolvedValue({
+        success: true,
+        data: [], // No admins = failure
+      });
+
+      // Create a mock QuotaService with clearWarningThreshold
+      const mockClearWarningThreshold = jest.fn();
+      const mockQuotaService = Object.assign(new EventEmitter(), {
+        clearWarningThreshold: mockClearWarningThreshold,
+      });
+
+      emailService.subscribeToQuotaWarnings(mockQuotaService);
+
+      const failedEvents: any[] = [];
+      emailService.on('email:quota_warning_failed', (data) => failedEvents.push(data));
+
+      mockQuotaService.emit('quota:warning', {
+        organizationId: 1,
+        dimension: 'posts',
+        percentage: 80,
+        current: 80,
+        limit: 100,
+        remaining: 20,
+        timestamp: new Date(),
+      });
+
+      // Wait for async handleQuotaWarning to complete
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Should emit failure event
+      expect(failedEvents.length).toBe(1);
+      expect(failedEvents[0].organizationId).toBe(1);
+      expect(failedEvents[0].dimension).toBe('posts');
+
+      // Should call clearWarningThreshold to allow retry
+      expect(mockClearWarningThreshold).toHaveBeenCalledWith(1, 'posts', 80);
+    });
+
     it('should generate correct email subject', () => {
       const data: QuotaWarningEmailData = {
         organizationId: 1,

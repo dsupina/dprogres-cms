@@ -202,12 +202,31 @@ export class EmailService extends EventEmitter {
 
   /**
    * Subscribe to quota warning events from QuotaService
+   * Also sets up bidirectional communication for delivery failure handling
+   *
+   * @param quotaServiceEmitter - QuotaService instance or EventEmitter
    */
   subscribeToQuotaWarnings(quotaServiceEmitter: EventEmitter): void {
+    // Listen for quota warnings
     quotaServiceEmitter.on('quota:warning', (event: QuotaWarningEvent) => {
       this.handleQuotaWarning(event);
     });
-    console.log('[EmailService] Subscribed to quota:warning events');
+
+    // Allow QuotaService to listen for delivery failures to re-arm warnings
+    // This enables retry on the next quota check if email delivery fails
+    if (typeof (quotaServiceEmitter as any).clearWarningThreshold === 'function') {
+      this.on('email:quota_warning_failed', (data: QuotaWarningEmailData) => {
+        const threshold = data.percentage as 80 | 90 | 95;
+        (quotaServiceEmitter as any).clearWarningThreshold(
+          data.organizationId,
+          data.dimension,
+          threshold
+        );
+      });
+      console.log('[EmailService] Subscribed to quota:warning events (with failure retry support)');
+    } else {
+      console.log('[EmailService] Subscribed to quota:warning events');
+    }
   }
 
   /**
@@ -226,10 +245,13 @@ export class EmailService extends EventEmitter {
     // Send quota warning email to organization admins
     const sent = await this.sendQuotaWarningToAdmins(emailData);
 
-    // Only emit event if email was actually sent successfully
-    // This prevents listeners from incorrectly marking warnings as delivered
     if (sent) {
+      // Email sent successfully - emit for tracking
       this.emit('email:quota_warning_sent', emailData);
+    } else {
+      // Email failed - emit failure so QuotaService can clear the warning cache
+      // This allows the warning to be retried on the next quota check
+      this.emit('email:quota_warning_failed', emailData);
     }
   }
 
