@@ -1023,7 +1023,7 @@ async function handleCustomerUpdated(
 
     // Find subscription by customer ID to get organization ID
     const { rows: subRows } = await client.query(
-      `SELECT s.id, s.organization_id, o.name as org_name
+      `SELECT s.id, s.organization_id, o.name as org_name, o.billing_email as org_billing_email
        FROM subscriptions s
        JOIN organizations o ON s.organization_id = o.id
        WHERE s.stripe_customer_id = $1
@@ -1039,19 +1039,41 @@ async function handleCustomerUpdated(
       return;
     }
 
-    const { organization_id: organizationId, org_name: currentOrgName } = subRows[0];
+    const { organization_id: organizationId, org_name: currentOrgName, org_billing_email: currentBillingEmail } = subRows[0];
 
-    // Sync customer name to organization if it changed
+    // Sync customer name and billing email to organization if changed
     // Stripe customer.name may be company name or individual's name
-    if (customer.name && customer.name !== currentOrgName) {
+    // Stripe customer.email is the billing contact email
+    const nameChanged = customer.name && customer.name !== currentOrgName;
+    const emailChanged = customer.email && customer.email !== currentBillingEmail;
+
+    if (nameChanged || emailChanged) {
+      const updates: string[] = [];
+      const params: (string | number)[] = [];
+      let paramIndex = 1;
+
+      if (nameChanged) {
+        updates.push(`name = $${paramIndex++}`);
+        params.push(customer.name!);
+      }
+      if (emailChanged) {
+        updates.push(`billing_email = $${paramIndex++}`);
+        params.push(customer.email!);
+      }
+      updates.push('updated_at = NOW()');
+      params.push(organizationId);
+
       await client.query(
-        `UPDATE organizations
-         SET name = $1, updated_at = NOW()
-         WHERE id = $2`,
-        [customer.name, organizationId]
+        `UPDATE organizations SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
+        params
       );
 
-      console.log(`Updated organization ${organizationId} name from "${currentOrgName}" to "${customer.name}"`);
+      if (nameChanged) {
+        console.log(`Updated organization ${organizationId} name from "${currentOrgName}" to "${customer.name}"`);
+      }
+      if (emailChanged) {
+        console.log(`Updated organization ${organizationId} billing_email from "${currentBillingEmail}" to "${customer.email}"`);
+      }
     }
 
     // Link event to organization
