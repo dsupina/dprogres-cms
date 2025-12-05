@@ -430,7 +430,7 @@ ${this.branding.websiteUrl}
           </div>
           <div class="stat-row">
             <span class="stat-label">Amount</span>
-            <span class="stat-value">${this.escapeHtml(currency)} ${this.escapeHtml(amount)}/${billingPeriod}</span>
+            <span class="stat-value">${this.escapeHtml(currency)} ${this.escapeHtml(amount)}/${this.escapeHtml(billingPeriod)}</span>
           </div>
           ${nextBillingDate ? `
           <div class="stat-row">

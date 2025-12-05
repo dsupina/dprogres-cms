@@ -619,6 +619,17 @@ describe('EmailTemplateService (SF-014)', () => {
       expect(result.html).toContain('&lt;script&gt;');
       expect(result.html).toContain('Test &amp; Co');
     });
+
+    it('should escape billing_period in subscription confirmation', () => {
+      const result = templateService.generateTemplate('subscription_confirmation', {
+        plan_tier: 'Pro',
+        amount: '49.99',
+        billing_period: '<script>xss</script>',
+      });
+
+      expect(result.html).not.toContain('<script>xss</script>');
+      expect(result.html).toContain('&lt;script&gt;xss&lt;/script&gt;');
+    });
   });
 
   describe('Plain Text Template Structure', () => {
