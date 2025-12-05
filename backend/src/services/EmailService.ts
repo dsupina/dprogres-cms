@@ -2,6 +2,19 @@ import { EventEmitter } from 'events';
 import sgMail, { MailDataRequired } from '@sendgrid/mail';
 import type { QuotaWarningEvent, QuotaDimension } from './QuotaService';
 import { organizationService } from './OrganizationService';
+import {
+  emailTemplateService,
+  SaaSEmailTemplate,
+  TemplateVariables,
+  WelcomeEmailVariables,
+  SubscriptionConfirmationVariables,
+  PaymentReceiptVariables,
+  PaymentFailedVariables,
+  QuotaWarningVariables,
+  QuotaExceededVariables,
+  MemberInviteVariables,
+  SubscriptionCanceledVariables,
+} from './EmailTemplateService';
 
 /**
  * Email template types for quota warnings
@@ -736,7 +749,129 @@ This is an automated notification from DProgres CMS.
   getDimensionLabel(dimension: QuotaDimension): string {
     return EmailService.DIMENSION_LABELS[dimension];
   }
+
+  // ============================================
+  // SaaS Lifecycle Email Methods (SF-014)
+  // ============================================
+
+  /**
+   * Send a SaaS lifecycle email using the EmailTemplateService
+   *
+   * @param template - The template type to use
+   * @param to - Recipients
+   * @param variables - Template variables
+   * @returns Email send result
+   */
+  async sendTemplatedEmail(
+    template: SaaSEmailTemplate,
+    to: EmailRecipient[],
+    variables: TemplateVariables
+  ): Promise<EmailSendResult> {
+    const { subject, html, text } = emailTemplateService.generateTemplate(template, variables);
+
+    return this.sendEmail({
+      to,
+      subject,
+      html,
+      text,
+    });
+  }
+
+  /**
+   * Send welcome email for new user signups
+   */
+  async sendWelcomeEmail(
+    to: EmailRecipient[],
+    variables: WelcomeEmailVariables
+  ): Promise<EmailSendResult> {
+    return this.sendTemplatedEmail('welcome_email', to, variables);
+  }
+
+  /**
+   * Send subscription confirmation for first payment
+   */
+  async sendSubscriptionConfirmation(
+    to: EmailRecipient[],
+    variables: SubscriptionConfirmationVariables
+  ): Promise<EmailSendResult> {
+    return this.sendTemplatedEmail('subscription_confirmation', to, variables);
+  }
+
+  /**
+   * Send payment receipt for recurring payments
+   */
+  async sendPaymentReceipt(
+    to: EmailRecipient[],
+    variables: PaymentReceiptVariables
+  ): Promise<EmailSendResult> {
+    return this.sendTemplatedEmail('payment_receipt', to, variables);
+  }
+
+  /**
+   * Send payment failed notification with retry prompt
+   */
+  async sendPaymentFailed(
+    to: EmailRecipient[],
+    variables: PaymentFailedVariables
+  ): Promise<EmailSendResult> {
+    return this.sendTemplatedEmail('payment_failed', to, variables);
+  }
+
+  /**
+   * Send quota warning notification using the new template system
+   */
+  async sendQuotaWarningEmail(
+    to: EmailRecipient[],
+    variables: QuotaWarningVariables
+  ): Promise<EmailSendResult> {
+    return this.sendTemplatedEmail('quota_warning', to, variables);
+  }
+
+  /**
+   * Send quota exceeded notification (hard limit)
+   */
+  async sendQuotaExceededEmail(
+    to: EmailRecipient[],
+    variables: QuotaExceededVariables
+  ): Promise<EmailSendResult> {
+    return this.sendTemplatedEmail('quota_exceeded', to, variables);
+  }
+
+  /**
+   * Send member invitation email
+   */
+  async sendMemberInvite(
+    to: EmailRecipient[],
+    variables: MemberInviteVariables
+  ): Promise<EmailSendResult> {
+    return this.sendTemplatedEmail('member_invite', to, variables);
+  }
+
+  /**
+   * Send subscription canceled notification
+   */
+  async sendSubscriptionCanceled(
+    to: EmailRecipient[],
+    variables: SubscriptionCanceledVariables
+  ): Promise<EmailSendResult> {
+    return this.sendTemplatedEmail('subscription_canceled', to, variables);
+  }
 }
 
 // Export singleton instance
 export const emailService = new EmailService();
+
+// Re-export template types and service for convenience
+export {
+  emailTemplateService,
+  SaaSEmailTemplate,
+  TemplateVariables,
+  WelcomeEmailVariables,
+  SubscriptionConfirmationVariables,
+  PaymentReceiptVariables,
+  PaymentFailedVariables,
+  QuotaWarningVariables,
+  QuotaExceededVariables,
+  MemberInviteVariables,
+  SubscriptionCanceledVariables,
+} from './EmailTemplateService';
