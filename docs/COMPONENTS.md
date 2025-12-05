@@ -949,9 +949,131 @@ SENDGRID_FROM_NAME=DProgres CMS
 - Auto-initializes on first sendEmail call if not initialized
 
 **Tests**:
-- `backend/src/__tests__/services/EmailService.test.ts` (41 tests, 100% passing)
+- `backend/src/__tests__/services/EmailService.test.ts` (47 tests, 100% passing)
 - `backend/src/__tests__/services/QuotaWarning.test.ts` (EmailService section: 8 tests, 100% passing)
-- **Total Coverage**: 49 tests covering initialization, validation, SendGrid integration, error handling, delivery logging, template generation
+- **Total Coverage**: 55 tests covering initialization, validation, SendGrid integration, error handling, delivery logging, template generation
+
+---
+
+#### Email Template Service (SF-014)
+**Purpose**: Email template management for SaaS lifecycle events with consistent branding
+**Location**: `backend/src/services/EmailTemplateService.ts`
+**Status**: ✅ Completed (December 2025)
+
+```typescript
+// Usage Example
+import { emailTemplateService } from '../services/EmailTemplateService';
+
+// Generate a welcome email
+const { html, text, subject } = emailTemplateService.generateTemplate('welcome_email', {
+  user_name: 'John Doe',
+  organization_name: 'Acme Corp',
+});
+
+// Generate payment failed email
+const paymentFailed = emailTemplateService.generateTemplate('payment_failed', {
+  user_name: 'John',
+  plan_tier: 'Professional',
+  amount: '49.99',
+  failure_reason: 'Card declined',
+  update_payment_url: 'https://app.example.com/billing/payment',
+});
+
+// Update branding configuration
+emailTemplateService.updateBranding({
+  companyName: 'My CMS',
+  primaryColor: '#ff5500',
+  supportEmail: 'help@mycms.com',
+});
+
+// Variable interpolation for custom templates
+const result = emailTemplateService.interpolate(
+  'Hello {{name}}, your quota is at {{percentage}}%',
+  { name: 'John', percentage: 90 }
+);
+```
+
+**8 SaaS Email Templates**:
+1. **welcome_email**: User signup welcome
+2. **subscription_confirmation**: First payment confirmation
+3. **payment_receipt**: Recurring payment receipts
+4. **payment_failed**: Failed payment retry prompt
+5. **quota_warning**: Usage threshold alerts (80%, 90%, 95%)
+6. **quota_exceeded**: Hard limit notification
+7. **member_invite**: Team member invitation
+8. **subscription_canceled**: Cancellation confirmation
+
+**Template Variables**:
+- `{{user_name}}` - Recipient's name
+- `{{organization_name}}` - Organization name
+- `{{plan_tier}}` - Subscription tier (Starter, Pro, Enterprise)
+- `{{amount}}` - Payment amount
+- `{{currency}}` - Currency code (USD, EUR, etc.)
+- `{{quota_dimension}}` - Resource type (Sites, Posts, Storage, etc.)
+- `{{quota_percentage}}` - Current usage percentage
+- `{{upgrade_url}}` - Configurable URL for plan upgrades
+
+**Key Features**:
+- **Consistent Branding**: All templates share common styles, colors, and footer
+- **Responsive Design**: Inline CSS for email client compatibility
+- **Dual Format**: Both HTML and plain text versions for all templates
+- **XSS Protection**: HTML entity escaping for user-provided values
+- **Configurable URLs**: Dashboard, upgrade, and support URLs via environment or constructor
+- **Urgency Levels**: Color-coded warnings (blue notice, orange warning, red critical)
+
+**Branding Configuration**:
+```typescript
+interface BrandingConfig {
+  companyName: string;   // Default: 'DProgres CMS'
+  primaryColor: string;  // Default: '#2563eb'
+  logoUrl: string;       // Optional logo URL
+  supportEmail: string;  // Default: 'support@dprogres.com'
+  dashboardUrl: string;  // Default: 'https://app.dprogres.com'
+  upgradeUrl: string;    // Configurable upgrade URL
+  websiteUrl: string;    // Company website
+}
+```
+
+**Environment Variables**:
+```bash
+EMAIL_COMPANY_NAME=My CMS
+EMAIL_PRIMARY_COLOR=#2563eb
+EMAIL_LOGO_URL=https://example.com/logo.png
+EMAIL_SUPPORT_EMAIL=support@example.com
+EMAIL_DASHBOARD_URL=https://app.example.com
+EMAIL_UPGRADE_URL=https://app.example.com/billing/upgrade
+EMAIL_WEBSITE_URL=https://example.com
+```
+
+**EmailService Integration** (SF-014):
+```typescript
+import { emailService } from '../services/EmailService';
+
+// Convenience methods for each template type
+await emailService.sendWelcomeEmail(recipients, variables);
+await emailService.sendSubscriptionConfirmation(recipients, variables);
+await emailService.sendPaymentReceipt(recipients, variables);
+await emailService.sendPaymentFailed(recipients, variables);
+await emailService.sendQuotaWarningEmail(recipients, variables);
+await emailService.sendQuotaExceededEmail(recipients, variables);
+await emailService.sendMemberInvite(recipients, variables);
+await emailService.sendSubscriptionCanceled(recipients, variables);
+
+// Generic templated email
+await emailService.sendTemplatedEmail('payment_receipt', recipients, variables);
+```
+
+**Exported Types**:
+- `SaaSEmailTemplate` - Union type of all 8 template names
+- `TemplateVariables` - Union type of all variable interfaces
+- `WelcomeEmailVariables`, `PaymentFailedVariables`, etc. - Template-specific variable interfaces
+- `GeneratedTemplate` - Output with subject, html, and text
+- `EmailTemplateServiceConfig` - Constructor configuration
+
+**Tests**:
+- `backend/src/__tests__/services/EmailTemplateService.test.ts` (67 tests, 100% passing)
+- `backend/src/__tests__/services/EmailServiceTemplateIntegration.test.ts` (13 tests, 100% passing)
+- **Total Coverage**: 80 tests, 100% statement coverage for EmailTemplateService
 
 ---
 
