@@ -520,7 +520,204 @@ Quota increments use the PostgreSQL function `check_and_increment_quota()` which
 
 ## Webhook Events
 
-(To be documented: SF-004 Stripe webhook handling)
+The webhook endpoint receives events from Stripe and processes them idempotently.
+
+### POST /api/webhooks/stripe
+
+Process Stripe webhook events.
+
+**Authentication**: None (uses Stripe signature verification)
+
+**Headers**:
+- `stripe-signature` (required) - Stripe webhook signature for verification
+
+**Request Body**: Raw Stripe event payload
+
+**Response**:
+```json
+{
+  "received": true
+}
+```
+
+**Error Responses**:
+- `400` - Invalid signature or webhook processing error
+- `500` - Internal server error
+
+---
+
+### Handled Events
+
+| Event Type | Handler | Description | Added In |
+|------------|---------|-------------|----------|
+| `checkout.session.completed` | `handleCheckoutCompleted` | Process successful checkout | SF-004 |
+| `customer.subscription.created` | `handleSubscriptionCreated` | New subscription created | SF-004 |
+| `customer.subscription.updated` | `handleSubscriptionUpdated` | Subscription plan/status changed | SF-004 |
+| `customer.subscription.deleted` | `handleSubscriptionDeleted` | Subscription canceled | SF-004 |
+| `invoice.paid` | `handleInvoicePaid` | Payment successful | SF-004 |
+| `invoice.payment_failed` | `handleInvoicePaymentFailed` | Payment failed | SF-004 |
+| `customer.updated` | `handleCustomerUpdated` | Sync customer name/email to org | SF-015 |
+| `payment_method.attached` | `handlePaymentMethodAttached` | Store payment method details | SF-015 |
+| `payment_method.detached` | `handlePaymentMethodDetached` | Soft delete payment method | SF-015 |
+| `customer.subscription.trial_will_end` | `handleTrialWillEnd` | Send 3-day trial warning email | SF-015 |
+| `invoice.upcoming` | `handleInvoiceUpcoming` | Send 7-day renewal notice email | SF-015 |
+
+---
+
+### Event Processing Details
+
+#### customer.updated (SF-015)
+
+Syncs customer data from Stripe to the local organization table.
+
+**Fields Synced**:
+- `name` → `organizations.name`
+- `email` → `organizations.billing_email`
+
+**Example Stripe Event**:
+```json
+{
+  "type": "customer.updated",
+  "data": {
+    "object": {
+      "id": "cus_123",
+      "name": "Acme Corp Updated",
+      "email": "billing@acme.com"
+    }
+  }
+}
+```
+
+---
+
+#### payment_method.attached (SF-015)
+
+Stores payment method details when attached to a customer.
+
+**Stored Fields**:
+- `stripe_payment_method_id` - Stripe PM ID
+- `type` - Payment method type (card, bank_account, etc.)
+- `last_four` - Last 4 digits of card
+- `exp_month` / `exp_year` - Card expiration
+- `brand` - Card brand (visa, mastercard, etc.)
+- `is_default` - First method becomes default automatically
+
+**Database Table**: `payment_methods`
+
+**Example Stripe Event**:
+```json
+{
+  "type": "payment_method.attached",
+  "data": {
+    "object": {
+      "id": "pm_123",
+      "customer": "cus_123",
+      "type": "card",
+      "card": {
+        "last4": "4242",
+        "exp_month": 12,
+        "exp_year": 2025,
+        "brand": "visa"
+      }
+    }
+  }
+}
+```
+
+---
+
+#### payment_method.detached (SF-015)
+
+Soft deletes payment method when detached from customer.
+
+**Behavior**:
+- Sets `deleted_at` timestamp (soft delete for audit trail)
+- Sets `is_default = false`
+- Promotes next most recent method to default if this was default
+
+---
+
+#### customer.subscription.trial_will_end (SF-015)
+
+Sends email notification 3 days before trial ends.
+
+**Email Template**: `trial_ending`
+
+**Template Variables**:
+```typescript
+{
+  plan_tier: string;        // "Pro", "Enterprise"
+  trial_end_date: string;   // "January 15, 2025"
+  days_remaining: 3;
+  features_at_risk?: string[]; // ["Priority Support", "Advanced Analytics"]
+}
+```
+
+**Recipients**: Organization admin emails (via OrganizationService.getAdminEmails)
+
+---
+
+#### invoice.upcoming (SF-015)
+
+Sends email notification 7 days before invoice is generated.
+
+**Email Template**: `invoice_upcoming`
+
+**Template Variables**:
+```typescript
+{
+  plan_tier: string;        // "Pro Plan"
+  amount: string;           // "99.00"
+  currency?: string;        // "USD"
+  billing_date: string;     // "January 22, 2025"
+  billing_period?: string;  // "January 15, 2025 - February 14, 2025"
+}
+```
+
+**Recipients**: Organization admin emails
+
+---
+
+### Idempotency
+
+All webhook events are processed idempotently:
+
+1. **Event ID Check**: Before processing, the handler checks `webhook_events` table for existing `stripe_event_id`
+2. **Skip if Processed**: If event was already processed, returns `{ received: true }` without re-processing
+3. **Status Tracking**: Events are tracked with status: `processing` → `processed` or `failed`
+
+**Database Table**: `webhook_events`
+
+```sql
+CREATE TABLE webhook_events (
+  id SERIAL PRIMARY KEY,
+  stripe_event_id VARCHAR(255) UNIQUE NOT NULL,
+  event_type VARCHAR(100) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'processing',
+  error_message TEXT,
+  created_at TIMESTAMP DEFAULT NOW(),
+  processed_at TIMESTAMP
+);
+```
+
+---
+
+### Transaction Safety
+
+All webhook handlers run within a database transaction:
+
+1. **BEGIN**: Transaction starts
+2. **Record Event**: Insert into `webhook_events` with status `processing`
+3. **Process Handler**: Execute specific event handler
+4. **Update Status**: Mark event as `processed`
+5. **COMMIT**: Commit transaction
+
+If any step fails:
+- **ROLLBACK**: Transaction rolled back
+- **Status**: Event marked as `failed` with error message
+- **Retry**: Failed events can be retried via admin endpoint
+
+**Email Notifications**: Sent AFTER successful transaction commit (outside transaction) to prevent email delivery issues from rolling back database changes
 
 ---
 
@@ -555,6 +752,6 @@ When deploying migration `003_create_usage_quotas.sql`, the following happens au
 
 ---
 
-**Last Updated**: January 2025
-**Version**: 1.0
-**Related Tickets**: SF-009 (Quota System Implementation)
+**Last Updated**: December 2025
+**Version**: 1.1
+**Related Tickets**: SF-009 (Quota System Implementation), SF-015 (Complete Webhook Event Handling)

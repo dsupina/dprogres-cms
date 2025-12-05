@@ -993,7 +993,7 @@ const result = emailTemplateService.interpolate(
 );
 ```
 
-**8 SaaS Email Templates**:
+**10 SaaS Email Templates**:
 1. **welcome_email**: User signup welcome
 2. **subscription_confirmation**: First payment confirmation
 3. **payment_receipt**: Recurring payment receipts
@@ -1002,6 +1002,8 @@ const result = emailTemplateService.interpolate(
 6. **quota_exceeded**: Hard limit notification
 7. **member_invite**: Team member invitation
 8. **subscription_canceled**: Cancellation confirmation
+9. **trial_ending**: Trial ending warning (3-day notice) - Added in SF-015
+10. **invoice_upcoming**: Invoice upcoming notification (7-day notice) - Added in SF-015
 
 **Template Variables**:
 - `{{user_name}}` - Recipient's name

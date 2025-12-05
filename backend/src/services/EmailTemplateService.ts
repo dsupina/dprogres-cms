@@ -1,7 +1,7 @@
 /**
- * EmailTemplateService - Email template management for SaaS lifecycle events (SF-014)
+ * EmailTemplateService - Email template management for SaaS lifecycle events (SF-014, SF-015)
  *
- * This service provides 8 email templates for key SaaS events:
+ * This service provides 10 email templates for key SaaS events:
  * 1. welcome_email - User signup welcome
  * 2. subscription_confirmation - First payment confirmation
  * 3. payment_receipt - Recurring payment receipts
@@ -10,6 +10,8 @@
  * 6. quota_exceeded - Hard limit notification
  * 7. member_invite - Team member invitation
  * 8. subscription_canceled - Cancellation confirmation
+ * 9. trial_ending - Trial ending warning (3-day notice)
+ * 10. invoice_upcoming - Invoice upcoming notification (7-day notice)
  *
  * Features:
  * - Consistent branding across all templates
@@ -41,7 +43,9 @@ export type SaaSEmailTemplate =
   | 'quota_warning'
   | 'quota_exceeded'
   | 'member_invite'
-  | 'subscription_canceled';
+  | 'subscription_canceled'
+  | 'trial_ending'
+  | 'invoice_upcoming';
 
 /**
  * Common template variables available across all templates
@@ -145,6 +149,31 @@ export interface SubscriptionCanceledVariables extends BaseTemplateVariables {
 }
 
 /**
+ * Variables specific to trial ending template (SF-015)
+ */
+export interface TrialEndingVariables extends BaseTemplateVariables {
+  plan_tier: string;
+  trial_end_date: string;
+  days_remaining: number;
+  upgrade_url?: string;
+  features_at_risk?: string[];
+}
+
+/**
+ * Variables specific to invoice upcoming template (SF-015)
+ */
+export interface InvoiceUpcomingVariables extends BaseTemplateVariables {
+  plan_tier: string;
+  amount: string;
+  currency?: string;
+  billing_date: string;
+  billing_period?: string;
+  update_payment_url?: string;
+  /** Stripe collection method: 'charge_automatically' or 'send_invoice' */
+  collection_method?: 'charge_automatically' | 'send_invoice';
+}
+
+/**
  * Union type for all template variables
  */
 export type TemplateVariables =
@@ -155,7 +184,9 @@ export type TemplateVariables =
   | QuotaWarningVariables
   | QuotaExceededVariables
   | MemberInviteVariables
-  | SubscriptionCanceledVariables;
+  | SubscriptionCanceledVariables
+  | TrialEndingVariables
+  | InvoiceUpcomingVariables;
 
 /**
  * Generated email template output
@@ -208,6 +239,8 @@ const TEMPLATE_REQUIRED_FIELDS: Record<SaaSEmailTemplate, string[]> = {
   quota_exceeded: ['quota_dimension', 'current_usage', 'quota_limit'],
   member_invite: ['inviter_name', 'invite_url'],
   subscription_canceled: ['plan_tier'],
+  trial_ending: ['plan_tier', 'trial_end_date', 'days_remaining'],
+  invoice_upcoming: ['plan_tier', 'amount', 'billing_date'],
 };
 
 /**
@@ -285,6 +318,10 @@ export class EmailTemplateService {
         return this.generateMemberInvite(variables as MemberInviteVariables);
       case 'subscription_canceled':
         return this.generateSubscriptionCanceled(variables as SubscriptionCanceledVariables);
+      case 'trial_ending':
+        return this.generateTrialEnding(variables as TrialEndingVariables);
+      case 'invoice_upcoming':
+        return this.generateInvoiceUpcoming(variables as InvoiceUpcomingVariables);
       default:
         throw new Error(`Unknown template type: ${template}`);
     }
@@ -1046,6 +1083,195 @@ We'd love to hear why you decided to cancel: ${feedbackUrl}
 If you have any questions, please contact us at ${this.branding.supportEmail}.
 
 Thank you for being a ${this.branding.companyName} customer. We hope to see you again!
+
+Best regards,
+The ${this.branding.companyName} Team
+
+---
+${this.branding.companyName}
+${this.branding.websiteUrl}
+    `.trim();
+
+    return { subject, html, text };
+  }
+
+  /**
+   * Generate trial ending warning email (3-day notice) (SF-015)
+   */
+  private generateTrialEnding(variables: TrialEndingVariables): GeneratedTemplate {
+    const userName = variables.user_name || 'there';
+    const orgName = variables.organization_name || 'Your organization';
+    const planTier = variables.plan_tier;
+    const trialEndDate = variables.trial_end_date;
+    const daysRemaining = variables.days_remaining;
+    const upgradeUrl = variables.upgrade_url || this.branding.upgradeUrl;
+    const featuresAtRisk = variables.features_at_risk || [];
+
+    const urgencyColor = daysRemaining <= 1 ? '#dc2626' : '#f59e0b';
+    const subject = `Your ${this.branding.companyName} trial ends in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}`;
+
+    const html = this.wrapHtml(`
+      <div class="header" style="border-bottom-color: ${urgencyColor};">
+        <h1 style="color: ${urgencyColor};">Your Trial is Ending Soon</h1>
+        <div class="percentage-badge" style="background-color: ${urgencyColor};">${daysRemaining} Day${daysRemaining === 1 ? '' : 's'} Left</div>
+      </div>
+
+      <div class="content">
+        <p>Hi ${this.escapeHtml(userName)},</p>
+
+        <p>Your <strong>${this.branding.companyName} ${this.escapeHtml(planTier)}</strong> trial for <strong>${this.escapeHtml(orgName)}</strong> is ending soon.</p>
+
+        <div class="stats-box" style="border-color: ${urgencyColor}20; background-color: ${urgencyColor}10;">
+          <div class="stat-row">
+            <span class="stat-label">Plan</span>
+            <span class="stat-value">${this.escapeHtml(planTier)}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Trial Ends</span>
+            <span class="stat-value">${this.escapeHtml(trialEndDate)}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Days Remaining</span>
+            <span class="stat-value" style="color: ${urgencyColor};">${daysRemaining}</span>
+          </div>
+        </div>
+
+        ${featuresAtRisk.length > 0 ? `
+        <p><strong>After your trial ends, you'll lose access to:</strong></p>
+        <ul>
+          ${featuresAtRisk.map(feature => `<li>${this.escapeHtml(feature)}</li>`).join('')}
+        </ul>
+        ` : `
+        <p>After your trial ends, you'll be downgraded to the free tier with limited features.</p>
+        `}
+
+        <p><strong>Upgrade now to keep all your ${this.escapeHtml(planTier)} features!</strong></p>
+
+        <p style="text-align: center; margin: 30px 0;">
+          <a href="${this.escapeHtml(upgradeUrl)}" class="cta-button" style="background-color: ${urgencyColor};">Upgrade Now</a>
+        </p>
+
+        <p>Questions about our plans? Contact us at <a href="mailto:${this.branding.supportEmail}">${this.branding.supportEmail}</a>.</p>
+
+        <p>Best regards,<br>The ${this.branding.companyName} Team</p>
+      </div>
+    `);
+
+    const text = `
+Your Trial is Ending Soon
+
+Hi ${userName},
+
+Your ${this.branding.companyName} ${planTier} trial for ${orgName} is ending soon.
+
+Plan: ${planTier}
+Trial Ends: ${trialEndDate}
+Days Remaining: ${daysRemaining}
+${featuresAtRisk.length > 0 ? `
+After your trial ends, you'll lose access to:
+${featuresAtRisk.map(feature => `- ${feature}`).join('\n')}
+` : `
+After your trial ends, you'll be downgraded to the free tier with limited features.
+`}
+Upgrade now to keep all your ${planTier} features!
+
+Upgrade Now: ${upgradeUrl}
+
+Questions about our plans? Contact us at ${this.branding.supportEmail}.
+
+Best regards,
+The ${this.branding.companyName} Team
+
+---
+${this.branding.companyName}
+${this.branding.websiteUrl}
+    `.trim();
+
+    return { subject, html, text };
+  }
+
+  /**
+   * Generate invoice upcoming notification (7-day notice) (SF-015)
+   */
+  private generateInvoiceUpcoming(variables: InvoiceUpcomingVariables): GeneratedTemplate {
+    const userName = variables.user_name || 'there';
+    const orgName = variables.organization_name || 'Your organization';
+    const planTier = variables.plan_tier;
+    const amount = variables.amount;
+    const currency = variables.currency || 'USD';
+    const billingDate = variables.billing_date;
+    const billingPeriod = variables.billing_period || 'month';
+    const updatePaymentUrl = variables.update_payment_url || `${this.branding.dashboardUrl}/billing/payment-methods`;
+    const collectionMethod = variables.collection_method || 'charge_automatically';
+
+    // Different messaging based on collection method
+    const isAutoCharge = collectionMethod === 'charge_automatically';
+    const paymentMessage = isAutoCharge
+      ? `Your payment method on file will be charged automatically on ${this.escapeHtml(billingDate)}.`
+      : `An invoice will be sent to you on ${this.escapeHtml(billingDate)}. Please ensure payment is made by the due date to avoid service interruption.`;
+    const paymentMessageText = isAutoCharge
+      ? `Your payment method on file will be charged automatically on ${billingDate}.`
+      : `An invoice will be sent to you on ${billingDate}. Please ensure payment is made by the due date to avoid service interruption.`;
+
+    const subject = `Upcoming invoice: ${currency} ${amount} for ${this.branding.companyName} ${planTier}`;
+
+    const html = this.wrapHtml(`
+      <div class="header" style="border-bottom-color: #2563eb;">
+        <h1 style="color: #2563eb;">Upcoming Invoice</h1>
+      </div>
+
+      <div class="content">
+        <p>Hi ${this.escapeHtml(userName)},</p>
+
+        <p>This is a friendly reminder that your <strong>${this.branding.companyName} ${this.escapeHtml(planTier)}</strong> subscription for <strong>${this.escapeHtml(orgName)}</strong> will renew soon.</p>
+
+        <div class="stats-box">
+          <div class="stat-row">
+            <span class="stat-label">Plan</span>
+            <span class="stat-value">${this.escapeHtml(planTier)}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Amount</span>
+            <span class="stat-value" style="font-size: 18px;">${this.escapeHtml(currency)} ${this.escapeHtml(amount)}/${this.escapeHtml(billingPeriod)}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Billing Date</span>
+            <span class="stat-value">${this.escapeHtml(billingDate)}</span>
+          </div>
+        </div>
+
+        <p>${paymentMessage}</p>
+
+        <p>Need to update your payment method or change your plan?</p>
+
+        <p style="text-align: center; margin: 30px 0;">
+          <a href="${this.escapeHtml(updatePaymentUrl)}" class="cta-button">Manage Billing</a>
+        </p>
+
+        <p>Questions about your billing? Contact us at <a href="mailto:${this.branding.supportEmail}">${this.branding.supportEmail}</a>.</p>
+
+        <p>Best regards,<br>The ${this.branding.companyName} Team</p>
+      </div>
+    `);
+
+    const text = `
+Upcoming Invoice
+
+Hi ${userName},
+
+This is a friendly reminder that your ${this.branding.companyName} ${planTier} subscription for ${orgName} will renew soon.
+
+Plan: ${planTier}
+Amount: ${currency} ${amount}/${billingPeriod}
+Billing Date: ${billingDate}
+
+${paymentMessageText}
+
+Need to update your payment method or change your plan?
+
+Manage Billing: ${updatePaymentUrl}
+
+Questions about your billing? Contact us at ${this.branding.supportEmail}.
 
 Best regards,
 The ${this.branding.companyName} Team

@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { stripe, STRIPE_WEBHOOK_SECRET } from '../config/stripe';
 import { pool } from '../utils/database';
+import { emailService } from '../services/EmailService';
+import { organizationService } from '../services/OrganizationService';
 import type Stripe from 'stripe';
 
 const router = Router();
@@ -77,8 +79,8 @@ function isTransientError(error: any): boolean {
   }
 
   // Event ordering issues - subscription/invoice not yet created (transient)
-  // These errors explicitly say "Event will be retried" in the error message
-  if (message.includes('event will be retried')) {
+  // These errors explicitly say "TRANSIENT:" prefix or "will be retried" in the message
+  if (message.includes('transient:') || message.includes('will be retried')) {
     return true;
   }
 
@@ -226,7 +228,8 @@ router.post('/stripe', async (req: Request, res: Response) => {
 
       // Pass client to handlers to avoid deadlock (outer transaction holds row lock)
       // Pass preloaded subscription data to avoid Stripe API call inside transaction
-      await handleWebhookEvent(event, eventRecordId, client, preloadedSubscription);
+      // Handlers may return a post-commit callback for actions like sending emails
+      const postCommitCallback = await handleWebhookEvent(event, eventRecordId, client, preloadedSubscription);
 
       // Mark as successfully processed (clear any prior error from failed attempts)
       await client.query(
@@ -237,6 +240,12 @@ router.post('/stripe', async (req: Request, res: Response) => {
       );
 
       await client.query('COMMIT');
+
+      // Execute post-commit callback (e.g., send emails) AFTER transaction commits
+      // This prevents duplicate emails on retry since event is now marked as processed
+      if (postCommitCallback) {
+        postCommitCallback();
+      }
 
       return res.status(200).json({ received: true, retried: isRetry });
     } catch (error) {
@@ -285,15 +294,19 @@ router.post('/stripe', async (req: Request, res: Response) => {
   }
 });
 
+/** Callback to execute after transaction commits (for emails, notifications, etc.) */
+type PostCommitCallback = () => void;
+
 /**
  * Route webhook event to appropriate handler
+ * Returns an optional post-commit callback for actions that should run after transaction commits
  */
 async function handleWebhookEvent(
   event: Stripe.Event,
   eventRecordId: number,
   client?: any,
   preloadedSubscription?: any
-): Promise<void> {
+): Promise<PostCommitCallback | void> {
   switch (event.type) {
     case 'checkout.session.completed':
       await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session, eventRecordId, client, preloadedSubscription);
@@ -315,6 +328,27 @@ async function handleWebhookEvent(
     case 'invoice.payment_failed':
       await handleInvoiceFailed(event.data.object as Stripe.Invoice, eventRecordId, client);
       break;
+
+    // SF-015: New webhook handlers
+    case 'customer.updated':
+      await handleCustomerUpdated(event.data.object as Stripe.Customer, eventRecordId, client);
+      break;
+
+    case 'payment_method.attached':
+      await handlePaymentMethodAttached(event.data.object as Stripe.PaymentMethod, eventRecordId, client);
+      break;
+
+    case 'payment_method.detached':
+      await handlePaymentMethodDetached(event.data.object as Stripe.PaymentMethod, eventRecordId, client);
+      break;
+
+    case 'customer.subscription.trial_will_end':
+      // Returns post-commit callback for email sending
+      return await handleTrialWillEnd(event.data.object as Stripe.Subscription, eventRecordId, client);
+
+    case 'invoice.upcoming':
+      // Returns post-commit callback for email sending
+      return await handleInvoiceUpcoming(event.data.object as Stripe.Invoice, eventRecordId, client);
 
     default:
       console.log(`Unhandled event type: ${event.type}`);
@@ -964,6 +998,563 @@ async function handleInvoiceFailed(
     console.log(`Invoice payment failed: ${invoice.id}, amount: ${invoice.amount_due}`);
 
     // TODO: Send warning email via email service
+  } catch (error) {
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    if (useTransaction) {
+      client.release();
+    }
+  }
+}
+
+// ============================================
+// SF-015: New Webhook Handlers
+// ============================================
+
+/**
+ * Handle customer.updated event
+ * Syncs customer name to organization table
+ */
+async function handleCustomerUpdated(
+  customer: Stripe.Customer,
+  eventRecordId: number,
+  providedClient?: any
+): Promise<void> {
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
+
+  try {
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
+
+    // Find subscription by customer ID to get organization ID
+    const { rows: subRows } = await client.query(
+      `SELECT s.id, s.organization_id, o.name as org_name, o.billing_email as org_billing_email
+       FROM subscriptions s
+       JOIN organizations o ON s.organization_id = o.id
+       WHERE s.stripe_customer_id = $1
+       LIMIT 1`,
+      [customer.id]
+    );
+
+    if (subRows.length === 0) {
+      console.log(`No subscription found for customer ${customer.id}, skipping customer.updated`);
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
+      return;
+    }
+
+    const { organization_id: organizationId, org_name: currentOrgName, org_billing_email: currentBillingEmail } = subRows[0];
+
+    // Sync customer name and billing email to organization if changed
+    // Stripe customer.name may be company name or individual's name
+    // Stripe customer.email is the billing contact email
+    const nameChanged = customer.name && customer.name !== currentOrgName;
+    const emailChanged = customer.email && customer.email !== currentBillingEmail;
+
+    if (nameChanged || emailChanged) {
+      const updates: string[] = [];
+      const params: (string | number)[] = [];
+      let paramIndex = 1;
+
+      if (nameChanged) {
+        updates.push(`name = $${paramIndex++}`);
+        params.push(customer.name!);
+      }
+      if (emailChanged) {
+        updates.push(`billing_email = $${paramIndex++}`);
+        params.push(customer.email!);
+      }
+      updates.push('updated_at = NOW()');
+      params.push(organizationId);
+
+      await client.query(
+        `UPDATE organizations SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
+        params
+      );
+
+      if (nameChanged) {
+        console.log(`Updated organization ${organizationId} name from "${currentOrgName}" to "${customer.name}"`);
+      }
+      if (emailChanged) {
+        console.log(`Updated organization ${organizationId} billing_email from "${currentBillingEmail}" to "${customer.email}"`);
+      }
+    }
+
+    // Link event to organization
+    await client.query(
+      `UPDATE subscription_events
+       SET organization_id = $1
+       WHERE id = $2`,
+      [organizationId, eventRecordId]
+    );
+
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
+
+    console.log(`Customer updated: ${customer.id}, org: ${organizationId}`);
+  } catch (error) {
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    if (useTransaction) {
+      client.release();
+    }
+  }
+}
+
+/**
+ * Handle payment_method.attached event
+ * Stores payment method in payment_methods table
+ */
+async function handlePaymentMethodAttached(
+  paymentMethod: Stripe.PaymentMethod,
+  eventRecordId: number,
+  providedClient?: any
+): Promise<void> {
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
+
+  try {
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
+
+    // Get customer ID from the payment method
+    const customerId = typeof paymentMethod.customer === 'string'
+      ? paymentMethod.customer
+      : paymentMethod.customer?.id;
+
+    if (!customerId) {
+      throw new Error(`Payment method ${paymentMethod.id} has no customer attached`);
+    }
+
+    // Find organization by customer ID
+    const { rows: subRows } = await client.query(
+      `SELECT organization_id FROM subscriptions
+       WHERE stripe_customer_id = $1
+       LIMIT 1`,
+      [customerId]
+    );
+
+    if (subRows.length === 0) {
+      // Throw error to trigger retry - payment_method.attached can arrive before
+      // checkout.session.completed creates the subscription record
+      // Stripe will retry, and by then the subscription should exist
+      throw new Error(`TRANSIENT: No subscription found for customer ${customerId}, will retry payment_method.attached`);
+    }
+
+    const organizationId = subRows[0].organization_id;
+
+    // Extract card details if it's a card payment method
+    const cardBrand = paymentMethod.card?.brand || null;
+    const cardLast4 = paymentMethod.card?.last4 || null;
+    const cardExpMonth = paymentMethod.card?.exp_month || null;
+    const cardExpYear = paymentMethod.card?.exp_year || null;
+
+    // Check if this is the first active payment method (make it default)
+    // Exclude soft-deleted methods AND the current payment method (for idempotent retries)
+    // so a reattach of a previously-default card doesn't lose its default status
+    const { rows: existingMethods } = await client.query(
+      `SELECT id FROM payment_methods
+       WHERE organization_id = $1
+       AND deleted_at IS NULL
+       AND stripe_payment_method_id != $2`,
+      [organizationId, paymentMethod.id]
+    );
+    const shouldBeDefault = existingMethods.length === 0;
+
+    // Insert or update payment method
+    // On conflict (reattach/retry):
+    // - Clear deleted_at to reactivate
+    // - Preserve existing is_default if card was already default, OR set to true if no other active methods
+    // - Use GREATEST to ensure we never downgrade from default to non-default on retry
+    await client.query(
+      `INSERT INTO payment_methods (
+        organization_id, stripe_payment_method_id, type,
+        card_brand, card_last4, card_exp_month, card_exp_year,
+        is_default
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (stripe_payment_method_id) DO UPDATE
+      SET type = EXCLUDED.type,
+          card_brand = EXCLUDED.card_brand,
+          card_last4 = EXCLUDED.card_last4,
+          card_exp_month = EXCLUDED.card_exp_month,
+          card_exp_year = EXCLUDED.card_exp_year,
+          deleted_at = NULL,
+          is_default = GREATEST(payment_methods.is_default, EXCLUDED.is_default),
+          updated_at = NOW()`,
+      [
+        organizationId,
+        paymentMethod.id,
+        paymentMethod.type,
+        cardBrand,
+        cardLast4,
+        cardExpMonth,
+        cardExpYear,
+        shouldBeDefault,
+      ]
+    );
+
+    // Link event to organization
+    await client.query(
+      `UPDATE subscription_events
+       SET organization_id = $1
+       WHERE id = $2`,
+      [organizationId, eventRecordId]
+    );
+
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
+
+    console.log(`Payment method attached: ${paymentMethod.id}, org: ${organizationId}, type: ${paymentMethod.type}`);
+  } catch (error) {
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    if (useTransaction) {
+      client.release();
+    }
+  }
+}
+
+/**
+ * Handle payment_method.detached event
+ * Soft deletes payment method (sets deleted_at) to preserve audit trail
+ */
+async function handlePaymentMethodDetached(
+  paymentMethod: Stripe.PaymentMethod,
+  eventRecordId: number,
+  providedClient?: any
+): Promise<void> {
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
+
+  try {
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
+
+    // First, get the current is_default value BEFORE updating
+    // (RETURNING returns the value AFTER the update, which would always be FALSE)
+    const { rows: currentRows } = await client.query(
+      `SELECT id, organization_id, is_default FROM payment_methods
+       WHERE stripe_payment_method_id = $1 AND deleted_at IS NULL`,
+      [paymentMethod.id]
+    );
+
+    if (currentRows.length === 0) {
+      console.log(`Payment method ${paymentMethod.id} not found or already deleted, skipping`);
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
+      return;
+    }
+
+    const { id: paymentMethodId, organization_id: organizationId, is_default: wasDefault } = currentRows[0];
+
+    // Soft delete: set deleted_at and clear is_default (preserves audit trail)
+    await client.query(
+      `UPDATE payment_methods
+       SET deleted_at = NOW(), is_default = FALSE, updated_at = NOW()
+       WHERE id = $1`,
+      [paymentMethodId]
+    );
+
+    // If the detached method was the default, promote another active method to default
+    if (wasDefault) {
+      await client.query(
+        `UPDATE payment_methods
+         SET is_default = TRUE, updated_at = NOW()
+         WHERE organization_id = $1
+         AND deleted_at IS NULL
+         AND id = (
+           SELECT id FROM payment_methods
+           WHERE organization_id = $1 AND deleted_at IS NULL
+           ORDER BY created_at DESC
+           LIMIT 1
+         )`,
+        [organizationId]
+      );
+    }
+
+    // Link event to organization
+    await client.query(
+      `UPDATE subscription_events
+       SET organization_id = $1
+       WHERE id = $2`,
+      [organizationId, eventRecordId]
+    );
+
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
+
+    console.log(`Payment method detached: ${paymentMethod.id}, org: ${organizationId}`);
+  } catch (error) {
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    if (useTransaction) {
+      client.release();
+    }
+  }
+}
+
+/**
+ * Handle customer.subscription.trial_will_end event
+ * Sends a 3-day warning email to organization admins
+ */
+async function handleTrialWillEnd(
+  subscription: Stripe.Subscription,
+  eventRecordId: number,
+  providedClient?: any
+): Promise<PostCommitCallback | void> {
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
+
+  try {
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
+
+    // Find subscription and organization details
+    const { rows: subRows } = await client.query(
+      `SELECT s.id, s.organization_id, s.plan_tier, s.trial_end,
+              o.name as org_name
+       FROM subscriptions s
+       JOIN organizations o ON s.organization_id = o.id
+       WHERE s.stripe_subscription_id = $1`,
+      [subscription.id]
+    );
+
+    if (subRows.length === 0) {
+      console.log(`Subscription ${subscription.id} not found, skipping trial_will_end`);
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
+      return;
+    }
+
+    const { id: dbSubscriptionId, organization_id: organizationId, plan_tier: planTier, org_name: orgName } = subRows[0];
+
+    // Calculate days remaining
+    const trialEnd = subscription.trial_end ? fromUnixTimestamp(subscription.trial_end) : null;
+    const daysRemaining = trialEnd
+      ? Math.ceil((trialEnd.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+      : 3;
+
+    // Link event to organization and subscription
+    await client.query(
+      `UPDATE subscription_events
+       SET organization_id = $1, subscription_id = $2
+       WHERE id = $3`,
+      [organizationId, dbSubscriptionId, eventRecordId]
+    );
+
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
+
+    console.log(`Trial will end: subscription ${subscription.id}, org: ${organizationId}, days: ${daysRemaining}`);
+
+    // Return post-commit callback for email sending
+    // This ensures email is only sent AFTER the transaction commits successfully
+    // preventing duplicate emails on webhook retries
+    return () => {
+      organizationService.getAdminEmails(organizationId).then((adminsResult) => {
+        if (adminsResult.success && adminsResult.data && adminsResult.data.length > 0) {
+          const trialEndDate = trialEnd ? trialEnd.toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          }) : 'in 3 days';
+
+          const adminEmails = adminsResult.data;
+          const adminCount = adminEmails.length;
+          emailService.sendTrialEnding(adminEmails, {
+            organization_name: orgName,
+            plan_tier: planTier,
+            trial_end_date: trialEndDate,
+            days_remaining: Math.max(1, daysRemaining),
+            features_at_risk: [
+              'Unlimited sites and content',
+              'Priority support',
+              'Advanced collaboration features',
+              'Custom branding options',
+            ],
+          }).then(() => {
+            console.log(`Trial ending email sent to ${adminCount} admin(s) for org ${organizationId}`);
+          }).catch((emailError) => {
+            console.error(`Failed to send trial ending email for org ${organizationId}:`, emailError);
+          });
+        }
+      }).catch((error) => {
+        console.error(`Failed to get admin emails for org ${organizationId}:`, error);
+      });
+    };
+  } catch (error) {
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    if (useTransaction) {
+      client.release();
+    }
+  }
+}
+
+/**
+ * Handle invoice.upcoming event
+ * Sends a 7-day renewal notice email to organization admins
+ */
+async function handleInvoiceUpcoming(
+  invoice: Stripe.Invoice,
+  eventRecordId: number,
+  providedClient?: any
+): Promise<PostCommitCallback | void> {
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
+
+  try {
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
+
+    // Get subscription ID from invoice
+    const invoiceWithSub = invoice as StripeInvoiceWithSubscription;
+    const stripeSubId = typeof invoiceWithSub.subscription === 'string'
+      ? invoiceWithSub.subscription
+      : invoiceWithSub.subscription?.id;
+
+    if (!stripeSubId) {
+      console.log(`Invoice ${invoice.id} has no subscription, skipping invoice.upcoming`);
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
+      return;
+    }
+
+    // Find subscription and organization details
+    const { rows: subRows } = await client.query(
+      `SELECT s.id, s.organization_id, s.plan_tier, s.billing_cycle, s.amount_cents, s.currency,
+              o.name as org_name
+       FROM subscriptions s
+       JOIN organizations o ON s.organization_id = o.id
+       WHERE s.stripe_subscription_id = $1`,
+      [stripeSubId]
+    );
+
+    if (subRows.length === 0) {
+      console.log(`Subscription ${stripeSubId} not found, skipping invoice.upcoming`);
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
+      return;
+    }
+
+    const {
+      id: dbSubscriptionId,
+      organization_id: organizationId,
+      plan_tier: planTier,
+      billing_cycle: billingCycle,
+      amount_cents: amountCents,
+      currency,
+      org_name: orgName,
+    } = subRows[0];
+
+    // Link event to organization and subscription
+    await client.query(
+      `UPDATE subscription_events
+       SET organization_id = $1, subscription_id = $2
+       WHERE id = $3`,
+      [organizationId, dbSubscriptionId, eventRecordId]
+    );
+
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
+
+    console.log(`Invoice upcoming: ${invoice.id}, subscription: ${stripeSubId}, org: ${organizationId}`);
+
+    // Pre-compute email variables from invoice data (captured in closure)
+    // Use invoice amount_due from Stripe (includes coupons, tax, proration, metered usage)
+    const invoiceAmountCents = invoice.amount_due ?? invoice.total ?? amountCents;
+    const invoiceCurrency = invoice.currency?.toUpperCase() || currency?.toUpperCase() || 'USD';
+
+    // Handle Stripe currency decimal places
+    const zeroDecimalCurrencies = ['BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA', 'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF'];
+    const threeDecimalCurrencies = ['BHD', 'JOD', 'KWD', 'OMR', 'TND'];
+
+    let amount: string;
+    if (zeroDecimalCurrencies.includes(invoiceCurrency)) {
+      amount = invoiceAmountCents.toString();
+    } else if (threeDecimalCurrencies.includes(invoiceCurrency)) {
+      amount = (invoiceAmountCents / 1000).toFixed(3);
+    } else {
+      amount = (invoiceAmountCents / 100).toFixed(2);
+    }
+
+    // Calculate billing date from invoice timestamps
+    const billingTimestamp = invoice.next_payment_attempt || invoice.due_date;
+    const billingDate = billingTimestamp
+      ? fromUnixTimestamp(billingTimestamp)?.toLocaleDateString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })
+      : 'in approximately 7 days';
+
+    const collectionMethod = invoice.collection_method as 'charge_automatically' | 'send_invoice' | undefined;
+
+    // Return post-commit callback for email sending
+    // This ensures email is only sent AFTER the transaction commits successfully
+    // preventing duplicate emails on webhook retries
+    return () => {
+      organizationService.getAdminEmails(organizationId).then((adminsResult) => {
+        if (adminsResult.success && adminsResult.data && adminsResult.data.length > 0) {
+          const adminEmails = adminsResult.data;
+          const adminCount = adminEmails.length;
+
+          emailService.sendInvoiceUpcoming(adminEmails, {
+            organization_name: orgName,
+            plan_tier: planTier,
+            amount,
+            currency: invoiceCurrency,
+            billing_date: billingDate || 'soon',
+            billing_period: billingCycle === 'annual' ? 'year' : 'month',
+            collection_method: collectionMethod,
+          }).then(() => {
+            console.log(`Invoice upcoming email sent to ${adminCount} admin(s) for org ${organizationId}`);
+          }).catch((emailError) => {
+            console.error(`Failed to send invoice upcoming email for org ${organizationId}:`, emailError);
+          });
+        }
+      }).catch((error) => {
+        console.error(`Failed to get admin emails for org ${organizationId}:`, error);
+      });
+    };
   } catch (error) {
     if (useTransaction) {
       await client.query('ROLLBACK');

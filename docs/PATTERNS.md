@@ -2716,3 +2716,380 @@ describe('EmailTemplateService', () => {
 - **Configurable URLs**: upgrade_url, dashboard_url configurable per environment
 - **Urgency levels**: Visual cues for quota warnings
 - **Easy testing**: Templates can be unit tested in isolation
+
+---
+
+## Stripe Webhook Handler Pattern (SF-004, SF-015)
+
+### Transaction-Safe Webhook Processing
+**Purpose**: Reliable, idempotent webhook handling with database transactions
+
+```typescript
+// Main webhook handler with idempotency
+export async function handleWebhookEvent(
+  event: Stripe.Event,
+  client: PoolClient
+): Promise<{ processed: boolean; skipped?: boolean }> {
+  // 1. Check if already processed (idempotency)
+  const existingEvent = await client.query(
+    'SELECT id FROM webhook_events WHERE stripe_event_id = $1',
+    [event.id]
+  );
+
+  if (existingEvent.rows.length > 0) {
+    console.log(`[Webhook] Event ${event.id} already processed, skipping`);
+    return { processed: true, skipped: true };
+  }
+
+  // 2. Record event start
+  const eventRecord = await client.query(
+    `INSERT INTO webhook_events (stripe_event_id, event_type, status, created_at)
+     VALUES ($1, $2, 'processing', NOW())
+     RETURNING id`,
+    [event.id, event.type]
+  );
+  const eventRecordId = eventRecord.rows[0].id;
+
+  // 3. Route to specific handler
+  try {
+    switch (event.type) {
+      case 'customer.updated':
+        await handleCustomerUpdated(event.data.object as Stripe.Customer, eventRecordId, client);
+        break;
+      case 'payment_method.attached':
+        await handlePaymentMethodAttached(event.data.object as Stripe.PaymentMethod, eventRecordId, client);
+        break;
+      // ... more handlers
+      default:
+        console.log(`[Webhook] Unhandled event type: ${event.type}`);
+    }
+
+    // 4. Mark as processed
+    await client.query(
+      'UPDATE webhook_events SET status = $1, processed_at = NOW() WHERE id = $2',
+      ['processed', eventRecordId]
+    );
+
+    return { processed: true };
+  } catch (error) {
+    // 5. Mark as failed (allows retry)
+    await client.query(
+      'UPDATE webhook_events SET status = $1, error_message = $2, processed_at = NOW() WHERE id = $3',
+      ['failed', error.message, eventRecordId]
+    );
+    throw error;
+  }
+}
+```
+
+### Nested Transaction Pattern with providedClient
+**Pass client through nested calls for transaction integrity**
+
+```typescript
+// Handler receives client for nested queries
+async function handlePaymentMethodAttached(
+  paymentMethod: Stripe.PaymentMethod,
+  eventRecordId: number,
+  providedClient: PoolClient
+): Promise<void> {
+  const customerId = paymentMethod.customer as string;
+
+  // 1. Look up organization (within transaction)
+  const orgResult = await providedClient.query(
+    'SELECT id FROM organizations WHERE stripe_customer_id = $1',
+    [customerId]
+  );
+
+  if (orgResult.rows.length === 0) {
+    console.warn(`[Webhook] Organization not found for customer: ${customerId}`);
+    return;
+  }
+
+  const organizationId = orgResult.rows[0].id;
+
+  // 2. Check for existing payment methods
+  const existingMethods = await providedClient.query(
+    'SELECT id FROM payment_methods WHERE organization_id = $1 AND deleted_at IS NULL',
+    [organizationId]
+  );
+  const isFirstMethod = existingMethods.rows.length === 0;
+
+  // 3. Insert payment method
+  await providedClient.query(
+    `INSERT INTO payment_methods (
+      organization_id, stripe_payment_method_id, type, last_four,
+      exp_month, exp_year, brand, is_default, created_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+    ON CONFLICT (stripe_payment_method_id) DO UPDATE SET
+      last_four = EXCLUDED.last_four,
+      exp_month = EXCLUDED.exp_month,
+      exp_year = EXCLUDED.exp_year,
+      brand = EXCLUDED.brand,
+      deleted_at = NULL`,
+    [
+      organizationId,
+      paymentMethod.id,
+      paymentMethod.type,
+      paymentMethod.card?.last4 || null,
+      paymentMethod.card?.exp_month || null,
+      paymentMethod.card?.exp_year || null,
+      paymentMethod.card?.brand || null,
+      isFirstMethod, // First payment method becomes default
+    ]
+  );
+
+  console.log(`[Webhook] Payment method ${paymentMethod.id} attached to org ${organizationId}`);
+}
+```
+
+### Email Notifications Outside Transaction
+**Send emails after transaction commit for reliability**
+
+```typescript
+// Route handler pattern: emails outside transaction
+router.post('/stripe', async (req: Request, res: Response) => {
+  const client = await pool.connect();
+  let emailNotifications: Array<() => Promise<void>> = [];
+
+  try {
+    await client.query('BEGIN');
+
+    // Process webhook (may queue email notifications)
+    const result = await handleWebhookEvent(event, client, (notificationFn) => {
+      emailNotifications.push(notificationFn);
+    });
+
+    await client.query('COMMIT');
+
+    // Send emails AFTER successful commit
+    for (const sendEmail of emailNotifications) {
+      try {
+        await sendEmail();
+      } catch (emailError) {
+        // Log but don't fail - webhook was processed
+        console.error('[Webhook] Email notification failed:', emailError);
+      }
+    }
+
+    res.json({ received: true });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+// Handler queues notification instead of sending directly
+async function handleTrialWillEnd(
+  subscription: Stripe.Subscription,
+  eventRecordId: number,
+  client: PoolClient,
+  queueEmail?: (fn: () => Promise<void>) => void
+): Promise<void> {
+  // ... database operations within transaction ...
+
+  // Queue email for after commit
+  if (queueEmail) {
+    queueEmail(async () => {
+      await emailService.sendTrialEnding(adminEmails, {
+        plan_tier: subscription.items.data[0]?.price?.product?.name || 'Pro',
+        trial_end_date: trialEndFormatted,
+        days_remaining: 3,
+        features_at_risk: ['Priority Support', 'Advanced Analytics'],
+      });
+    });
+  }
+}
+```
+
+### Soft Delete Pattern for Payment Methods
+**Use deleted_at instead of hard delete for audit trail**
+
+```typescript
+async function handlePaymentMethodDetached(
+  paymentMethod: Stripe.PaymentMethod,
+  eventRecordId: number,
+  providedClient: PoolClient
+): Promise<void> {
+  // Soft delete - preserves audit trail
+  const result = await providedClient.query(
+    `UPDATE payment_methods
+     SET deleted_at = NOW(), is_default = false
+     WHERE stripe_payment_method_id = $1 AND deleted_at IS NULL
+     RETURNING organization_id, is_default`,
+    [paymentMethod.id]
+  );
+
+  if (result.rows.length === 0) {
+    console.log(`[Webhook] Payment method ${paymentMethod.id} not found or already deleted`);
+    return;
+  }
+
+  // Promote another method to default if this was default
+  const { organization_id, is_default } = result.rows[0];
+  if (is_default) {
+    await providedClient.query(
+      `UPDATE payment_methods
+       SET is_default = true
+       WHERE organization_id = $1 AND deleted_at IS NULL
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [organization_id]
+    );
+  }
+}
+```
+
+### Customer Data Sync Pattern
+**Sync Stripe customer updates to local database**
+
+```typescript
+async function handleCustomerUpdated(
+  customer: Stripe.Customer,
+  eventRecordId: number,
+  providedClient: PoolClient
+): Promise<void> {
+  // Only sync non-sensitive fields
+  const result = await providedClient.query(
+    `UPDATE organizations
+     SET
+       name = COALESCE($1, name),
+       billing_email = COALESCE($2, billing_email),
+       updated_at = NOW()
+     WHERE stripe_customer_id = $3
+     RETURNING id, name`,
+    [
+      customer.name,
+      customer.email,
+      customer.id,
+    ]
+  );
+
+  if (result.rows.length === 0) {
+    console.warn(`[Webhook] Organization not found for customer: ${customer.id}`);
+    return;
+  }
+
+  console.log(`[Webhook] Synced customer data for org ${result.rows[0].id}`);
+}
+```
+
+### Testing Pattern for Webhooks
+**Mock database client and verify transaction integrity**
+
+```typescript
+describe('Webhook Handlers', () => {
+  let mockClient: jest.Mocked<PoolClient>;
+
+  beforeEach(() => {
+    mockClient = {
+      query: jest.fn(),
+      release: jest.fn(),
+    } as unknown as jest.Mocked<PoolClient>;
+
+    // Reset to default success responses
+    mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
+  });
+
+  it('should handle payment_method.attached', async () => {
+    // Setup: org lookup returns result
+    mockClient.query
+      .mockResolvedValueOnce({ rows: [{ id: 1 }] }) // org lookup
+      .mockResolvedValueOnce({ rows: [] })          // existing methods
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // insert
+
+    const event = createStripeEvent('payment_method.attached', {
+      id: 'pm_123',
+      customer: 'cus_123',
+      type: 'card',
+      card: { last4: '4242', exp_month: 12, exp_year: 2025, brand: 'visa' },
+    });
+
+    await handlePaymentMethodAttached(
+      event.data.object as Stripe.PaymentMethod,
+      1,
+      mockClient
+    );
+
+    // Verify INSERT was called with correct params
+    expect(mockClient.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO payment_methods'),
+      expect.arrayContaining(['pm_123', 'card', '4242'])
+    );
+  });
+
+  it('should handle idempotent retry', async () => {
+    // Simulate already-processed event
+    mockClient.query.mockResolvedValueOnce({
+      rows: [{ id: 1 }], // Event already exists
+    });
+
+    const result = await handleWebhookEvent(event, mockClient);
+
+    expect(result.skipped).toBe(true);
+    expect(mockClient.query).toHaveBeenCalledTimes(1); // Only idempotency check
+  });
+});
+```
+
+### Error Handling and Retry
+**Mark failed events for retry processing**
+
+```typescript
+// Failed events can be retried via admin endpoint
+router.post('/webhooks/retry/:eventId', async (req, res) => {
+  const { eventId } = req.params;
+
+  const event = await pool.query(
+    'SELECT * FROM webhook_events WHERE id = $1 AND status = $2',
+    [eventId, 'failed']
+  );
+
+  if (event.rows.length === 0) {
+    return res.status(404).json({ error: 'Failed event not found' });
+  }
+
+  // Re-fetch from Stripe and reprocess
+  const stripeEvent = await stripe.events.retrieve(event.rows[0].stripe_event_id);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Reset status for reprocessing
+    await client.query(
+      'UPDATE webhook_events SET status = $1 WHERE id = $2',
+      ['processing', eventId]
+    );
+
+    await handleWebhookEvent(stripeEvent, client);
+    await client.query('COMMIT');
+
+    res.json({ success: true });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
+  }
+});
+```
+
+**Key Patterns**:
+- **Idempotency**: Check stripe_event_id before processing
+- **Transaction safety**: All database ops in single transaction
+- **providedClient**: Pass client to nested handlers
+- **Email after commit**: Queue notifications, send after COMMIT
+- **Soft delete**: Use deleted_at for audit trail
+- **Status tracking**: processing → processed/failed
+- **Error recovery**: Failed events can be retried
+
+**Handled Events (SF-015)**:
+| Event | Handler | Action |
+|-------|---------|--------|
+| `customer.updated` | `handleCustomerUpdated` | Sync name/email to org |
+| `payment_method.attached` | `handlePaymentMethodAttached` | Store card details |
+| `payment_method.detached` | `handlePaymentMethodDetached` | Soft delete, promote default |
+| `customer.subscription.trial_will_end` | `handleTrialWillEnd` | Send 3-day warning email |
+| `invoice.upcoming` | `handleInvoiceUpcoming` | Send 7-day renewal notice |
