@@ -1152,9 +1152,10 @@ async function handlePaymentMethodAttached(
     const cardExpMonth = paymentMethod.card?.exp_month || null;
     const cardExpYear = paymentMethod.card?.exp_year || null;
 
-    // Check if this is the first payment method (make it default)
+    // Check if this is the first active payment method (make it default)
+    // Exclude soft-deleted methods so a new card becomes default after all others are detached
     const { rows: existingMethods } = await client.query(
-      `SELECT id FROM payment_methods WHERE organization_id = $1`,
+      `SELECT id FROM payment_methods WHERE organization_id = $1 AND deleted_at IS NULL`,
       [organizationId]
     );
     const isDefault = existingMethods.length === 0;
