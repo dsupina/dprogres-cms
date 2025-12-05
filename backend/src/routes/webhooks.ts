@@ -1164,15 +1164,22 @@ async function handlePaymentMethodAttached(
     const cardExpYear = paymentMethod.card?.exp_year || null;
 
     // Check if this is the first active payment method (make it default)
-    // Exclude soft-deleted methods so a new card becomes default after all others are detached
+    // Exclude soft-deleted methods AND the current payment method (for idempotent retries)
+    // so a reattach of a previously-default card doesn't lose its default status
     const { rows: existingMethods } = await client.query(
-      `SELECT id FROM payment_methods WHERE organization_id = $1 AND deleted_at IS NULL`,
-      [organizationId]
+      `SELECT id FROM payment_methods
+       WHERE organization_id = $1
+       AND deleted_at IS NULL
+       AND stripe_payment_method_id != $2`,
+      [organizationId, paymentMethod.id]
     );
-    const isDefault = existingMethods.length === 0;
+    const shouldBeDefault = existingMethods.length === 0;
 
     // Insert or update payment method
-    // On conflict (reattach): clear deleted_at to reactivate, update is_default based on current active methods
+    // On conflict (reattach/retry):
+    // - Clear deleted_at to reactivate
+    // - Preserve existing is_default if card was already default, OR set to true if no other active methods
+    // - Use GREATEST to ensure we never downgrade from default to non-default on retry
     await client.query(
       `INSERT INTO payment_methods (
         organization_id, stripe_payment_method_id, type,
@@ -1186,7 +1193,7 @@ async function handlePaymentMethodAttached(
           card_exp_month = EXCLUDED.card_exp_month,
           card_exp_year = EXCLUDED.card_exp_year,
           deleted_at = NULL,
-          is_default = EXCLUDED.is_default,
+          is_default = GREATEST(payment_methods.is_default, EXCLUDED.is_default),
           updated_at = NOW()`,
       [
         organizationId,
@@ -1196,7 +1203,7 @@ async function handlePaymentMethodAttached(
         cardLast4,
         cardExpMonth,
         cardExpYear,
-        isDefault,
+        shouldBeDefault,
       ]
     );
 
