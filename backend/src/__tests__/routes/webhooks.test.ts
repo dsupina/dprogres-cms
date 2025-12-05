@@ -931,7 +931,7 @@ describe('Webhooks - Stripe Event Handler', () => {
       // Mock SELECT FOR UPDATE
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 13, processed_at: null }] });
 
-      // Mock DELETE payment method - was the default
+      // Mock soft delete (UPDATE with deleted_at) - was the default
       mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, organization_id: 1, is_default: true }] });
 
       // Mock UPDATE to promote next payment method to default
