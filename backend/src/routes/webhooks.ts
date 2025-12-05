@@ -1243,16 +1243,15 @@ async function handlePaymentMethodDetached(
       await client.query('BEGIN');
     }
 
-    // Soft delete: set deleted_at and clear is_default (preserves audit trail)
-    const { rows: deletedRows } = await client.query(
-      `UPDATE payment_methods
-       SET deleted_at = NOW(), is_default = FALSE, updated_at = NOW()
-       WHERE stripe_payment_method_id = $1 AND deleted_at IS NULL
-       RETURNING id, organization_id, is_default`,
+    // First, get the current is_default value BEFORE updating
+    // (RETURNING returns the value AFTER the update, which would always be FALSE)
+    const { rows: currentRows } = await client.query(
+      `SELECT id, organization_id, is_default FROM payment_methods
+       WHERE stripe_payment_method_id = $1 AND deleted_at IS NULL`,
       [paymentMethod.id]
     );
 
-    if (deletedRows.length === 0) {
+    if (currentRows.length === 0) {
       console.log(`Payment method ${paymentMethod.id} not found or already deleted, skipping`);
       if (useTransaction) {
         await client.query('COMMIT');
@@ -1260,7 +1259,15 @@ async function handlePaymentMethodDetached(
       return;
     }
 
-    const { organization_id: organizationId, is_default: wasDefault } = deletedRows[0];
+    const { id: paymentMethodId, organization_id: organizationId, is_default: wasDefault } = currentRows[0];
+
+    // Soft delete: set deleted_at and clear is_default (preserves audit trail)
+    await client.query(
+      `UPDATE payment_methods
+       SET deleted_at = NOW(), is_default = FALSE, updated_at = NOW()
+       WHERE id = $1`,
+      [paymentMethodId]
+    );
 
     // If the detached method was the default, promote another active method to default
     if (wasDefault) {
