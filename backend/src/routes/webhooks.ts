@@ -228,7 +228,8 @@ router.post('/stripe', async (req: Request, res: Response) => {
 
       // Pass client to handlers to avoid deadlock (outer transaction holds row lock)
       // Pass preloaded subscription data to avoid Stripe API call inside transaction
-      await handleWebhookEvent(event, eventRecordId, client, preloadedSubscription);
+      // Handlers may return a post-commit callback for actions like sending emails
+      const postCommitCallback = await handleWebhookEvent(event, eventRecordId, client, preloadedSubscription);
 
       // Mark as successfully processed (clear any prior error from failed attempts)
       await client.query(
@@ -239,6 +240,12 @@ router.post('/stripe', async (req: Request, res: Response) => {
       );
 
       await client.query('COMMIT');
+
+      // Execute post-commit callback (e.g., send emails) AFTER transaction commits
+      // This prevents duplicate emails on retry since event is now marked as processed
+      if (postCommitCallback) {
+        postCommitCallback();
+      }
 
       return res.status(200).json({ received: true, retried: isRetry });
     } catch (error) {
@@ -287,15 +294,19 @@ router.post('/stripe', async (req: Request, res: Response) => {
   }
 });
 
+/** Callback to execute after transaction commits (for emails, notifications, etc.) */
+type PostCommitCallback = () => void;
+
 /**
  * Route webhook event to appropriate handler
+ * Returns an optional post-commit callback for actions that should run after transaction commits
  */
 async function handleWebhookEvent(
   event: Stripe.Event,
   eventRecordId: number,
   client?: any,
   preloadedSubscription?: any
-): Promise<void> {
+): Promise<PostCommitCallback | void> {
   switch (event.type) {
     case 'checkout.session.completed':
       await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session, eventRecordId, client, preloadedSubscription);
@@ -332,12 +343,12 @@ async function handleWebhookEvent(
       break;
 
     case 'customer.subscription.trial_will_end':
-      await handleTrialWillEnd(event.data.object as Stripe.Subscription, eventRecordId, client);
-      break;
+      // Returns post-commit callback for email sending
+      return await handleTrialWillEnd(event.data.object as Stripe.Subscription, eventRecordId, client);
 
     case 'invoice.upcoming':
-      await handleInvoiceUpcoming(event.data.object as Stripe.Invoice, eventRecordId, client);
-      break;
+      // Returns post-commit callback for email sending
+      return await handleInvoiceUpcoming(event.data.object as Stripe.Invoice, eventRecordId, client);
 
     default:
       console.log(`Unhandled event type: ${event.type}`);
@@ -1301,7 +1312,7 @@ async function handleTrialWillEnd(
   subscription: Stripe.Subscription,
   eventRecordId: number,
   providedClient?: any
-): Promise<void> {
+): Promise<PostCommitCallback | void> {
   // Use provided client (from outer transaction) or create new one
   const client = providedClient || await pool.connect();
   const useTransaction = !providedClient;
@@ -1349,40 +1360,44 @@ async function handleTrialWillEnd(
       await client.query('COMMIT');
     }
 
-    // Send trial ending email to organization admins (outside transaction)
-    const adminsResult = await organizationService.getAdminEmails(organizationId);
-
-    if (adminsResult.success && adminsResult.data && adminsResult.data.length > 0) {
-      const trialEndDate = trialEnd ? trialEnd.toLocaleDateString('en-US', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      }) : 'in 3 days';
-
-      // Fire-and-forget: don't await to avoid blocking webhook response (Stripe 5s timeout)
-      // Email delivery is best-effort; failures are logged but don't affect webhook processing
-      const adminEmails = adminsResult.data;
-      const adminCount = adminEmails.length;
-      emailService.sendTrialEnding(adminEmails, {
-        organization_name: orgName,
-        plan_tier: planTier,
-        trial_end_date: trialEndDate,
-        days_remaining: Math.max(1, daysRemaining),
-        features_at_risk: [
-          'Unlimited sites and content',
-          'Priority support',
-          'Advanced collaboration features',
-          'Custom branding options',
-        ],
-      }).then(() => {
-        console.log(`Trial ending email sent to ${adminCount} admin(s) for org ${organizationId}`);
-      }).catch((emailError) => {
-        console.error(`Failed to send trial ending email for org ${organizationId}:`, emailError);
-      });
-    }
-
     console.log(`Trial will end: subscription ${subscription.id}, org: ${organizationId}, days: ${daysRemaining}`);
+
+    // Return post-commit callback for email sending
+    // This ensures email is only sent AFTER the transaction commits successfully
+    // preventing duplicate emails on webhook retries
+    return () => {
+      organizationService.getAdminEmails(organizationId).then((adminsResult) => {
+        if (adminsResult.success && adminsResult.data && adminsResult.data.length > 0) {
+          const trialEndDate = trialEnd ? trialEnd.toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          }) : 'in 3 days';
+
+          const adminEmails = adminsResult.data;
+          const adminCount = adminEmails.length;
+          emailService.sendTrialEnding(adminEmails, {
+            organization_name: orgName,
+            plan_tier: planTier,
+            trial_end_date: trialEndDate,
+            days_remaining: Math.max(1, daysRemaining),
+            features_at_risk: [
+              'Unlimited sites and content',
+              'Priority support',
+              'Advanced collaboration features',
+              'Custom branding options',
+            ],
+          }).then(() => {
+            console.log(`Trial ending email sent to ${adminCount} admin(s) for org ${organizationId}`);
+          }).catch((emailError) => {
+            console.error(`Failed to send trial ending email for org ${organizationId}:`, emailError);
+          });
+        }
+      }).catch((error) => {
+        console.error(`Failed to get admin emails for org ${organizationId}:`, error);
+      });
+    };
   } catch (error) {
     if (useTransaction) {
       await client.query('ROLLBACK');
@@ -1403,7 +1418,7 @@ async function handleInvoiceUpcoming(
   invoice: Stripe.Invoice,
   eventRecordId: number,
   providedClient?: any
-): Promise<void> {
+): Promise<PostCommitCallback | void> {
   // Use provided client (from outer transaction) or create new one
   const client = providedClient || await pool.connect();
   const useTransaction = !providedClient;
@@ -1467,68 +1482,66 @@ async function handleInvoiceUpcoming(
       await client.query('COMMIT');
     }
 
-    // Send invoice upcoming email to organization admins (outside transaction)
-    const adminsResult = await organizationService.getAdminEmails(organizationId);
+    console.log(`Invoice upcoming: ${invoice.id}, subscription: ${stripeSubId}, org: ${organizationId}`);
 
-    if (adminsResult.success && adminsResult.data && adminsResult.data.length > 0) {
-      // Use invoice amount_due from Stripe (includes coupons, tax, proration, metered usage)
-      // Fallback to subscription amount if invoice amount not available
-      const invoiceAmountCents = invoice.amount_due ?? invoice.total ?? amountCents;
-      const invoiceCurrency = invoice.currency?.toUpperCase() || currency?.toUpperCase() || 'USD';
+    // Pre-compute email variables from invoice data (captured in closure)
+    // Use invoice amount_due from Stripe (includes coupons, tax, proration, metered usage)
+    const invoiceAmountCents = invoice.amount_due ?? invoice.total ?? amountCents;
+    const invoiceCurrency = invoice.currency?.toUpperCase() || currency?.toUpperCase() || 'USD';
 
-      // Handle Stripe currency decimal places:
-      // - Zero-decimal currencies (JPY, KRW, etc.): amount is in whole units, no division
-      // - Three-decimal currencies (BHD, KWD, etc.): amount is in fils/baisa, divide by 1000
-      // - Standard currencies (USD, EUR, etc.): amount is in cents, divide by 100
-      const zeroDecimalCurrencies = ['BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA', 'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF'];
-      const threeDecimalCurrencies = ['BHD', 'JOD', 'KWD', 'OMR', 'TND'];
+    // Handle Stripe currency decimal places
+    const zeroDecimalCurrencies = ['BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA', 'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF'];
+    const threeDecimalCurrencies = ['BHD', 'JOD', 'KWD', 'OMR', 'TND'];
 
-      let amount: string;
-      if (zeroDecimalCurrencies.includes(invoiceCurrency)) {
-        amount = invoiceAmountCents.toString();
-      } else if (threeDecimalCurrencies.includes(invoiceCurrency)) {
-        amount = (invoiceAmountCents / 1000).toFixed(3);
-      } else {
-        amount = (invoiceAmountCents / 100).toFixed(2);
-      }
-
-      // Calculate billing date from invoice timestamps
-      // - next_payment_attempt: used for auto-charge invoices (collection_method='charge_automatically')
-      // - due_date: used for send-invoice invoices (collection_method='send_invoice')
-      // - Fallback to generic message if neither is available
-      const billingTimestamp = invoice.next_payment_attempt || invoice.due_date;
-      const billingDate = billingTimestamp
-        ? fromUnixTimestamp(billingTimestamp)?.toLocaleDateString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-          })
-        : 'in approximately 7 days';
-
-      // Fire-and-forget: don't await to avoid blocking webhook response (Stripe 5s timeout)
-      // Email delivery is best-effort; failures are logged but don't affect webhook processing
-      const adminEmails = adminsResult.data;
-      const adminCount = adminEmails.length;
-      // Pass collection_method so email template uses correct messaging
-      // 'charge_automatically' = auto-charge, 'send_invoice' = manual payment
-      const collectionMethod = invoice.collection_method as 'charge_automatically' | 'send_invoice' | undefined;
-      emailService.sendInvoiceUpcoming(adminEmails, {
-        organization_name: orgName,
-        plan_tier: planTier,
-        amount,
-        currency: invoiceCurrency,
-        billing_date: billingDate || 'soon',
-        billing_period: billingCycle === 'annual' ? 'year' : 'month',
-        collection_method: collectionMethod,
-      }).then(() => {
-        console.log(`Invoice upcoming email sent to ${adminCount} admin(s) for org ${organizationId}`);
-      }).catch((emailError) => {
-        console.error(`Failed to send invoice upcoming email for org ${organizationId}:`, emailError);
-      });
+    let amount: string;
+    if (zeroDecimalCurrencies.includes(invoiceCurrency)) {
+      amount = invoiceAmountCents.toString();
+    } else if (threeDecimalCurrencies.includes(invoiceCurrency)) {
+      amount = (invoiceAmountCents / 1000).toFixed(3);
+    } else {
+      amount = (invoiceAmountCents / 100).toFixed(2);
     }
 
-    console.log(`Invoice upcoming: ${invoice.id}, subscription: ${stripeSubId}, org: ${organizationId}`);
+    // Calculate billing date from invoice timestamps
+    const billingTimestamp = invoice.next_payment_attempt || invoice.due_date;
+    const billingDate = billingTimestamp
+      ? fromUnixTimestamp(billingTimestamp)?.toLocaleDateString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })
+      : 'in approximately 7 days';
+
+    const collectionMethod = invoice.collection_method as 'charge_automatically' | 'send_invoice' | undefined;
+
+    // Return post-commit callback for email sending
+    // This ensures email is only sent AFTER the transaction commits successfully
+    // preventing duplicate emails on webhook retries
+    return () => {
+      organizationService.getAdminEmails(organizationId).then((adminsResult) => {
+        if (adminsResult.success && adminsResult.data && adminsResult.data.length > 0) {
+          const adminEmails = adminsResult.data;
+          const adminCount = adminEmails.length;
+
+          emailService.sendInvoiceUpcoming(adminEmails, {
+            organization_name: orgName,
+            plan_tier: planTier,
+            amount,
+            currency: invoiceCurrency,
+            billing_date: billingDate || 'soon',
+            billing_period: billingCycle === 'annual' ? 'year' : 'month',
+            collection_method: collectionMethod,
+          }).then(() => {
+            console.log(`Invoice upcoming email sent to ${adminCount} admin(s) for org ${organizationId}`);
+          }).catch((emailError) => {
+            console.error(`Failed to send invoice upcoming email for org ${organizationId}:`, emailError);
+          });
+        }
+      }).catch((error) => {
+        console.error(`Failed to get admin emails for org ${organizationId}:`, error);
+      });
+    };
   } catch (error) {
     if (useTransaction) {
       await client.query('ROLLBACK');
