@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { stripe, STRIPE_WEBHOOK_SECRET } from '../config/stripe';
 import { pool } from '../utils/database';
+import { emailService } from '../services/EmailService';
+import { organizationService } from '../services/OrganizationService';
 import type Stripe from 'stripe';
 
 const router = Router();
@@ -314,6 +316,27 @@ async function handleWebhookEvent(
 
     case 'invoice.payment_failed':
       await handleInvoiceFailed(event.data.object as Stripe.Invoice, eventRecordId, client);
+      break;
+
+    // SF-015: New webhook handlers
+    case 'customer.updated':
+      await handleCustomerUpdated(event.data.object as Stripe.Customer, eventRecordId, client);
+      break;
+
+    case 'payment_method.attached':
+      await handlePaymentMethodAttached(event.data.object as Stripe.PaymentMethod, eventRecordId, client);
+      break;
+
+    case 'payment_method.detached':
+      await handlePaymentMethodDetached(event.data.object as Stripe.PaymentMethod, eventRecordId, client);
+      break;
+
+    case 'customer.subscription.trial_will_end':
+      await handleTrialWillEnd(event.data.object as Stripe.Subscription, eventRecordId, client);
+      break;
+
+    case 'invoice.upcoming':
+      await handleInvoiceUpcoming(event.data.object as Stripe.Invoice, eventRecordId, client);
       break;
 
     default:
@@ -964,6 +987,482 @@ async function handleInvoiceFailed(
     console.log(`Invoice payment failed: ${invoice.id}, amount: ${invoice.amount_due}`);
 
     // TODO: Send warning email via email service
+  } catch (error) {
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    if (useTransaction) {
+      client.release();
+    }
+  }
+}
+
+// ============================================
+// SF-015: New Webhook Handlers
+// ============================================
+
+/**
+ * Handle customer.updated event
+ * Syncs customer name to organization table
+ */
+async function handleCustomerUpdated(
+  customer: Stripe.Customer,
+  eventRecordId: number,
+  providedClient?: any
+): Promise<void> {
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
+
+  try {
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
+
+    // Find subscription by customer ID to get organization ID
+    const { rows: subRows } = await client.query(
+      `SELECT s.id, s.organization_id, o.name as org_name
+       FROM subscriptions s
+       JOIN organizations o ON s.organization_id = o.id
+       WHERE s.stripe_customer_id = $1
+       LIMIT 1`,
+      [customer.id]
+    );
+
+    if (subRows.length === 0) {
+      console.log(`No subscription found for customer ${customer.id}, skipping customer.updated`);
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
+      return;
+    }
+
+    const { organization_id: organizationId, org_name: currentOrgName } = subRows[0];
+
+    // Sync customer name to organization if it changed
+    // Stripe customer.name may be company name or individual's name
+    if (customer.name && customer.name !== currentOrgName) {
+      await client.query(
+        `UPDATE organizations
+         SET name = $1, updated_at = NOW()
+         WHERE id = $2`,
+        [customer.name, organizationId]
+      );
+
+      console.log(`Updated organization ${organizationId} name from "${currentOrgName}" to "${customer.name}"`);
+    }
+
+    // Link event to organization
+    await client.query(
+      `UPDATE subscription_events
+       SET organization_id = $1
+       WHERE id = $2`,
+      [organizationId, eventRecordId]
+    );
+
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
+
+    console.log(`Customer updated: ${customer.id}, org: ${organizationId}`);
+  } catch (error) {
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    if (useTransaction) {
+      client.release();
+    }
+  }
+}
+
+/**
+ * Handle payment_method.attached event
+ * Stores payment method in payment_methods table
+ */
+async function handlePaymentMethodAttached(
+  paymentMethod: Stripe.PaymentMethod,
+  eventRecordId: number,
+  providedClient?: any
+): Promise<void> {
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
+
+  try {
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
+
+    // Get customer ID from the payment method
+    const customerId = typeof paymentMethod.customer === 'string'
+      ? paymentMethod.customer
+      : paymentMethod.customer?.id;
+
+    if (!customerId) {
+      throw new Error(`Payment method ${paymentMethod.id} has no customer attached`);
+    }
+
+    // Find organization by customer ID
+    const { rows: subRows } = await client.query(
+      `SELECT organization_id FROM subscriptions
+       WHERE stripe_customer_id = $1
+       LIMIT 1`,
+      [customerId]
+    );
+
+    if (subRows.length === 0) {
+      console.log(`No subscription found for customer ${customerId}, skipping payment_method.attached`);
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
+      return;
+    }
+
+    const organizationId = subRows[0].organization_id;
+
+    // Extract card details if it's a card payment method
+    const cardBrand = paymentMethod.card?.brand || null;
+    const cardLast4 = paymentMethod.card?.last4 || null;
+    const cardExpMonth = paymentMethod.card?.exp_month || null;
+    const cardExpYear = paymentMethod.card?.exp_year || null;
+
+    // Check if this is the first payment method (make it default)
+    const { rows: existingMethods } = await client.query(
+      `SELECT id FROM payment_methods WHERE organization_id = $1`,
+      [organizationId]
+    );
+    const isDefault = existingMethods.length === 0;
+
+    // Insert or update payment method
+    await client.query(
+      `INSERT INTO payment_methods (
+        organization_id, stripe_payment_method_id, type,
+        card_brand, card_last4, card_exp_month, card_exp_year,
+        is_default
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (stripe_payment_method_id) DO UPDATE
+      SET type = EXCLUDED.type,
+          card_brand = EXCLUDED.card_brand,
+          card_last4 = EXCLUDED.card_last4,
+          card_exp_month = EXCLUDED.card_exp_month,
+          card_exp_year = EXCLUDED.card_exp_year,
+          updated_at = NOW()`,
+      [
+        organizationId,
+        paymentMethod.id,
+        paymentMethod.type,
+        cardBrand,
+        cardLast4,
+        cardExpMonth,
+        cardExpYear,
+        isDefault,
+      ]
+    );
+
+    // Link event to organization
+    await client.query(
+      `UPDATE subscription_events
+       SET organization_id = $1
+       WHERE id = $2`,
+      [organizationId, eventRecordId]
+    );
+
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
+
+    console.log(`Payment method attached: ${paymentMethod.id}, org: ${organizationId}, type: ${paymentMethod.type}`);
+  } catch (error) {
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    if (useTransaction) {
+      client.release();
+    }
+  }
+}
+
+/**
+ * Handle payment_method.detached event
+ * Removes payment method from payment_methods table
+ */
+async function handlePaymentMethodDetached(
+  paymentMethod: Stripe.PaymentMethod,
+  eventRecordId: number,
+  providedClient?: any
+): Promise<void> {
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
+
+  try {
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
+
+    // Delete the payment method from our database
+    const { rows: deletedRows } = await client.query(
+      `DELETE FROM payment_methods
+       WHERE stripe_payment_method_id = $1
+       RETURNING id, organization_id, is_default`,
+      [paymentMethod.id]
+    );
+
+    if (deletedRows.length === 0) {
+      console.log(`Payment method ${paymentMethod.id} not found in database, skipping`);
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
+      return;
+    }
+
+    const { organization_id: organizationId, is_default: wasDefault } = deletedRows[0];
+
+    // If the deleted method was the default, promote another method to default
+    if (wasDefault) {
+      await client.query(
+        `UPDATE payment_methods
+         SET is_default = TRUE, updated_at = NOW()
+         WHERE organization_id = $1
+         AND id = (
+           SELECT id FROM payment_methods
+           WHERE organization_id = $1
+           ORDER BY created_at DESC
+           LIMIT 1
+         )`,
+        [organizationId]
+      );
+    }
+
+    // Link event to organization
+    await client.query(
+      `UPDATE subscription_events
+       SET organization_id = $1
+       WHERE id = $2`,
+      [organizationId, eventRecordId]
+    );
+
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
+
+    console.log(`Payment method detached: ${paymentMethod.id}, org: ${organizationId}`);
+  } catch (error) {
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    if (useTransaction) {
+      client.release();
+    }
+  }
+}
+
+/**
+ * Handle customer.subscription.trial_will_end event
+ * Sends a 3-day warning email to organization admins
+ */
+async function handleTrialWillEnd(
+  subscription: Stripe.Subscription,
+  eventRecordId: number,
+  providedClient?: any
+): Promise<void> {
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
+
+  try {
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
+
+    // Find subscription and organization details
+    const { rows: subRows } = await client.query(
+      `SELECT s.id, s.organization_id, s.plan_tier, s.trial_end,
+              o.name as org_name
+       FROM subscriptions s
+       JOIN organizations o ON s.organization_id = o.id
+       WHERE s.stripe_subscription_id = $1`,
+      [subscription.id]
+    );
+
+    if (subRows.length === 0) {
+      console.log(`Subscription ${subscription.id} not found, skipping trial_will_end`);
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
+      return;
+    }
+
+    const { id: dbSubscriptionId, organization_id: organizationId, plan_tier: planTier, org_name: orgName } = subRows[0];
+
+    // Calculate days remaining
+    const trialEnd = subscription.trial_end ? fromUnixTimestamp(subscription.trial_end) : null;
+    const daysRemaining = trialEnd
+      ? Math.ceil((trialEnd.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+      : 3;
+
+    // Link event to organization and subscription
+    await client.query(
+      `UPDATE subscription_events
+       SET organization_id = $1, subscription_id = $2
+       WHERE id = $3`,
+      [organizationId, dbSubscriptionId, eventRecordId]
+    );
+
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
+
+    // Send trial ending email to organization admins (outside transaction)
+    const adminsResult = await organizationService.getAdminEmails(organizationId);
+
+    if (adminsResult.success && adminsResult.data && adminsResult.data.length > 0) {
+      const trialEndDate = trialEnd ? trialEnd.toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }) : 'in 3 days';
+
+      await emailService.sendTrialEnding(adminsResult.data, {
+        organization_name: orgName,
+        plan_tier: planTier,
+        trial_end_date: trialEndDate,
+        days_remaining: Math.max(1, daysRemaining),
+        features_at_risk: [
+          'Unlimited sites and content',
+          'Priority support',
+          'Advanced collaboration features',
+          'Custom branding options',
+        ],
+      });
+
+      console.log(`Trial ending email sent to ${adminsResult.data.length} admin(s) for org ${organizationId}`);
+    }
+
+    console.log(`Trial will end: subscription ${subscription.id}, org: ${organizationId}, days: ${daysRemaining}`);
+  } catch (error) {
+    if (useTransaction) {
+      await client.query('ROLLBACK');
+    }
+    throw error;
+  } finally {
+    if (useTransaction) {
+      client.release();
+    }
+  }
+}
+
+/**
+ * Handle invoice.upcoming event
+ * Sends a 7-day renewal notice email to organization admins
+ */
+async function handleInvoiceUpcoming(
+  invoice: Stripe.Invoice,
+  eventRecordId: number,
+  providedClient?: any
+): Promise<void> {
+  // Use provided client (from outer transaction) or create new one
+  const client = providedClient || await pool.connect();
+  const useTransaction = !providedClient;
+
+  try {
+    if (useTransaction) {
+      await client.query('BEGIN');
+    }
+
+    // Get subscription ID from invoice
+    const invoiceWithSub = invoice as StripeInvoiceWithSubscription;
+    const stripeSubId = typeof invoiceWithSub.subscription === 'string'
+      ? invoiceWithSub.subscription
+      : invoiceWithSub.subscription?.id;
+
+    if (!stripeSubId) {
+      console.log(`Invoice ${invoice.id} has no subscription, skipping invoice.upcoming`);
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
+      return;
+    }
+
+    // Find subscription and organization details
+    const { rows: subRows } = await client.query(
+      `SELECT s.id, s.organization_id, s.plan_tier, s.billing_cycle, s.amount_cents, s.currency,
+              o.name as org_name
+       FROM subscriptions s
+       JOIN organizations o ON s.organization_id = o.id
+       WHERE s.stripe_subscription_id = $1`,
+      [stripeSubId]
+    );
+
+    if (subRows.length === 0) {
+      console.log(`Subscription ${stripeSubId} not found, skipping invoice.upcoming`);
+      if (useTransaction) {
+        await client.query('COMMIT');
+      }
+      return;
+    }
+
+    const {
+      id: dbSubscriptionId,
+      organization_id: organizationId,
+      plan_tier: planTier,
+      billing_cycle: billingCycle,
+      amount_cents: amountCents,
+      currency,
+      org_name: orgName,
+    } = subRows[0];
+
+    // Link event to organization and subscription
+    await client.query(
+      `UPDATE subscription_events
+       SET organization_id = $1, subscription_id = $2
+       WHERE id = $3`,
+      [organizationId, dbSubscriptionId, eventRecordId]
+    );
+
+    if (useTransaction) {
+      await client.query('COMMIT');
+    }
+
+    // Send invoice upcoming email to organization admins (outside transaction)
+    const adminsResult = await organizationService.getAdminEmails(organizationId);
+
+    if (adminsResult.success && adminsResult.data && adminsResult.data.length > 0) {
+      // Format amount from cents
+      const amount = (amountCents / 100).toFixed(2);
+
+      // Calculate billing date (approximately 7 days from now, based on the typical Stripe notification timing)
+      const billingDate = invoice.next_payment_attempt
+        ? fromUnixTimestamp(invoice.next_payment_attempt)?.toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          })
+        : 'in approximately 7 days';
+
+      await emailService.sendInvoiceUpcoming(adminsResult.data, {
+        organization_name: orgName,
+        plan_tier: planTier,
+        amount,
+        currency: currency?.toUpperCase() || 'USD',
+        billing_date: billingDate || 'soon',
+        billing_period: billingCycle === 'annual' ? 'year' : 'month',
+      });
+
+      console.log(`Invoice upcoming email sent to ${adminsResult.data.length} admin(s) for org ${organizationId}`);
+    }
+
+    console.log(`Invoice upcoming: ${invoice.id}, subscription: ${stripeSubId}, org: ${organizationId}`);
   } catch (error) {
     if (useTransaction) {
       await client.query('ROLLBACK');

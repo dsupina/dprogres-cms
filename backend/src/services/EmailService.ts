@@ -14,6 +14,8 @@ import {
   QuotaExceededVariables,
   MemberInviteVariables,
   SubscriptionCanceledVariables,
+  TrialEndingVariables,
+  InvoiceUpcomingVariables,
 } from './EmailTemplateService';
 
 /**
@@ -856,6 +858,26 @@ This is an automated notification from DProgres CMS.
   ): Promise<EmailSendResult> {
     return this.sendTemplatedEmail('subscription_canceled', to, variables);
   }
+
+  /**
+   * Send trial ending warning email (SF-015)
+   */
+  async sendTrialEnding(
+    to: EmailRecipient[],
+    variables: TrialEndingVariables
+  ): Promise<EmailSendResult> {
+    return this.sendTemplatedEmail('trial_ending', to, variables);
+  }
+
+  /**
+   * Send invoice upcoming notification (SF-015)
+   */
+  async sendInvoiceUpcoming(
+    to: EmailRecipient[],
+    variables: InvoiceUpcomingVariables
+  ): Promise<EmailSendResult> {
+    return this.sendTemplatedEmail('invoice_upcoming', to, variables);
+  }
 }
 
 // Export singleton instance
@@ -874,4 +896,6 @@ export {
   QuotaExceededVariables,
   MemberInviteVariables,
   SubscriptionCanceledVariables,
+  TrialEndingVariables,
+  InvoiceUpcomingVariables,
 } from './EmailTemplateService';

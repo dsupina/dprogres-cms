@@ -731,7 +731,7 @@ describe('EmailTemplateService (SF-014)', () => {
     });
   });
 
-  describe('All 8 Templates Generate Successfully', () => {
+  describe('All 10 Templates Generate Successfully', () => {
     const templates: Array<{ name: SaaSEmailTemplate; variables: Record<string, unknown> }> = [
       { name: 'welcome_email', variables: { user_name: 'Test' } },
       { name: 'subscription_confirmation', variables: { plan_tier: 'Pro', amount: '99' } },
@@ -741,6 +741,9 @@ describe('EmailTemplateService (SF-014)', () => {
       { name: 'quota_exceeded', variables: { quota_dimension: 'Sites', current_usage: 12, quota_limit: 10 } },
       { name: 'member_invite', variables: { inviter_name: 'John', invite_url: 'https://example.com' } },
       { name: 'subscription_canceled', variables: { plan_tier: 'Pro' } },
+      // SF-015: New templates
+      { name: 'trial_ending', variables: { plan_tier: 'Pro', trial_end_date: '2025-01-15', days_remaining: 3 } },
+      { name: 'invoice_upcoming', variables: { plan_tier: 'Pro', amount: '99', billing_date: '2025-01-20' } },
     ];
 
     templates.forEach(({ name, variables }) => {
@@ -761,6 +764,112 @@ describe('EmailTemplateService (SF-014)', () => {
         // All should have footer
         expect(result.html).toContain('DProgres CMS');
       });
+    });
+  });
+
+  // SF-015: New Template Tests
+  describe('Trial Ending Template (SF-015)', () => {
+    it('should generate trial ending email with required fields', () => {
+      const result = templateService.generateTemplate('trial_ending', {
+        plan_tier: 'Pro',
+        trial_end_date: 'Monday, January 15, 2025',
+        days_remaining: 3,
+      });
+
+      expect(result.subject).toContain('trial ends in 3 days');
+      expect(result.html).toContain('Your Trial is Ending Soon');
+      expect(result.html).toContain('Pro');
+      expect(result.html).toContain('Monday, January 15, 2025');
+      expect(result.html).toContain('3 Days Left');
+      expect(result.text).toContain('Trial Ends: Monday, January 15, 2025');
+    });
+
+    it('should use singular "day" for 1 day remaining', () => {
+      const result = templateService.generateTemplate('trial_ending', {
+        plan_tier: 'Pro',
+        trial_end_date: 'Tomorrow',
+        days_remaining: 1,
+      });
+
+      expect(result.subject).toContain('trial ends in 1 day');
+      expect(result.html).toContain('1 Day Left');
+    });
+
+    it('should include features at risk when provided', () => {
+      const result = templateService.generateTemplate('trial_ending', {
+        plan_tier: 'Pro',
+        trial_end_date: 'Soon',
+        days_remaining: 3,
+        features_at_risk: ['Unlimited sites', 'Priority support', 'Advanced analytics'],
+      });
+
+      expect(result.html).toContain("you'll lose access to:");
+      expect(result.html).toContain('Unlimited sites');
+      expect(result.html).toContain('Priority support');
+      expect(result.html).toContain('Advanced analytics');
+    });
+
+    it('should use default message when no features_at_risk provided', () => {
+      const result = templateService.generateTemplate('trial_ending', {
+        plan_tier: 'Pro',
+        trial_end_date: 'Soon',
+        days_remaining: 3,
+      });
+
+      expect(result.html).toContain("you'll be downgraded to the free tier");
+    });
+
+    it('should throw error when required fields are missing', () => {
+      expect(() => {
+        templateService.generateTemplate('trial_ending', { plan_tier: 'Pro', trial_end_date: 'Soon' } as any);
+      }).toThrow("Missing required fields for template 'trial_ending': days_remaining");
+    });
+  });
+
+  describe('Invoice Upcoming Template (SF-015)', () => {
+    it('should generate invoice upcoming email with required fields', () => {
+      const result = templateService.generateTemplate('invoice_upcoming', {
+        plan_tier: 'Pro',
+        amount: '99.00',
+        billing_date: 'Monday, January 20, 2025',
+      });
+
+      expect(result.subject).toContain('Upcoming invoice');
+      expect(result.subject).toContain('99.00');
+      expect(result.html).toContain('Upcoming Invoice');
+      expect(result.html).toContain('Pro');
+      expect(result.html).toContain('99.00');
+      expect(result.html).toContain('Monday, January 20, 2025');
+    });
+
+    it('should include billing period when provided', () => {
+      const result = templateService.generateTemplate('invoice_upcoming', {
+        plan_tier: 'Pro',
+        amount: '99.00',
+        billing_date: 'Soon',
+        billing_period: 'year',
+      });
+
+      expect(result.html).toContain('99.00/year');
+      expect(result.text).toContain('99.00/year');
+    });
+
+    it('should use custom currency when provided', () => {
+      const result = templateService.generateTemplate('invoice_upcoming', {
+        plan_tier: 'Pro',
+        amount: '99.00',
+        billing_date: 'Soon',
+        currency: 'EUR',
+      });
+
+      expect(result.subject).toContain('EUR');
+      expect(result.html).toContain('EUR');
+    });
+
+    it('should throw error when required fields are missing', () => {
+      expect(() => {
+        templateService.generateTemplate('invoice_upcoming', { plan_tier: 'Pro', amount: '99' } as any);
+      }).toThrow("Missing required fields for template 'invoice_upcoming': billing_date");
     });
   });
 });
