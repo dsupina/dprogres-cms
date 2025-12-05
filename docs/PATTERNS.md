@@ -2409,3 +2409,310 @@ describe('EmailService', () => {
 - **Delivery logging**: Track all email attempts
 - **Type-safe**: Full TypeScript support
 - **Graceful errors**: User-friendly error messages
+
+---
+
+## Email Template Pattern (SF-014)
+
+### Centralized Email Template Service
+**Purpose**: Consistent, branded email templates for SaaS lifecycle events
+
+```typescript
+import { emailTemplateService } from './services/EmailTemplateService';
+import { emailService } from './services/EmailService';
+
+// Generate email content from template
+const { html, text, subject } = emailTemplateService.generateTemplate('welcome_email', {
+  user_name: 'John Doe',
+  organization_name: 'Acme Corp',
+  login_url: 'https://app.example.com/login',
+});
+
+// Send via EmailService
+await emailService.sendEmail({
+  to: [{ email: 'john@acme.com', name: 'John Doe' }],
+  subject,
+  html,
+  text,
+});
+```
+
+### Template Variable Interpolation
+**Simple {{variable}} syntax for dynamic content**
+
+```typescript
+// Built-in interpolation method
+const result = emailTemplateService.interpolate(
+  'Hello {{name}}, your quota is at {{percentage}}%',
+  { name: 'John', percentage: 90 }
+);
+// Result: "Hello John, your quota is at 90%"
+
+// Handles missing variables gracefully (returns empty string)
+const safe = emailTemplateService.interpolate(
+  '{{greeting}}, {{name}}!',
+  { name: 'John' }
+);
+// Result: ", John!"
+
+// Converts non-string values to strings
+const numbers = emailTemplateService.interpolate(
+  'Count: {{count}}, Active: {{active}}',
+  { count: 42, active: true }
+);
+// Result: "Count: 42, Active: true"
+```
+
+### Branding Configuration Pattern
+**Consistent visual identity across all templates**
+
+```typescript
+// Option 1: Constructor configuration
+const templateService = new EmailTemplateService({
+  companyName: 'My CMS',
+  primaryColor: '#ff5500',
+  supportEmail: 'help@mycms.com',
+  dashboardUrl: 'https://app.mycms.com',
+  upgradeUrl: 'https://app.mycms.com/upgrade', // Configurable
+});
+
+// Option 2: Runtime update
+emailTemplateService.updateBranding({
+  companyName: 'Rebranded CMS',
+  primaryColor: '#00ff00',
+});
+
+// Option 3: Environment variables (defaults)
+// EMAIL_COMPANY_NAME=My CMS
+// EMAIL_PRIMARY_COLOR=#2563eb
+// EMAIL_SUPPORT_EMAIL=support@example.com
+// EMAIL_DASHBOARD_URL=https://app.example.com
+// EMAIL_UPGRADE_URL=https://app.example.com/billing/upgrade
+```
+
+### Template Type Safety Pattern
+**TypeScript interfaces for each template type**
+
+```typescript
+import {
+  SaaSEmailTemplate,
+  WelcomeEmailVariables,
+  PaymentFailedVariables,
+  QuotaWarningVariables,
+} from './services/EmailTemplateService';
+
+// Type-safe template generation
+function sendWelcome(user: User, org: Organization) {
+  const variables: WelcomeEmailVariables = {
+    user_name: user.name,
+    user_email: user.email,
+    organization_name: org.name,
+    login_url: `https://app.example.com/login`,
+    getting_started_url: `https://docs.example.com/start`,
+  };
+
+  return emailTemplateService.generateTemplate('welcome_email', variables);
+}
+
+// All 8 template types have specific interfaces:
+// - WelcomeEmailVariables
+// - SubscriptionConfirmationVariables
+// - PaymentReceiptVariables
+// - PaymentFailedVariables
+// - QuotaWarningVariables
+// - QuotaExceededVariables
+// - MemberInviteVariables
+// - SubscriptionCanceledVariables
+```
+
+### Convenience Methods Pattern (EmailService Integration)
+**Pre-built methods for each template type**
+
+```typescript
+import { emailService } from './services/EmailService';
+
+// Each template has a dedicated method
+await emailService.sendWelcomeEmail(
+  [{ email: 'user@example.com', name: 'User' }],
+  { user_name: 'User', organization_name: 'Acme' }
+);
+
+await emailService.sendPaymentFailed(
+  [{ email: 'billing@example.com' }],
+  {
+    plan_tier: 'Pro',
+    amount: '49.99',
+    failure_reason: 'Card declined',
+    update_payment_url: 'https://app.example.com/billing/update',
+  }
+);
+
+await emailService.sendMemberInvite(
+  [{ email: 'invitee@example.com' }],
+  {
+    inviter_name: 'Team Lead',
+    organization_name: 'Acme Corp',
+    role: 'Editor',
+    invite_url: 'https://app.example.com/invite/abc123',
+    expires_at: 'January 15, 2025',
+  }
+);
+
+// Generic method for dynamic template selection
+const templateType: SaaSEmailTemplate = getTemplateBasedOnEvent(event);
+await emailService.sendTemplatedEmail(templateType, recipients, variables);
+```
+
+### Responsive Email Design Pattern
+**Inline CSS for email client compatibility**
+
+```typescript
+// All templates use inline styles (not external CSS)
+// EmailTemplateService automatically wraps content with:
+// - Mobile-responsive viewport meta
+// - Fallback fonts (-apple-system, Roboto, Arial)
+// - Max-width container (600px)
+// - Centered layout with padding
+// - Footer with company info and copyright
+
+// Template structure:
+const html = emailTemplateService.wrapHtml(`
+  <div class="header">
+    <h1>Welcome!</h1>
+  </div>
+  <div class="content">
+    <p>Your content here...</p>
+  </div>
+  <!-- Footer automatically added -->
+`);
+```
+
+### XSS Protection Pattern
+**HTML entity escaping for user-provided values**
+
+```typescript
+// All user input is automatically escaped in templates
+const result = emailTemplateService.generateTemplate('welcome_email', {
+  user_name: '<script>alert("xss")</script>',
+  organization_name: 'Test & Co <Corp>',
+});
+
+// HTML output contains escaped entities:
+// &lt;script&gt;alert("xss")&lt;/script&gt;
+// Test &amp; Co &lt;Corp&gt;
+
+// Private escape method (used internally):
+private escapeHtml(text: string): string {
+  const htmlEntities: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  };
+  return text.replace(/[&<>"']/g, (char) => htmlEntities[char]);
+}
+```
+
+### Urgency Level Pattern (Quota Warnings)
+**Color-coded warnings for different severity levels**
+
+```typescript
+// Quota warning templates use color coding:
+// 80% (Notice):  Blue (#2563eb)  - Informational
+// 90% (Warning): Orange (#f59e0b) - Action suggested
+// 95% (Critical): Red (#dc2626) - Immediate action required
+
+// Template automatically applies styling based on percentage
+const warning = emailTemplateService.generateTemplate('quota_warning', {
+  quota_dimension: 'Sites',
+  quota_percentage: 95, // -> Red "Critical" styling
+  current_usage: 95,
+  quota_limit: 100,
+  remaining: 5,
+});
+
+// For 90%+, includes "Action Required" text and upgrade CTA button
+// For 80%, includes informational message without urgency
+```
+
+### Plain Text Fallback Pattern
+**Every template generates both HTML and plain text**
+
+```typescript
+const { html, text, subject } = emailTemplateService.generateTemplate('payment_receipt', {
+  plan_tier: 'Pro',
+  amount: '99.00',
+  invoice_number: 'INV-2025-001',
+});
+
+// HTML version: Full styling with buttons, badges, etc.
+// Text version: Clean text with URLs as plain links
+// Both contain identical information, different formatting
+
+// Text version structure:
+// - No HTML tags
+// - URLs as plain text links
+// - Company signature separator (---)
+// - Bullet points as dashes
+```
+
+### Testing Pattern
+**Comprehensive test coverage for templates**
+
+```typescript
+describe('EmailTemplateService', () => {
+  let templateService: EmailTemplateService;
+
+  beforeEach(() => {
+    templateService = new EmailTemplateService();
+  });
+
+  it('should generate all 8 templates successfully', () => {
+    const templates: SaaSEmailTemplate[] = [
+      'welcome_email',
+      'subscription_confirmation',
+      'payment_receipt',
+      'payment_failed',
+      'quota_warning',
+      'quota_exceeded',
+      'member_invite',
+      'subscription_canceled',
+    ];
+
+    templates.forEach((template) => {
+      const result = templateService.generateTemplate(template, getMinimalVariables(template));
+
+      expect(result.subject).toBeTruthy();
+      expect(result.html).toContain('<!DOCTYPE html>');
+      expect(result.text).toBeTruthy();
+      expect(result.text).not.toMatch(/<[a-z][\s\S]*>/i); // No HTML in text
+    });
+  });
+
+  it('should escape HTML entities in user input', () => {
+    const result = templateService.generateTemplate('welcome_email', {
+      user_name: '<script>alert("xss")</script>',
+    });
+
+    expect(result.html).not.toContain('<script>');
+    expect(result.html).toContain('&lt;script&gt;');
+  });
+
+  it('should handle missing optional variables gracefully', () => {
+    const result = templateService.generateTemplate('welcome_email', {});
+
+    expect(result.html).toContain('Hi there'); // Default fallback
+    expect(result.text).toContain('Hi there');
+  });
+});
+```
+
+**Benefits**:
+- **Type-safe templates**: Compile-time validation of template variables
+- **Consistent branding**: All emails share visual identity
+- **Dual format**: HTML and plain text for all templates
+- **XSS protection**: Automatic HTML entity escaping
+- **Configurable URLs**: upgrade_url, dashboard_url configurable per environment
+- **Urgency levels**: Visual cues for quota warnings
+- **Easy testing**: Templates can be unit tested in isolation
