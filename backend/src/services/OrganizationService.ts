@@ -609,6 +609,42 @@ export class OrganizationService extends EventEmitter {
       };
     }
   }
+
+  /**
+   * Get email addresses of organization admins (owners and admins)
+   * Used for sending notifications like quota warnings
+   *
+   * @param organizationId - The organization to get admin emails for
+   * @returns Array of admin email addresses with optional names
+   */
+  async getAdminEmails(
+    organizationId: number
+  ): Promise<ServiceResponse<Array<{ email: string; name?: string }>>> {
+    try {
+      const { rows } = await pool.query<{ email: string; name: string | null }>(
+        `SELECT u.email, u.name
+         FROM organization_members om
+         JOIN users u ON om.user_id = u.id
+         WHERE om.organization_id = $1
+           AND om.role IN ('owner', 'admin')
+           AND om.deleted_at IS NULL`,
+        [organizationId]
+      );
+
+      const emails = rows.map((row) => ({
+        email: row.email,
+        name: row.name || undefined,
+      }));
+
+      return { success: true, data: emails };
+    } catch (error: any) {
+      console.error('Error getting admin emails:', error);
+      return {
+        success: false,
+        error: 'Failed to retrieve admin emails',
+      };
+    }
+  }
 }
 
 // Export singleton instance

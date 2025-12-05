@@ -10,6 +10,14 @@ jest.mock('../../utils/database', () => ({
   },
 }));
 
+// Mock OrganizationService for EmailService
+const mockGetAdminEmails = jest.fn<() => Promise<any>>();
+jest.mock('../../services/OrganizationService', () => ({
+  organizationService: {
+    getAdminEmails: mockGetAdminEmails,
+  },
+}));
+
 // Import after mocks are defined
 import { QuotaService, QuotaWarningEvent } from '../../services/QuotaService';
 import { EmailService } from '../../services/EmailService';
@@ -20,6 +28,12 @@ describe('QuotaService Warning System (SF-012)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     quotaService = new QuotaService();
+
+    // Default mock for getAdminEmails - returns empty (no admins)
+    mockGetAdminEmails.mockResolvedValue({
+      success: true,
+      data: [],
+    });
   });
 
   describe('Spam Prevention', () => {
@@ -539,6 +553,42 @@ describe('QuotaService Warning System (SF-012)', () => {
 
       expect(warningEvents.length).toBe(0);
     });
+
+    it('should re-emit warning after clearWarningThreshold is called', async () => {
+      const warningEvents: QuotaWarningEvent[] = [];
+      quotaService.on('quota:warning', (event: QuotaWarningEvent) => {
+        warningEvents.push(event);
+      });
+
+      // Mock quota at 85%
+      mockPoolQuery.mockResolvedValue({
+        rows: [
+          {
+            dimension: 'posts',
+            current_usage: 85,
+            quota_limit: 100,
+            period_start: new Date(),
+            period_end: null,
+            last_reset_at: null,
+          },
+        ],
+      });
+
+      // First check - should emit warning
+      await quotaService.checkAndWarn(1, 'posts');
+      expect(warningEvents.length).toBe(1);
+
+      // Second check - should NOT emit (spam prevention)
+      await quotaService.checkAndWarn(1, 'posts');
+      expect(warningEvents.length).toBe(1);
+
+      // Clear the threshold (simulating email delivery failure)
+      quotaService.clearWarningThreshold(1, 'posts', 80);
+
+      // Third check - should emit again after threshold cleared
+      await quotaService.checkAndWarn(1, 'posts');
+      expect(warningEvents.length).toBe(2);
+    });
   });
 });
 
@@ -562,7 +612,13 @@ describe('EmailService (SF-012)', () => {
   });
 
   describe('Quota Warning Subscription', () => {
-    it('should subscribe to quota:warning events', () => {
+    it('should subscribe to quota:warning events and emit on successful send', async () => {
+      // Must have admins for email to be sent and event to be emitted
+      mockGetAdminEmails.mockResolvedValue({
+        success: true,
+        data: [{ email: 'admin@example.com', name: 'Admin' }],
+      });
+
       const quotaService = new QuotaService();
       const emailEvents: any[] = [];
 
@@ -584,6 +640,9 @@ describe('EmailService (SF-012)', () => {
       };
 
       quotaService.emit('quota:warning', warningEvent);
+
+      // Wait for async handleQuotaWarning to complete
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(emailEvents.length).toBe(1);
       expect(emailEvents[0].organizationId).toBe(1);
@@ -645,12 +704,25 @@ describe('EmailService (SF-012)', () => {
   });
 
   describe('Email Sending (Stub)', () => {
-    it('should return success for stub email send', async () => {
+    it('should return success for stub email send with html content', async () => {
+      // Quota warning emails should include generated HTML content
+      const warningData = {
+        organizationId: 1,
+        dimension: 'posts' as const,
+        dimensionLabel: 'Posts',
+        percentage: 80,
+        current: 80,
+        limit: 100,
+        remaining: 20,
+        timestamp: new Date(),
+      };
+
       const result = await emailService.sendEmail({
         to: [{ email: 'admin@example.com', name: 'Admin' }],
-        subject: 'Test Subject',
+        subject: emailService.getQuotaWarningSubject(warningData),
         template: 'quota_warning_80',
-        templateData: {},
+        html: emailService.generateQuotaWarningHtml(warningData),
+        text: emailService.generateQuotaWarningText(warningData),
       });
 
       expect(result.success).toBe(true);
