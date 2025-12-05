@@ -1442,12 +1442,21 @@ async function handleInvoiceUpcoming(
       const invoiceAmountCents = invoice.amount_due ?? invoice.total ?? amountCents;
       const invoiceCurrency = invoice.currency?.toUpperCase() || currency?.toUpperCase() || 'USD';
 
-      // Handle zero-decimal currencies (JPY, KRW, etc.) - don't divide by 100
+      // Handle Stripe currency decimal places:
+      // - Zero-decimal currencies (JPY, KRW, etc.): amount is in whole units, no division
+      // - Three-decimal currencies (BHD, KWD, etc.): amount is in fils/baisa, divide by 1000
+      // - Standard currencies (USD, EUR, etc.): amount is in cents, divide by 100
       const zeroDecimalCurrencies = ['BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA', 'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF'];
-      const isZeroDecimal = zeroDecimalCurrencies.includes(invoiceCurrency);
-      const amount = isZeroDecimal
-        ? invoiceAmountCents.toString()
-        : (invoiceAmountCents / 100).toFixed(2);
+      const threeDecimalCurrencies = ['BHD', 'JOD', 'KWD', 'OMR', 'TND'];
+
+      let amount: string;
+      if (zeroDecimalCurrencies.includes(invoiceCurrency)) {
+        amount = invoiceAmountCents.toString();
+      } else if (threeDecimalCurrencies.includes(invoiceCurrency)) {
+        amount = (invoiceAmountCents / 1000).toFixed(3);
+      } else {
+        amount = (invoiceAmountCents / 100).toFixed(2);
+      }
 
       // Calculate billing date (approximately 7 days from now, based on the typical Stripe notification timing)
       const billingDate = invoice.next_payment_attempt
