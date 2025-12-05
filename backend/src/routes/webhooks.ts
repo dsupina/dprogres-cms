@@ -79,8 +79,8 @@ function isTransientError(error: any): boolean {
   }
 
   // Event ordering issues - subscription/invoice not yet created (transient)
-  // These errors explicitly say "Event will be retried" in the error message
-  if (message.includes('event will be retried')) {
+  // These errors explicitly say "TRANSIENT:" prefix or "will be retried" in the message
+  if (message.includes('transient:') || message.includes('will be retried')) {
     return true;
   }
 
