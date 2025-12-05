@@ -1437,8 +1437,17 @@ async function handleInvoiceUpcoming(
     const adminsResult = await organizationService.getAdminEmails(organizationId);
 
     if (adminsResult.success && adminsResult.data && adminsResult.data.length > 0) {
-      // Format amount from cents
-      const amount = (amountCents / 100).toFixed(2);
+      // Use invoice amount_due from Stripe (includes coupons, tax, proration, metered usage)
+      // Fallback to subscription amount if invoice amount not available
+      const invoiceAmountCents = invoice.amount_due ?? invoice.total ?? amountCents;
+      const invoiceCurrency = invoice.currency?.toUpperCase() || currency?.toUpperCase() || 'USD';
+
+      // Handle zero-decimal currencies (JPY, KRW, etc.) - don't divide by 100
+      const zeroDecimalCurrencies = ['BIF', 'CLP', 'DJF', 'GNF', 'JPY', 'KMF', 'KRW', 'MGA', 'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF'];
+      const isZeroDecimal = zeroDecimalCurrencies.includes(invoiceCurrency);
+      const amount = isZeroDecimal
+        ? invoiceAmountCents.toString()
+        : (invoiceAmountCents / 100).toFixed(2);
 
       // Calculate billing date (approximately 7 days from now, based on the typical Stripe notification timing)
       const billingDate = invoice.next_payment_attempt
@@ -1454,7 +1463,7 @@ async function handleInvoiceUpcoming(
         organization_name: orgName,
         plan_tier: planTier,
         amount,
-        currency: currency?.toUpperCase() || 'USD',
+        currency: invoiceCurrency,
         billing_date: billingDate || 'soon',
         billing_period: billingCycle === 'annual' ? 'year' : 'month',
       });
