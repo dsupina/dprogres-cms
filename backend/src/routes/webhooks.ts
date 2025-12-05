@@ -1148,11 +1148,10 @@ async function handlePaymentMethodAttached(
     );
 
     if (subRows.length === 0) {
-      console.log(`No subscription found for customer ${customerId}, skipping payment_method.attached`);
-      if (useTransaction) {
-        await client.query('COMMIT');
-      }
-      return;
+      // Throw error to trigger retry - payment_method.attached can arrive before
+      // checkout.session.completed creates the subscription record
+      // Stripe will retry, and by then the subscription should exist
+      throw new Error(`TRANSIENT: No subscription found for customer ${customerId}, will retry payment_method.attached`);
     }
 
     const organizationId = subRows[0].organization_id;
