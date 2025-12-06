@@ -686,6 +686,80 @@ const upgrade = await subscriptionService.upgradeSubscription(
 
 ---
 
+#### Subscription Lifecycle Service (SF-016)
+**Purpose**: Subscription state machine management, grace period enforcement, and automatic downgrade to Free tier
+**Location**: `backend/src/services/SubscriptionLifecycleService.ts`
+**Status**: ✅ Completed (December 2025)
+
+```typescript
+// Usage Example
+import {
+  subscriptionLifecycleService,
+  GRACE_PERIOD_DAYS,
+  FREE_TIER_QUOTAS
+} from '../services/SubscriptionLifecycleService';
+
+// Handle subscription status transition (typically called from webhook handlers)
+const result = await subscriptionLifecycleService.handleStatusTransition(
+  subscriptionId: 1,
+  newStatus: 'past_due'
+);
+
+// Process expired grace periods (called by scheduled job)
+const expirations = await subscriptionLifecycleService.processGracePeriodExpirations();
+
+// Check for subscriptions needing grace period warnings (3 days before expiry)
+const warnings = await subscriptionLifecycleService.checkGracePeriodWarnings();
+
+// Manually downgrade an organization to free tier
+const downgrade = await subscriptionLifecycleService.downgradeToFreeTier(organizationId);
+
+// Reset quotas to free tier limits
+await subscriptionLifecycleService.resetQuotasToFreeTier(organizationId);
+
+// Get subscription status
+const status = await subscriptionLifecycleService.getSubscriptionStatus(organizationId);
+```
+
+**State Machine Transitions**:
+- `trialing → active` (payment succeeds)
+- `active → past_due` (payment fails, starts 7-day grace period)
+- `past_due → active` (payment retried, succeeds)
+- `past_due → canceled` (grace period expires after 7 days)
+- `active → canceled` (user cancels)
+- `* → canceled` (subscription.deleted webhook)
+
+**Grace Period Enforcement**:
+- 7-day grace period for past_due subscriptions
+- Automatic cancellation after grace period expires
+- Warning emails sent at 3 days remaining
+- Daily job (`gracePeriodCheck.ts`) processes expirations
+
+**Free Tier Quotas**:
+- Sites: 1
+- Posts: 100
+- Users: 1
+- Storage: 1GB (1073741824 bytes)
+- API Calls: 10,000/month
+
+**Lifecycle Events**:
+- `lifecycle:state_changed` - Fired on any status transition
+- `lifecycle:grace_period_started` - Fired when subscription enters past_due
+- `lifecycle:grace_period_warning` - Fired 3 days before expiration
+- `lifecycle:grace_period_expired` - Fired when grace period expires
+- `lifecycle:downgrade_completed` - Fired when org is downgraded to free
+- `lifecycle:quota_reset` - Fired when quotas are reset to free tier
+
+**Integration Points**:
+- Webhook handlers call `handleStatusTransition()` on status changes
+- Daily cron job runs `processGracePeriodExpirations()` and `checkGracePeriodWarnings()`
+- Integrates with EmailService for notification emails
+- Invalidates subscription cache on tier changes
+
+**Tests**: `backend/src/__tests__/services/SubscriptionLifecycleService.test.ts` (20 tests, 100% passing)
+
+---
+
 #### Quota Service (SF-009)
 **Purpose**: Usage quota tracking and enforcement with atomic operations
 **Location**: `backend/src/services/QuotaService.ts`

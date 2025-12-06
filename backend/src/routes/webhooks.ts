@@ -3,6 +3,8 @@ import { stripe, STRIPE_WEBHOOK_SECRET } from '../config/stripe';
 import { pool } from '../utils/database';
 import { emailService } from '../services/EmailService';
 import { organizationService } from '../services/OrganizationService';
+import { subscriptionLifecycleService, GRACE_PERIOD_DAYS } from '../services/SubscriptionLifecycleService';
+import { invalidateSubscriptionCache } from '../middleware/quota';
 import type Stripe from 'stripe';
 
 const router = Router();
@@ -318,8 +320,8 @@ async function handleWebhookEvent(
       break;
 
     case 'customer.subscription.deleted':
-      await handleSubscriptionDeleted(event.data.object as Stripe.Subscription, eventRecordId, client);
-      break;
+      // SF-016: Returns post-commit callback for downgrade email
+      return await handleSubscriptionDeleted(event.data.object as Stripe.Subscription, eventRecordId, client);
 
     case 'invoice.payment_succeeded':
       await handleInvoicePaid(event.data.object as Stripe.Invoice, eventRecordId, client);
@@ -661,13 +663,13 @@ async function handleSubscriptionUpdated(
 
 /**
  * Handle customer.subscription.deleted event
- * Marks subscription as canceled
+ * Marks subscription as canceled AND downgrades organization to free tier (SF-016)
  */
 async function handleSubscriptionDeleted(
   subscription: Stripe.Subscription,
   eventRecordId: number,
   providedClient?: any
-): Promise<void> {
+): Promise<PostCommitCallback | void> {
   // Use provided client (from outer transaction) or create new one
   const client = providedClient || await pool.connect();
   const useTransaction = !providedClient;
@@ -698,19 +700,100 @@ async function handleSubscriptionDeleted(
       );
     }
 
+    const { id: dbSubscriptionId, organization_id: organizationId } = rows[0];
+
+    // SF-016: Downgrade organization to free tier
+    // Update organization plan_tier to free
+    await client.query(
+      `UPDATE organizations
+       SET plan_tier = 'free', updated_at = NOW()
+       WHERE id = $1`,
+      [organizationId]
+    );
+
+    // SF-016: Reset quotas to free tier limits
+    const freeTierQuotas = [
+      { dimension: 'sites', limit: 1 },
+      { dimension: 'posts', limit: 100 },
+      { dimension: 'users', limit: 1 },
+      { dimension: 'storage_bytes', limit: 1073741824 }, // 1GB
+      { dimension: 'api_calls', limit: 10000 },
+    ];
+
+    for (const quota of freeTierQuotas) {
+      await client.query(
+        `UPDATE usage_quotas
+         SET quota_limit = $1, updated_at = NOW()
+         WHERE organization_id = $2 AND dimension = $3`,
+        [quota.limit, organizationId, quota.dimension]
+      );
+    }
+
+    // Invalidate subscription cache so quota middleware picks up free tier
+    invalidateSubscriptionCache(organizationId);
+
     // Link event to subscription and organization
     await client.query(
       `UPDATE subscription_events
        SET organization_id = $1, subscription_id = $2
        WHERE id = $3`,
-      [rows[0].organization_id, rows[0].id, eventRecordId]
+      [organizationId, dbSubscriptionId, eventRecordId]
     );
 
     if (useTransaction) {
       await client.query('COMMIT');
     }
 
-    console.log(`Subscription deleted: ${subscription.id}`);
+    console.log(`Subscription deleted: ${subscription.id}, org ${organizationId} downgraded to free tier`);
+
+    // Emit lifecycle events (fire and forget, don't block webhook response)
+    subscriptionLifecycleService.emit('lifecycle:downgrade_completed', {
+      organizationId,
+      subscriptionId: dbSubscriptionId,
+      newTier: 'free',
+      timestamp: new Date(),
+    });
+
+    subscriptionLifecycleService.emit('lifecycle:quota_reset', {
+      organizationId,
+      newLimits: { sites: 1, posts: 100, users: 1, storage_bytes: 1073741824, api_calls: 10000 },
+      timestamp: new Date(),
+    });
+
+    // Return post-commit callback for email sending
+    return () => {
+      // Get organization name for email
+      pool.query('SELECT name FROM organizations WHERE id = $1', [organizationId])
+        .then(({ rows: orgRows }) => {
+          if (orgRows.length > 0) {
+            const orgName = orgRows[0].name;
+            organizationService.getAdminEmails(organizationId).then((adminsResult) => {
+              if (adminsResult.success && adminsResult.data && adminsResult.data.length > 0) {
+                emailService.sendSubscriptionCanceled(adminsResult.data, {
+                  organization_name: orgName,
+                  plan_tier: 'free',
+                  cancellation_date: new Date().toLocaleDateString('en-US', {
+                    weekday: 'long',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                  }),
+                  reactivate_url: `${process.env.APP_URL || 'https://app.dprogres.com'}/billing/reactivate`,
+                }).then(() => {
+                  console.log(`Subscription canceled email sent to admins for org ${organizationId}`);
+                }).catch((emailError) => {
+                  console.error(`Failed to send subscription canceled email for org ${organizationId}:`, emailError);
+                });
+              }
+            }).catch((error) => {
+              console.error(`Failed to get admin emails for org ${organizationId}:`, error);
+            });
+          }
+        })
+        .catch((error) => {
+          console.error(`Failed to get organization name for org ${organizationId}:`, error);
+        });
+    };
   } catch (error) {
     if (useTransaction) {
       await client.query('ROLLBACK');
@@ -940,7 +1023,14 @@ async function handleInvoiceFailed(
       ? invoice.billing_reason
       : (invoice.billing_reason?.substring(0, 100) || 'unknown');
 
-    // Update subscription status to past_due
+    // SF-016: Update subscription status to past_due (starts grace period)
+    // Get previous status to detect state change
+    const { rows: prevStatusRows } = await client.query(
+      `SELECT status FROM subscriptions WHERE id = $1`,
+      [dbSubscriptionId]
+    );
+    const previousStatus = prevStatusRows.length > 0 ? prevStatusRows[0].status : null;
+
     await client.query(
       `UPDATE subscriptions
        SET status = 'past_due',
@@ -948,6 +1038,17 @@ async function handleInvoiceFailed(
        WHERE id = $1`,
       [dbSubscriptionId]
     );
+
+    // SF-016: If transitioning to past_due, emit grace period started event
+    if (previousStatus && previousStatus !== 'past_due') {
+      subscriptionLifecycleService.emit('lifecycle:grace_period_started', {
+        organizationId,
+        subscriptionId: dbSubscriptionId,
+        gracePeriodDays: GRACE_PERIOD_DAYS,
+        timestamp: new Date(),
+      });
+      console.log(`Grace period started for org ${organizationId}, subscription ${dbSubscriptionId}`);
+    }
 
     // Create/update invoice record
     await client.query(
