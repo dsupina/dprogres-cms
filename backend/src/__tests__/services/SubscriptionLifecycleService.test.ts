@@ -216,8 +216,9 @@ describe('SubscriptionLifecycleService', () => {
       const pastDueDate = new Date();
       pastDueDate.setDate(pastDueDate.getDate() - 10); // 10 days ago
 
-      mockClient.query
-        .mockResolvedValueOnce({}) // BEGIN
+      // P1 FIX: New flow - initial read-only query via pool.query, then per-subscription transactions
+      // Step 1: Initial read-only query via pool.query (not through client)
+      mockPoolQuery
         .mockResolvedValueOnce({
           rows: [{
             id: 1,
@@ -229,7 +230,13 @@ describe('SubscriptionLifecycleService', () => {
             updated_at: pastDueDate,
             days_in_grace: 10,
           }],
-        }) // SELECT past_due subs
+        }) // SELECT past_due subs (read-only)
+        .mockResolvedValue({ rows: [{ name: 'Test Org' }] }); // For sendDowngradeNotification
+
+      // Step 2: Per-subscription transaction via client
+      mockClient.query
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({ rows: [{ id: 1, status: 'past_due' }] }) // SELECT FOR UPDATE (re-verify)
         .mockResolvedValueOnce({}) // UPDATE subscription to canceled
         .mockResolvedValueOnce({}) // UPDATE org plan_tier
         .mockResolvedValueOnce({}) // UPDATE quotas (sites)
@@ -239,7 +246,6 @@ describe('SubscriptionLifecycleService', () => {
         .mockResolvedValueOnce({}) // UPDATE quotas (api_calls)
         .mockResolvedValueOnce({}); // COMMIT
 
-      mockPoolQuery.mockResolvedValue({ rows: [{ name: 'Test Org' }] });
       mockGetAdminEmails.mockResolvedValue({ success: true, data: [{ email: 'admin@test.com' }] });
 
       const expirationEvents: any[] = [];
@@ -253,7 +259,10 @@ describe('SubscriptionLifecycleService', () => {
       expect(result.data?.[0].daysInGracePeriod).toBe(10);
       expect(mockInvalidateCache).toHaveBeenCalledWith(100);
       expect(expirationEvents.length).toBe(1);
-      // P1 FIX: Verify Stripe subscription was canceled
+
+      // P1 FIX: Stripe cancellation is now a post-commit action (fire-and-forget)
+      // Need to wait for the async post-commit actions to execute
+      await new Promise(resolve => setTimeout(resolve, 10));
       expect(mockStripeCancel).toHaveBeenCalledWith('sub_test123', { prorate: false });
     });
 
@@ -261,8 +270,8 @@ describe('SubscriptionLifecycleService', () => {
       const pastDueDate = new Date();
       pastDueDate.setDate(pastDueDate.getDate() - 10);
 
-      mockClient.query
-        .mockResolvedValueOnce({}) // BEGIN
+      // P1 FIX: New flow - initial read-only query via pool.query, then per-subscription transactions
+      mockPoolQuery
         .mockResolvedValueOnce({
           rows: [{
             id: 1,
@@ -275,6 +284,11 @@ describe('SubscriptionLifecycleService', () => {
             days_in_grace: 10,
           }],
         })
+        .mockResolvedValue({ rows: [{ name: 'Test Org' }] }); // For sendDowngradeNotification
+
+      mockClient.query
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({ rows: [{ id: 1, status: 'past_due' }] }) // SELECT FOR UPDATE
         .mockResolvedValueOnce({}) // UPDATE subscription
         .mockResolvedValueOnce({}) // UPDATE org
         .mockResolvedValueOnce({}) // quotas
@@ -287,7 +301,6 @@ describe('SubscriptionLifecycleService', () => {
       // Simulate Stripe error
       mockStripeCancel.mockRejectedValueOnce(new Error('Stripe API error'));
 
-      mockPoolQuery.mockResolvedValue({ rows: [{ name: 'Test Org' }] });
       mockGetAdminEmails.mockResolvedValue({ success: true, data: [] });
 
       const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -297,16 +310,17 @@ describe('SubscriptionLifecycleService', () => {
       // Should still succeed - local downgrade happens even if Stripe fails
       expect(result.success).toBe(true);
       expect(result.data?.length).toBe(1);
+
+      // P1 FIX: Stripe cancellation is now a post-commit action, need to wait for it
+      await new Promise(resolve => setTimeout(resolve, 10));
       expect(consoleSpy).toHaveBeenCalled();
 
       consoleSpy.mockRestore();
     });
 
     it('should return empty array when no subscriptions have expired', async () => {
-      mockClient.query
-        .mockResolvedValueOnce({}) // BEGIN
-        .mockResolvedValueOnce({ rows: [] }) // No expired subs
-        .mockResolvedValueOnce({}); // COMMIT
+      // P1 FIX: Initial query is now via pool.query, not client
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // No expired subs
 
       const result = await subscriptionLifecycleService.processGracePeriodExpirations();
 
@@ -315,9 +329,8 @@ describe('SubscriptionLifecycleService', () => {
     });
 
     it('should handle database errors gracefully', async () => {
-      mockClient.query
-        .mockResolvedValueOnce({}) // BEGIN
-        .mockRejectedValueOnce(new Error('Query failed')); // Fail
+      // P1 FIX: Initial query is now via pool.query
+      mockPoolQuery.mockRejectedValueOnce(new Error('Query failed'));
 
       const result = await subscriptionLifecycleService.processGracePeriodExpirations();
 
