@@ -557,6 +557,8 @@ async function handleSubscriptionUpdated(
 
     // If we have full metadata, use UPSERT (handles both created and updated)
     if (organizationId !== undefined && planTier && billingCycle) {
+      // SF-016 FIX: Don't reset updated_at if subscription is past_due
+      // This preserves the grace period timer for automatic cancellation
       const result = await client.query(
         `INSERT INTO subscriptions (
           organization_id, stripe_customer_id, stripe_subscription_id,
@@ -575,7 +577,11 @@ async function handleSubscriptionUpdated(
             canceled_at = EXCLUDED.canceled_at,
             amount_cents = EXCLUDED.amount_cents,
             currency = EXCLUDED.currency,
-            updated_at = NOW()
+            updated_at = CASE
+              WHEN subscriptions.status = 'past_due' AND EXCLUDED.status = 'past_due'
+              THEN subscriptions.updated_at
+              ELSE NOW()
+            END
         RETURNING id, organization_id`,
         [
           organizationId,
@@ -598,6 +604,8 @@ async function handleSubscriptionUpdated(
     } else {
       // Missing metadata, try UPDATE only (assumes row exists from checkout.session.completed)
       // This path handles dashboard upgrades/downgrades, so we must update pricing fields too
+      // SF-016 FIX: Don't reset updated_at if subscription remains in past_due status
+      // This preserves the grace period timer for automatic cancellation
       const result = await client.query(
         `UPDATE subscriptions
          SET stripe_price_id = $1,
@@ -608,7 +616,11 @@ async function handleSubscriptionUpdated(
              current_period_end = $6,
              cancel_at_period_end = $7,
              canceled_at = $8,
-             updated_at = NOW()
+             updated_at = CASE
+               WHEN status = 'past_due' AND $4 = 'past_due'
+               THEN updated_at
+               ELSE NOW()
+             END
          WHERE stripe_subscription_id = $9
          RETURNING id, organization_id`,
         [
