@@ -114,7 +114,11 @@ export function startGracePeriodJob(): CronJob | null {
   );
 
   console.log(`[GracePeriodJob] Scheduled for daily execution at 3:00 AM UTC`);
-  console.log(`[GracePeriodJob] Next run: ${job.nextDate().toISO()}`);
+  // CronJob uses nextDates() (plural) which returns an array
+  const nextRuns = job.nextDates(1);
+  if (nextRuns && nextRuns.length > 0) {
+    console.log(`[GracePeriodJob] Next run: ${nextRuns[0].toISO()}`);
+  }
 
   return job;
 }

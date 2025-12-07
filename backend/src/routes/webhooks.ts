@@ -1031,16 +1031,18 @@ async function handleInvoiceFailed(
     );
     const previousStatus = prevStatusRows.length > 0 ? prevStatusRows[0].status : null;
 
-    await client.query(
-      `UPDATE subscriptions
-       SET status = 'past_due',
-           updated_at = NOW()
-       WHERE id = $1`,
-      [dbSubscriptionId]
-    );
+    // SF-016 FIX: Only update updated_at when FIRST transitioning to past_due
+    // This prevents grace period timer from resetting on each payment retry
+    if (previousStatus !== 'past_due') {
+      await client.query(
+        `UPDATE subscriptions
+         SET status = 'past_due',
+             updated_at = NOW()
+         WHERE id = $1`,
+        [dbSubscriptionId]
+      );
 
-    // SF-016: If transitioning to past_due, emit grace period started event
-    if (previousStatus && previousStatus !== 'past_due') {
+      // Emit grace period started event only on first transition
       subscriptionLifecycleService.emit('lifecycle:grace_period_started', {
         organizationId,
         subscriptionId: dbSubscriptionId,
@@ -1048,6 +1050,15 @@ async function handleInvoiceFailed(
         timestamp: new Date(),
       });
       console.log(`Grace period started for org ${organizationId}, subscription ${dbSubscriptionId}`);
+    } else {
+      // Already past_due - just ensure status is set, don't reset updated_at
+      await client.query(
+        `UPDATE subscriptions
+         SET status = 'past_due'
+         WHERE id = $1`,
+        [dbSubscriptionId]
+      );
+      console.log(`Payment retry failed for org ${organizationId}, subscription ${dbSubscriptionId} (grace period continues)`);
     }
 
     // Create/update invoice record
