@@ -158,12 +158,17 @@ export class SubscriptionLifecycleService extends EventEmitter {
       // Update subscription status
       // P1 FIX: Only update updated_at when FIRST transitioning to past_due
       // This preserves the grace period timer on payment retries
+      // P2 FIX: Set canceled_at when transitioning to canceled for consistent data
       await client.query(
         `UPDATE subscriptions
          SET status = $1,
              updated_at = CASE
                WHEN status = 'past_due' AND $1 = 'past_due' THEN updated_at
                ELSE NOW()
+             END,
+             canceled_at = CASE
+               WHEN $1 = 'canceled' AND status != 'canceled' THEN NOW()
+               ELSE canceled_at
              END
          WHERE id = $2`,
         [newStatus, subscriptionId]
