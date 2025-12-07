@@ -156,9 +156,15 @@ export class SubscriptionLifecycleService extends EventEmitter {
       }
 
       // Update subscription status
+      // P1 FIX: Only update updated_at when FIRST transitioning to past_due
+      // This preserves the grace period timer on payment retries
       await client.query(
         `UPDATE subscriptions
-         SET status = $1, updated_at = NOW()
+         SET status = $1,
+             updated_at = CASE
+               WHEN status = 'past_due' AND $1 = 'past_due' THEN updated_at
+               ELSE NOW()
+             END
          WHERE id = $2`,
         [newStatus, subscriptionId]
       );
@@ -280,9 +286,11 @@ export class SubscriptionLifecycleService extends EventEmitter {
           }
 
           // Update status to canceled in our database
+          // Also set stripe_cancel_pending = true until Stripe confirms cancellation
           await client.query(
             `UPDATE subscriptions
-             SET status = 'canceled', canceled_at = NOW(), updated_at = NOW()
+             SET status = 'canceled', canceled_at = NOW(), updated_at = NOW(),
+                 stripe_cancel_pending = true
              WHERE id = $1`,
             [subscriptionId]
           );
@@ -319,19 +327,30 @@ export class SubscriptionLifecycleService extends EventEmitter {
                 await stripe.subscriptions.cancel(stripeSubscriptionId, {
                   prorate: false,
                 });
+                // P1 FIX: Clear the pending flag on successful Stripe cancellation
+                await pool.query(
+                  `UPDATE subscriptions SET stripe_cancel_pending = false WHERE id = $1`,
+                  [subscriptionId]
+                );
                 console.log(
                   `[SubscriptionLifecycle] Canceled Stripe subscription ${stripeSubscriptionId} ` +
                   `for org ${organizationId}`
                 );
               } catch (stripeError: any) {
                 if (stripeError.code === 'resource_missing') {
+                  // Already canceled in Stripe, clear the pending flag
+                  await pool.query(
+                    `UPDATE subscriptions SET stripe_cancel_pending = false WHERE id = $1`,
+                    [subscriptionId]
+                  );
                   console.log(
                     `[SubscriptionLifecycle] Stripe subscription ${stripeSubscriptionId} already canceled`
                   );
                 } else {
+                  // P1 FIX: Keep stripe_cancel_pending = true for retry on next job run
                   console.error(
-                    `[SubscriptionLifecycle] Failed to cancel Stripe subscription ${stripeSubscriptionId}:`,
-                    stripeError.message
+                    `[SubscriptionLifecycle] Failed to cancel Stripe subscription ${stripeSubscriptionId}: ` +
+                    `${stripeError.message}. Will retry on next job run.`
                   );
                 }
               }
@@ -371,6 +390,81 @@ export class SubscriptionLifecycleService extends EventEmitter {
       return {
         success: false,
         error: error.message || 'Failed to process grace period expirations',
+        errorCode: ServiceErrorCode.INTERNAL_ERROR,
+      };
+    }
+  }
+
+  /**
+   * Retry pending Stripe cancellations
+   * P1 FIX: Called by the grace period job to retry failed Stripe cancellations
+   * Finds subscriptions where stripe_cancel_pending = true and retries the Stripe API call
+   */
+  async retryPendingStripeCancellations(): Promise<ServiceResponse<number>> {
+    try {
+      const { rows: pendingSubs } = await pool.query(
+        `SELECT id, organization_id, stripe_subscription_id
+         FROM subscriptions
+         WHERE status = 'canceled'
+         AND stripe_cancel_pending = true
+         AND stripe_subscription_id IS NOT NULL`,
+        []
+      );
+
+      let successCount = 0;
+
+      for (const sub of pendingSubs) {
+        const subscriptionId = sub.id;
+        const stripeSubscriptionId = sub.stripe_subscription_id;
+        const organizationId = sub.organization_id;
+
+        try {
+          await stripe.subscriptions.cancel(stripeSubscriptionId, {
+            prorate: false,
+          });
+
+          // Clear the pending flag
+          await pool.query(
+            `UPDATE subscriptions SET stripe_cancel_pending = false WHERE id = $1`,
+            [subscriptionId]
+          );
+
+          successCount++;
+          console.log(
+            `[SubscriptionLifecycle] Retry succeeded: Canceled Stripe subscription ${stripeSubscriptionId} ` +
+            `for org ${organizationId}`
+          );
+        } catch (stripeError: any) {
+          if (stripeError.code === 'resource_missing') {
+            // Already canceled in Stripe, clear the pending flag
+            await pool.query(
+              `UPDATE subscriptions SET stripe_cancel_pending = false WHERE id = $1`,
+              [subscriptionId]
+            );
+            successCount++;
+            console.log(
+              `[SubscriptionLifecycle] Stripe subscription ${stripeSubscriptionId} already canceled (retry)`
+            );
+          } else {
+            console.error(
+              `[SubscriptionLifecycle] Retry failed for Stripe subscription ${stripeSubscriptionId}: ` +
+              stripeError.message
+            );
+          }
+        }
+      }
+
+      console.log(
+        `[SubscriptionLifecycle] Retried ${pendingSubs.length} pending Stripe cancellations, ` +
+        `${successCount} succeeded`
+      );
+
+      return { success: true, data: successCount };
+    } catch (error: any) {
+      console.error('[SubscriptionLifecycle] Error retrying pending Stripe cancellations:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to retry pending Stripe cancellations',
         errorCode: ServiceErrorCode.INTERNAL_ERROR,
       };
     }

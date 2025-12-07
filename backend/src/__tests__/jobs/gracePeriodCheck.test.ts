@@ -3,11 +3,13 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 // Mock the subscription lifecycle service
 const mockProcessExpirations = jest.fn<any>();
 const mockCheckWarnings = jest.fn<any>();
+const mockRetryPendingCancellations = jest.fn<any>();
 
 jest.mock('../../services/SubscriptionLifecycleService', () => ({
   subscriptionLifecycleService: {
     processGracePeriodExpirations: mockProcessExpirations,
     checkGracePeriodWarnings: mockCheckWarnings,
+    retryPendingStripeCancellations: mockRetryPendingCancellations,
   },
   GRACE_PERIOD_DAYS: 7,
 }));
@@ -21,7 +23,12 @@ describe('gracePeriodCheck Job', () => {
   });
 
   describe('runGracePeriodCheck', () => {
-    it('should process both expirations and warnings', async () => {
+    it('should process retries, expirations, and warnings', async () => {
+      mockRetryPendingCancellations.mockResolvedValueOnce({
+        success: true,
+        data: 1, // 1 retry succeeded
+      });
+
       mockProcessExpirations.mockResolvedValueOnce({
         success: true,
         data: [
@@ -37,14 +44,21 @@ describe('gracePeriodCheck Job', () => {
 
       const result = await runGracePeriodCheck();
 
+      expect(result.stripeRetries).toBe(1);
       expect(result.expirations).toBe(2);
       expect(result.warnings).toBe(3);
       expect(result.errors.length).toBe(0);
+      expect(mockRetryPendingCancellations).toHaveBeenCalled();
       expect(mockProcessExpirations).toHaveBeenCalled();
       expect(mockCheckWarnings).toHaveBeenCalled();
     });
 
     it('should handle expiration processing errors', async () => {
+      mockRetryPendingCancellations.mockResolvedValueOnce({
+        success: true,
+        data: 0,
+      });
+
       mockProcessExpirations.mockResolvedValueOnce({
         success: false,
         error: 'Database connection failed',
@@ -64,6 +78,11 @@ describe('gracePeriodCheck Job', () => {
     });
 
     it('should handle warning processing errors', async () => {
+      mockRetryPendingCancellations.mockResolvedValueOnce({
+        success: true,
+        data: 0,
+      });
+
       mockProcessExpirations.mockResolvedValueOnce({
         success: true,
         data: [],
@@ -83,6 +102,11 @@ describe('gracePeriodCheck Job', () => {
     });
 
     it('should handle exceptions gracefully', async () => {
+      mockRetryPendingCancellations.mockResolvedValueOnce({
+        success: true,
+        data: 0,
+      });
+
       mockProcessExpirations.mockRejectedValueOnce(new Error('Unexpected error'));
 
       mockCheckWarnings.mockResolvedValueOnce({
@@ -98,6 +122,11 @@ describe('gracePeriodCheck Job', () => {
     });
 
     it('should return zero counts when no subscriptions to process', async () => {
+      mockRetryPendingCancellations.mockResolvedValueOnce({
+        success: true,
+        data: 0,
+      });
+
       mockProcessExpirations.mockResolvedValueOnce({
         success: true,
         data: [],
@@ -110,9 +139,35 @@ describe('gracePeriodCheck Job', () => {
 
       const result = await runGracePeriodCheck();
 
+      expect(result.stripeRetries).toBe(0);
       expect(result.expirations).toBe(0);
       expect(result.warnings).toBe(0);
       expect(result.errors.length).toBe(0);
+    });
+
+    it('should handle Stripe retry errors without blocking other steps', async () => {
+      mockRetryPendingCancellations.mockResolvedValueOnce({
+        success: false,
+        error: 'Stripe API unavailable',
+      });
+
+      mockProcessExpirations.mockResolvedValueOnce({
+        success: true,
+        data: [{ organizationId: 1, subscriptionId: 1, daysInGracePeriod: 8, shouldCancel: true }],
+      });
+
+      mockCheckWarnings.mockResolvedValueOnce({
+        success: true,
+        data: 2,
+      });
+
+      const result = await runGracePeriodCheck();
+
+      expect(result.stripeRetries).toBe(0);
+      expect(result.expirations).toBe(1);
+      expect(result.warnings).toBe(2);
+      expect(result.errors.length).toBe(1);
+      expect(result.errors[0]).toContain('Stripe API unavailable');
     });
   });
 

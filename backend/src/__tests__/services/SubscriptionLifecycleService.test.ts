@@ -264,6 +264,11 @@ describe('SubscriptionLifecycleService', () => {
       // Need to wait for the async post-commit actions to execute
       await new Promise(resolve => setTimeout(resolve, 10));
       expect(mockStripeCancel).toHaveBeenCalledWith('sub_test123', { prorate: false });
+      // P1 FIX: After successful Stripe cancel, stripe_cancel_pending should be cleared
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('stripe_cancel_pending = false'),
+        [1]
+      );
     });
 
     it('should handle Stripe cancellation errors gracefully', async () => {
@@ -336,6 +341,89 @@ describe('SubscriptionLifecycleService', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Query failed');
+    });
+  });
+
+  describe('retryPendingStripeCancellations', () => {
+    it('should retry pending Stripe cancellations and clear flag on success', async () => {
+      mockPoolQuery
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 1,
+            organization_id: 100,
+            stripe_subscription_id: 'sub_pending123',
+          }],
+        }) // SELECT pending subs
+        .mockResolvedValueOnce({}); // UPDATE to clear flag
+
+      const result = await subscriptionLifecycleService.retryPendingStripeCancellations();
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe(1);
+      expect(mockStripeCancel).toHaveBeenCalledWith('sub_pending123', { prorate: false });
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('stripe_cancel_pending = false'),
+        [1]
+      );
+    });
+
+    it('should handle already-canceled subscriptions in Stripe', async () => {
+      mockPoolQuery
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 1,
+            organization_id: 100,
+            stripe_subscription_id: 'sub_already_canceled',
+          }],
+        })
+        .mockResolvedValueOnce({}); // UPDATE to clear flag
+
+      // Simulate Stripe returning resource_missing
+      mockStripeCancel.mockRejectedValueOnce({ code: 'resource_missing' });
+
+      const result = await subscriptionLifecycleService.retryPendingStripeCancellations();
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe(1); // Still counts as success
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('stripe_cancel_pending = false'),
+        [1]
+      );
+    });
+
+    it('should keep flag on transient Stripe errors for next retry', async () => {
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{
+          id: 1,
+          organization_id: 100,
+          stripe_subscription_id: 'sub_transient_fail',
+        }],
+      });
+
+      // Simulate transient Stripe error
+      mockStripeCancel.mockRejectedValueOnce(new Error('Rate limit exceeded'));
+
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      const result = await subscriptionLifecycleService.retryPendingStripeCancellations();
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe(0); // No successes
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Retry failed')
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should return 0 when no pending cancellations', async () => {
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      const result = await subscriptionLifecycleService.retryPendingStripeCancellations();
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBe(0);
+      expect(mockStripeCancel).not.toHaveBeenCalled();
     });
   });
 

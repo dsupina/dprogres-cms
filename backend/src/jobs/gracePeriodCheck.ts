@@ -32,17 +32,37 @@ const isJobEnabled = process.env.DISABLE_GRACE_PERIOD_JOB !== 'true';
 export async function runGracePeriodCheck(): Promise<{
   expirations: number;
   warnings: number;
+  stripeRetries: number;
   errors: string[];
 }> {
   const startTime = Date.now();
   const errors: string[] = [];
   let expirations = 0;
   let warnings = 0;
+  let stripeRetries = 0;
 
   console.log(`[GracePeriodJob] Starting grace period check...`);
   console.log(`[GracePeriodJob] Grace period: ${GRACE_PERIOD_DAYS} days`);
 
-  // Step 1: Process expired grace periods (7+ days past_due)
+  // Step 1: Retry any pending Stripe cancellations from previous runs
+  try {
+    const retryResult = await subscriptionLifecycleService.retryPendingStripeCancellations();
+
+    if (retryResult.success && retryResult.data !== undefined) {
+      stripeRetries = retryResult.data;
+      if (stripeRetries > 0) {
+        console.log(`[GracePeriodJob] Retried ${stripeRetries} pending Stripe cancellations`);
+      }
+    } else if (retryResult.error) {
+      errors.push(`Stripe retry processing: ${retryResult.error}`);
+      console.error(`[GracePeriodJob] Error retrying Stripe cancellations: ${retryResult.error}`);
+    }
+  } catch (error: any) {
+    errors.push(`Stripe retry exception: ${error.message}`);
+    console.error(`[GracePeriodJob] Exception retrying Stripe cancellations:`, error);
+  }
+
+  // Step 2: Process expired grace periods (7+ days past_due)
   try {
     const expirationsResult = await subscriptionLifecycleService.processGracePeriodExpirations();
 
@@ -64,7 +84,7 @@ export async function runGracePeriodCheck(): Promise<{
     console.error(`[GracePeriodJob] Exception processing expirations:`, error);
   }
 
-  // Step 2: Send warning emails (3 days before expiry)
+  // Step 3: Send warning emails (3 days before expiry)
   try {
     const warningsResult = await subscriptionLifecycleService.checkGracePeriodWarnings();
 
@@ -83,10 +103,10 @@ export async function runGracePeriodCheck(): Promise<{
   const duration = Date.now() - startTime;
   console.log(
     `[GracePeriodJob] Completed in ${duration}ms. ` +
-    `Expirations: ${expirations}, Warnings: ${warnings}, Errors: ${errors.length}`
+    `Expirations: ${expirations}, Warnings: ${warnings}, StripeRetries: ${stripeRetries}, Errors: ${errors.length}`
   );
 
-  return { expirations, warnings, errors };
+  return { expirations, warnings, stripeRetries, errors };
 }
 
 /**
