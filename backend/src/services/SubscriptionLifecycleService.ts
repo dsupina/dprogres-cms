@@ -5,6 +5,7 @@ import { ServiceErrorCode } from '../types/versioning';
 import { invalidateSubscriptionCache } from '../middleware/quota';
 import { emailService } from './EmailService';
 import { organizationService } from './OrganizationService';
+import { stripe } from '../config/stripe';
 
 /**
  * Subscription status types (matches Stripe statuses + our internal states)
@@ -250,6 +251,7 @@ export class SubscriptionLifecycleService extends EventEmitter {
       for (const sub of expiredSubs) {
         const subscriptionId = sub.id;
         const organizationId = sub.organization_id;
+        const stripeSubscriptionId = sub.stripe_subscription_id;
         const daysInGracePeriod = Math.floor(sub.days_in_grace);
 
         console.log(
@@ -257,7 +259,34 @@ export class SubscriptionLifecycleService extends EventEmitter {
           `org ${organizationId}, days: ${daysInGracePeriod}`
         );
 
-        // Update status to canceled
+        // P1 FIX: Cancel the subscription in Stripe first
+        // This stops Stripe from continuing to retry payments and issue invoices
+        if (stripeSubscriptionId) {
+          try {
+            await stripe.subscriptions.cancel(stripeSubscriptionId, {
+              prorate: false, // Don't prorate since they haven't paid
+            });
+            console.log(
+              `[SubscriptionLifecycle] Canceled Stripe subscription ${stripeSubscriptionId} ` +
+              `for org ${organizationId}`
+            );
+          } catch (stripeError: any) {
+            // Log but continue - we still want to downgrade locally even if Stripe fails
+            // Stripe may have already canceled the subscription
+            if (stripeError.code === 'resource_missing') {
+              console.log(
+                `[SubscriptionLifecycle] Stripe subscription ${stripeSubscriptionId} already canceled or not found`
+              );
+            } else {
+              console.error(
+                `[SubscriptionLifecycle] Failed to cancel Stripe subscription ${stripeSubscriptionId}:`,
+                stripeError.message
+              );
+            }
+          }
+        }
+
+        // Update status to canceled in our database
         await client.query(
           `UPDATE subscriptions
            SET status = 'canceled', canceled_at = NOW(), updated_at = NOW()
@@ -313,16 +342,25 @@ export class SubscriptionLifecycleService extends EventEmitter {
    */
   async checkGracePeriodWarnings(): Promise<ServiceResponse<number>> {
     try {
-      // Find subscriptions at ~4 days into grace period (3 days before cancellation)
-      const warningDays = GRACE_PERIOD_DAYS - 3; // 4 days
+      // P2 FIX: Find subscriptions at exactly 4 days into grace period (3 days before cancellation)
+      // Grace period is 7 days, so warning at day 4 means 3 days remaining
+      // We want subscriptions where: 4 days <= elapsed < 5 days
+      // This means: updated_at < NOW() - 3 days AND updated_at >= NOW() - 4 days
+      // Wait - that's backwards. Let me think again:
+      // - updated_at is when subscription entered past_due
+      // - NOW() - updated_at = days elapsed since entering past_due
+      // - If elapsed is 4 days, then 3 days remain (7 - 4 = 3)
+      // - Query: updated_at BETWEEN (NOW() - 5 days) AND (NOW() - 4 days)
+      //   This catches: elapsed >= 4 AND elapsed < 5, so ~4 days elapsed = 3 days remaining
+      const daysElapsedForWarning = GRACE_PERIOD_DAYS - 3; // 4 days elapsed = 3 days remaining
 
       const { rows: warningSubs } = await pool.query(
         `SELECT s.id, s.organization_id, s.plan_tier, o.name as org_name
          FROM subscriptions s
          JOIN organizations o ON s.organization_id = o.id
          WHERE s.status = 'past_due'
-         AND s.updated_at >= NOW() - INTERVAL '${warningDays + 1} days'
-         AND s.updated_at < NOW() - INTERVAL '${warningDays} days'`,
+         AND s.updated_at <= NOW() - INTERVAL '${daysElapsedForWarning} days'
+         AND s.updated_at > NOW() - INTERVAL '${daysElapsedForWarning + 1} days'`,
         []
       );
 

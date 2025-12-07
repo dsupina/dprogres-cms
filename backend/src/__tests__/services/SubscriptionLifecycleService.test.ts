@@ -42,6 +42,17 @@ jest.mock('../../middleware/quota', () => ({
   invalidateSubscriptionCache: mockInvalidateCache,
 }));
 
+// Mock Stripe
+const mockStripeCancel = jest.fn<any>().mockResolvedValue({ id: 'sub_canceled' });
+
+jest.mock('../../config/stripe', () => ({
+  stripe: {
+    subscriptions: {
+      cancel: mockStripeCancel,
+    },
+  },
+}));
+
 // Import after mocks
 import {
   SubscriptionLifecycleService,
@@ -56,6 +67,8 @@ describe('SubscriptionLifecycleService', () => {
     mockPoolConnect.mockResolvedValue(mockClient);
     mockClient.query.mockReset();
     mockClient.release.mockReset();
+    mockStripeCancel.mockReset();
+    mockStripeCancel.mockResolvedValue({ id: 'sub_canceled' });
   });
 
   afterEach(() => {
@@ -240,6 +253,53 @@ describe('SubscriptionLifecycleService', () => {
       expect(result.data?.[0].daysInGracePeriod).toBe(10);
       expect(mockInvalidateCache).toHaveBeenCalledWith(100);
       expect(expirationEvents.length).toBe(1);
+      // P1 FIX: Verify Stripe subscription was canceled
+      expect(mockStripeCancel).toHaveBeenCalledWith('sub_test123', { prorate: false });
+    });
+
+    it('should handle Stripe cancellation errors gracefully', async () => {
+      const pastDueDate = new Date();
+      pastDueDate.setDate(pastDueDate.getDate() - 10);
+
+      mockClient.query
+        .mockResolvedValueOnce({}) // BEGIN
+        .mockResolvedValueOnce({
+          rows: [{
+            id: 1,
+            organization_id: 100,
+            stripe_subscription_id: 'sub_test123',
+            status: 'past_due',
+            plan_tier: 'pro',
+            current_period_end: new Date(),
+            updated_at: pastDueDate,
+            days_in_grace: 10,
+          }],
+        })
+        .mockResolvedValueOnce({}) // UPDATE subscription
+        .mockResolvedValueOnce({}) // UPDATE org
+        .mockResolvedValueOnce({}) // quotas
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({}); // COMMIT
+
+      // Simulate Stripe error
+      mockStripeCancel.mockRejectedValueOnce(new Error('Stripe API error'));
+
+      mockPoolQuery.mockResolvedValue({ rows: [{ name: 'Test Org' }] });
+      mockGetAdminEmails.mockResolvedValue({ success: true, data: [] });
+
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      const result = await subscriptionLifecycleService.processGracePeriodExpirations();
+
+      // Should still succeed - local downgrade happens even if Stripe fails
+      expect(result.success).toBe(true);
+      expect(result.data?.length).toBe(1);
+      expect(consoleSpy).toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
     });
 
     it('should return empty array when no subscriptions have expired', async () => {
