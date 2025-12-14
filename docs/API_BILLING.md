@@ -512,6 +512,359 @@ Quota increments use the PostgreSQL function `check_and_increment_quota()` which
 
 ---
 
+## Billing Dashboard Endpoints
+
+The billing dashboard provides endpoints for displaying subscription information, invoices, and usage data.
+
+### GET /api/billing/subscription
+
+Get the current subscription for the authenticated user's organization.
+
+**Authentication**: Required (JWT)
+
+**Response**:
+
+```json
+{
+  "success": true,
+  "data": {
+    "has_subscription": true,
+    "plan_tier": "starter",
+    "plan_name": "Starter",
+    "billing_cycle": "monthly",
+    "status": "active",
+    "current_period_start": "2025-01-01T00:00:00.000Z",
+    "current_period_end": "2025-02-01T00:00:00.000Z",
+    "cancel_at_period_end": false,
+    "canceled_at": null,
+    "amount_cents": 2900,
+    "price_display": "$29/month",
+    "organization_name": "My Organization"
+  }
+}
+```
+
+**Status Values**:
+- `active` - Subscription is active and in good standing
+- `past_due` - Payment failed, in grace period
+- `canceled` - Subscription has been canceled
+- `trialing` - In trial period
+
+---
+
+### GET /api/billing/invoices
+
+Get invoice history for the authenticated user's organization.
+
+**Authentication**: Required (JWT)
+
+**Query Parameters**:
+
+| Parameter | Type   | Default | Description           |
+|-----------|--------|---------|----------------------|
+| page      | number | 1       | Page number          |
+| limit     | number | 10      | Items per page (max 100) |
+
+**Response**:
+
+```json
+{
+  "success": true,
+  "data": {
+    "invoices": [
+      {
+        "id": 1,
+        "invoice_number": "in_1ABC123",
+        "amount": "$29.00",
+        "amount_cents": 2900,
+        "currency": "USD",
+        "status": "paid",
+        "status_display": "Paid",
+        "pdf_url": "https://stripe.com/invoice.pdf",
+        "hosted_url": "https://stripe.com/invoice",
+        "billing_reason": "subscription_create",
+        "period_start": "2025-01-01T00:00:00.000Z",
+        "period_end": "2025-02-01T00:00:00.000Z",
+        "created_at": "2025-01-01T00:00:00.000Z",
+        "paid_at": "2025-01-01T00:00:00.000Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 5,
+      "total_pages": 1,
+      "has_more": false
+    }
+  }
+}
+```
+
+**Invoice Status Values**:
+- `draft` - Invoice is being prepared
+- `open` - Invoice is awaiting payment
+- `paid` - Invoice has been paid
+- `void` - Invoice has been voided
+- `uncollectible` - Invoice could not be collected
+
+---
+
+### GET /api/billing/usage
+
+Get quota usage for the authenticated user's organization.
+
+**Authentication**: Required (JWT)
+
+**Response**:
+
+```json
+{
+  "success": true,
+  "data": {
+    "plan_tier": "starter",
+    "usage": [
+      {
+        "dimension": "sites",
+        "label": "Sites",
+        "current": 2,
+        "limit": 3,
+        "remaining": 1,
+        "percentage": 66.67,
+        "current_display": "2",
+        "limit_display": "3",
+        "is_unlimited": false,
+        "is_warning": false,
+        "is_critical": false
+      },
+      {
+        "dimension": "storage_bytes",
+        "label": "Storage",
+        "current": 1073741824,
+        "limit": 10737418240,
+        "remaining": 9663676416,
+        "percentage": 10,
+        "current_display": "1 GB",
+        "limit_display": "10 GB",
+        "is_unlimited": false,
+        "is_warning": false,
+        "is_critical": false
+      }
+    ]
+  }
+}
+```
+
+**Usage Dimensions**:
+- `sites` - Number of sites
+- `posts` - Number of posts
+- `users` - Number of team members
+- `storage_bytes` - Storage usage in bytes
+- `api_calls` - Monthly API calls
+
+**Warning Thresholds**:
+- `is_warning`: true when usage >= 80%
+- `is_critical`: true when usage >= 95%
+
+---
+
+### POST /api/billing/portal
+
+Get a Stripe Customer Portal URL for managing billing.
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+
+```json
+{
+  "return_url": "https://example.com/admin/billing"
+}
+```
+
+**Response**:
+
+```json
+{
+  "success": true,
+  "data": {
+    "portal_url": "https://billing.stripe.com/session/..."
+  }
+}
+```
+
+**Error Response (No Subscription)**:
+
+```json
+{
+  "success": false,
+  "error": "No active subscription found"
+}
+```
+
+---
+
+### POST /api/billing/checkout
+
+Create a Stripe Checkout session for a new subscription.
+
+**Authentication**: Required (JWT)
+
+**Request Body**:
+
+```json
+{
+  "plan_tier": "starter",
+  "billing_cycle": "monthly",
+  "trial_days": 14
+}
+```
+
+| Field         | Type   | Required | Description                    |
+|---------------|--------|----------|--------------------------------|
+| plan_tier     | string | Yes      | `starter` or `pro`             |
+| billing_cycle | string | Yes      | `monthly` or `annual`          |
+| trial_days    | number | No       | Trial period (0-30 days)       |
+
+**Response**:
+
+```json
+{
+  "success": true,
+  "data": {
+    "session_id": "cs_test_...",
+    "checkout_url": "https://checkout.stripe.com/pay/..."
+  }
+}
+```
+
+**Error Response (Already Subscribed)**:
+
+```json
+{
+  "success": false,
+  "error": "Organization already has an active subscription"
+}
+```
+
+---
+
+### GET /api/billing/plans
+
+Get available subscription plans and pricing. This endpoint is public.
+
+**Authentication**: None (public endpoint)
+
+**Response**:
+
+```json
+{
+  "success": true,
+  "data": {
+    "plans": [
+      {
+        "tier": "free",
+        "name": "Free",
+        "description": "Perfect for getting started",
+        "price_monthly": 0,
+        "price_annual": 0,
+        "features": [
+          "1 Site",
+          "100 Posts",
+          "1 Team Member",
+          "1 GB Storage",
+          "10,000 API Calls/month"
+        ],
+        "quotas": {
+          "sites": 1,
+          "posts": 100,
+          "users": 1,
+          "storage_bytes": 1073741824,
+          "api_calls": 10000
+        },
+        "is_popular": false
+      },
+      {
+        "tier": "starter",
+        "name": "Starter",
+        "description": "For small teams and growing sites",
+        "price_monthly": 29,
+        "price_annual": 290,
+        "features": [
+          "3 Sites",
+          "1,000 Posts",
+          "5 Team Members",
+          "10 GB Storage",
+          "100,000 API Calls/month",
+          "Priority Support"
+        ],
+        "quotas": {
+          "sites": 3,
+          "posts": 1000,
+          "users": 5,
+          "storage_bytes": 10737418240,
+          "api_calls": 100000
+        },
+        "is_popular": true
+      },
+      {
+        "tier": "pro",
+        "name": "Pro",
+        "description": "For larger teams with advanced needs",
+        "price_monthly": 99,
+        "price_annual": 990,
+        "features": [
+          "10 Sites",
+          "10,000 Posts",
+          "25 Team Members",
+          "100 GB Storage",
+          "1,000,000 API Calls/month",
+          "Priority Support",
+          "Advanced Analytics",
+          "Custom Domains"
+        ],
+        "quotas": {
+          "sites": 10,
+          "posts": 10000,
+          "users": 25,
+          "storage_bytes": 107374182400,
+          "api_calls": 1000000
+        },
+        "is_popular": false
+      },
+      {
+        "tier": "enterprise",
+        "name": "Enterprise",
+        "description": "For organizations with custom requirements",
+        "price_monthly": null,
+        "price_annual": null,
+        "features": [
+          "Unlimited Sites",
+          "Unlimited Posts",
+          "Unlimited Team Members",
+          "Unlimited Storage",
+          "Unlimited API Calls",
+          "Dedicated Support",
+          "SLA Agreement",
+          "Custom Integrations",
+          "On-premise Option"
+        ],
+        "quotas": {
+          "sites": -1,
+          "posts": -1,
+          "users": -1,
+          "storage_bytes": -1,
+          "api_calls": -1
+        },
+        "is_popular": false,
+        "contact_sales": true
+      }
+    ]
+  }
+}
+```
+
+---
+
 ## Subscription Management
 
 (To be documented: SF-003 SubscriptionService endpoints)
@@ -753,5 +1106,5 @@ When deploying migration `003_create_usage_quotas.sql`, the following happens au
 ---
 
 **Last Updated**: December 2025
-**Version**: 1.1
-**Related Tickets**: SF-009 (Quota System Implementation), SF-015 (Complete Webhook Event Handling)
+**Version**: 1.2
+**Related Tickets**: SF-009 (Quota System Implementation), SF-015 (Complete Webhook Event Handling), SF-017 (Billing Page UI & Layout)
