@@ -1119,5 +1119,5 @@ When deploying migration `003_create_usage_quotas.sql`, the following happens au
 ---
 
 **Last Updated**: December 2025
-**Version**: 1.3
-**Related Tickets**: SF-009 (Quota System Implementation), SF-015 (Complete Webhook Event Handling), SF-017 (Billing Page UI & Layout), SF-018 (Stripe Checkout Integration)
+**Version**: 1.4
+**Related Tickets**: SF-009 (Quota System Implementation), SF-015 (Complete Webhook Event Handling), SF-017 (Billing Page UI & Layout), SF-018 (Stripe Checkout Integration), SF-019 (Stripe Customer Portal Link)
