@@ -117,9 +117,10 @@ This document catalogs all reusable components in the codebase with usage exampl
 ---
 
 #### UpgradeModal
-**Purpose**: Modal for plan comparison and upgrade flow
+**Purpose**: Modal for plan comparison and upgrade flow with Stripe Checkout integration
 **Location**: `frontend/src/components/billing/UpgradeModal.tsx`
 **Status**: ✅ Completed (December 2025)
+**Ticket**: SF-017, SF-018
 
 ```tsx
 // Usage Example
@@ -140,6 +141,42 @@ This document catalogs all reusable components in the codebase with usage exampl
 - Contact sales CTA for enterprise
 - Loading state during checkout creation
 - Responsive grid layout
+- Stripe Checkout redirect flow (SF-018)
+
+**Tests**: `frontend/src/components/billing/__tests__/UpgradeModal.test.tsx` (10 tests)
+- Plan rendering and billing cycle toggle
+- Upgrade button click handling
+- Loading state display
+- Current plan disabled state
+
+---
+
+#### BillingSuccessPage
+**Purpose**: Stripe Checkout success confirmation page with auto-redirect
+**Location**: `frontend/src/pages/admin/BillingSuccessPage.tsx`
+**Status**: ✅ Completed (December 2025)
+**Ticket**: SF-018
+
+```tsx
+// Route: /admin/billing/success
+// Automatically redirects to /admin/billing after 5 seconds
+```
+
+**Key Features**:
+- Success checkmark icon with confirmation message
+- Countdown timer (5 seconds) with auto-redirect
+- Manual "Go to Billing" link for immediate navigation
+- "What's next?" information section
+- Invalidates billing queries on mount (subscription, usage, invoices)
+- Responsive design with centered layout
+
+**User Flow**:
+1. User clicks "Upgrade" in UpgradeModal
+2. Redirects to Stripe Checkout
+3. After successful payment, Stripe redirects to `/admin/billing/success`
+4. Page shows confirmation, invalidates cache, auto-redirects to billing
+
+**Tests**: `frontend/src/pages/admin/__tests__/BillingSuccessPage.test.tsx` (8 tests)
 
 ---
 

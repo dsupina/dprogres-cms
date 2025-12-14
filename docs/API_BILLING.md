@@ -705,7 +705,7 @@ Get a Stripe Customer Portal URL for managing billing.
 
 ### POST /api/billing/checkout
 
-Create a Stripe Checkout session for a new subscription.
+Create a Stripe Checkout session for a new subscription. After successful payment, Stripe redirects to the success page.
 
 **Authentication**: Required (JWT)
 
@@ -735,6 +735,19 @@ Create a Stripe Checkout session for a new subscription.
     "checkout_url": "https://checkout.stripe.com/pay/..."
   }
 }
+```
+
+**Redirect URLs**:
+- **Success**: `/admin/billing/success` - Shows confirmation with auto-redirect to billing page
+- **Cancel**: `/admin/billing?checkout=canceled` - Returns to billing page with error toast
+
+**Frontend Integration** (SF-018):
+```typescript
+// In UpgradeModal component
+const handleUpgrade = async (planTier: 'starter' | 'pro', billingCycle: 'monthly' | 'annual') => {
+  const result = await billingService.createCheckout({ plan_tier: planTier, billing_cycle: billingCycle });
+  window.location.href = result.checkout_url; // Redirect to Stripe Checkout
+};
 ```
 
 **Error Response (Already Subscribed)**:
@@ -1106,5 +1119,5 @@ When deploying migration `003_create_usage_quotas.sql`, the following happens au
 ---
 
 **Last Updated**: December 2025
-**Version**: 1.2
-**Related Tickets**: SF-009 (Quota System Implementation), SF-015 (Complete Webhook Event Handling), SF-017 (Billing Page UI & Layout)
+**Version**: 1.3
+**Related Tickets**: SF-009 (Quota System Implementation), SF-015 (Complete Webhook Event Handling), SF-017 (Billing Page UI & Layout), SF-018 (Stripe Checkout Integration)
