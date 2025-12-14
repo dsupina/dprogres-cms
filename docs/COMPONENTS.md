@@ -91,14 +91,22 @@ This document catalogs all reusable components in the codebase with usage exampl
 ---
 
 #### UsageOverview
-**Purpose**: Display 5 quota dimensions with progress bars and warning states
+**Purpose**: Display 5 quota dimensions with progress bars, warning states, and upgrade CTAs
 **Location**: `frontend/src/components/billing/UsageOverview.tsx`
-**Status**: ✅ Completed (December 2025)
+**Status**: ✅ Enhanced with Upgrade CTAs (December 2025)
+**Ticket**: SF-020
 
 ```tsx
 // Usage Example
-<UsageOverview usage={usageItems} />
+<UsageOverview
+  usage={usageItems}
+  onUpgradeClick={() => setShowUpgradeModal(true)}
+/>
 ```
+
+**Props**:
+- `usage: UsageItem[]` - Array of quota status items
+- `onUpgradeClick?: () => void` - Optional callback for upgrade button clicks
 
 **Quota Dimensions**:
 - Sites - Globe icon, blue
@@ -107,12 +115,31 @@ This document catalogs all reusable components in the codebase with usage exampl
 - Storage - HardDrive icon, orange (displays as GB/MB)
 - API Calls - Activity icon, cyan
 
+**Color States**:
+- Blue (normal): <80% usage
+- Yellow (warning): 80-94% usage
+- Red (danger): 95-99% usage
+- Red + Upgrade CTA: 100%+ (exceeded)
+
 **Key Features**:
 - Progress bars with percentage display
-- Warning state (orange) at 80%+ usage
-- Critical state (red) at 95%+ usage
-- Unlimited display for enterprise tiers
+- Warning state (yellow) at 80%+ usage with "Approaching limit" message
+- Critical state (red) at 95%+ usage with "Critical" message
+- Exceeded state (100%+) with "Quota exceeded" message and inline upgrade button
+- Header "Upgrade Now" button when any quota is exceeded
+- Footer "Upgrade for more resources" link when quotas are in warning/critical state
+- Unlimited display for enterprise tiers (gradient background, no percentage)
 - Human-readable number formatting (1K, 1M, 1GB)
+- Data-testid attributes for all interactive elements
+
+**Tests**: `frontend/src/components/billing/__tests__/UsageOverview.test.tsx` (36 tests)
+- Basic rendering of all 5 quota dimensions
+- Progress bar color states (normal, warning, critical)
+- Unlimited quota handling
+- Warning and critical message display
+- Exceeded state with upgrade CTA
+- Header/footer/inline upgrade button clicks
+- Edge cases (empty data, unknown dimensions)
 
 ---
 
