@@ -168,7 +168,12 @@ export default function BillingPage() {
         )}
 
         {/* Usage Overview */}
-        {usageData && <UsageOverview usage={usageData.usage} />}
+        {usageData && (
+          <UsageOverview
+            usage={usageData.usage}
+            onUpgradeClick={() => setShowUpgradeModal(true)}
+          />
+        )}
       </div>
 
       {/* Invoice History */}
