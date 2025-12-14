@@ -64,6 +64,110 @@ This document catalogs all reusable components in the codebase with usage exampl
 
 ---
 
+### Billing Components (`frontend/src/components/billing/`)
+
+#### CurrentPlanCard
+**Purpose**: Display current subscription plan with upgrade and manage billing options
+**Location**: `frontend/src/components/billing/CurrentPlanCard.tsx`
+**Status**: ✅ Completed (December 2025)
+
+```tsx
+// Usage Example
+<CurrentPlanCard
+  subscription={subscriptionData}
+  onUpgradeClick={() => setShowUpgradeModal(true)}
+  onManageBillingClick={handleManageBilling}
+/>
+```
+
+**Key Features**:
+- Plan tier badge with color coding (free, starter, pro, enterprise)
+- Price display with billing cycle
+- Status indicators (active, past_due, trialing, canceled)
+- Warning banner for past due or canceling subscriptions
+- Next billing date display
+- Upgrade and manage billing action buttons
+
+---
+
+#### UsageOverview
+**Purpose**: Display 5 quota dimensions with progress bars and warning states
+**Location**: `frontend/src/components/billing/UsageOverview.tsx`
+**Status**: ✅ Completed (December 2025)
+
+```tsx
+// Usage Example
+<UsageOverview usage={usageItems} />
+```
+
+**Quota Dimensions**:
+- Sites - Globe icon, blue
+- Posts - FileText icon, green
+- Team Members - Users icon, purple
+- Storage - HardDrive icon, orange (displays as GB/MB)
+- API Calls - Activity icon, cyan
+
+**Key Features**:
+- Progress bars with percentage display
+- Warning state (orange) at 80%+ usage
+- Critical state (red) at 95%+ usage
+- Unlimited display for enterprise tiers
+- Human-readable number formatting (1K, 1M, 1GB)
+
+---
+
+#### UpgradeModal
+**Purpose**: Modal for plan comparison and upgrade flow
+**Location**: `frontend/src/components/billing/UpgradeModal.tsx`
+**Status**: ✅ Completed (December 2025)
+
+```tsx
+// Usage Example
+<UpgradeModal
+  plans={plans}
+  currentPlanTier="free"
+  onClose={() => setShowModal(false)}
+  onUpgrade={handleUpgrade}
+  isLoading={isCheckoutLoading}
+/>
+```
+
+**Key Features**:
+- Monthly/Annual toggle with 17% savings badge
+- Plan comparison cards with features
+- Most Popular badge for starter plan
+- Disabled buttons for current plan
+- Contact sales CTA for enterprise
+- Loading state during checkout creation
+- Responsive grid layout
+
+---
+
+#### InvoiceTable
+**Purpose**: Display invoice history with pagination and download links
+**Location**: `frontend/src/components/billing/InvoiceTable.tsx`
+**Status**: ✅ Completed (December 2025)
+
+```tsx
+// Usage Example
+<InvoiceTable
+  invoices={invoices}
+  pagination={pagination}
+  onPageChange={setInvoicePage}
+  isLoading={isInvoicesLoading}
+/>
+```
+
+**Key Features**:
+- Responsive design (table on desktop, cards on mobile)
+- Status badges (paid, open, draft, void, uncollectible)
+- PDF download and hosted invoice links
+- Pagination with page info
+- Loading state
+- Empty state for no invoices
+
+---
+
 ### Admin Components (`frontend/src/components/admin/`)
 
 #### MenuBuilder

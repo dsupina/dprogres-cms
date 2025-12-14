@@ -27,6 +27,7 @@ import DomainsPage from './pages/admin/DomainsPage';
 import MenusPage from './pages/admin/MenusPage';
 import SitesPage from './pages/admin/SitesPage';
 import DistributionQueuePage from './pages/admin/DistributionQueuePage';
+import BillingPage from './pages/admin/BillingPage';
 
 // Import existing components
 import PublicLayout from './components/layout/PublicLayout';
@@ -84,6 +85,7 @@ function App() {
         <Route path="menus" element={<MenusPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="distribution-queue" element={<DistributionQueuePage />} />
+        <Route path="billing" element={<BillingPage />} />
       </Route>
 
       {/* 404 Route */}

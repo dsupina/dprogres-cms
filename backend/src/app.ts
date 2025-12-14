@@ -28,6 +28,7 @@ import autosaveRoutes from './routes/autosave';
 import { createVersionRoutes } from './routes/versions';
 import webhooksRoutes from './routes/webhooks';
 import quotasRoutes from './routes/quotas';
+import billingRoutes from './routes/billing';
 
 // Import domain middleware
 import { validateDomain, resolveDomain } from './middleware/domainValidation';
@@ -146,6 +147,7 @@ app.use('/api', versionsRoutes); // Version endpoints at /api/content and /api/v
 app.use('/api', autosaveRoutes); // Auto-save endpoints
 app.use('/api/versions', createVersionRoutes(pool)); // Version comparison endpoints
 app.use('/api/quotas', quotasRoutes); // Quota management endpoints
+app.use('/api/billing', billingRoutes); // Billing and subscription endpoints
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
