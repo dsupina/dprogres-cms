@@ -1,18 +1,20 @@
 /**
  * Job Scheduler Index
  * SF-011: Centralized job initialization and management
+ * SF-016: Added grace period check job
  *
  * This module initializes and starts all background jobs:
  * - Quota reset job (monthly API call quota resets)
- * - (Future jobs will be added here)
+ * - Grace period check job (daily subscription lifecycle checks)
  */
 
 import { CronJob } from 'cron';
 import { startQuotaResetJob } from './resetQuotas';
+import { startGracePeriodJob } from './gracePeriodCheck';
 
 export interface JobManager {
   quotaResetJob: CronJob | null;
-  // Future jobs will be added here
+  gracePeriodJob: CronJob | null;
 }
 
 /**
@@ -24,6 +26,7 @@ export function startAllJobs(): JobManager {
 
   const jobs: JobManager = {
     quotaResetJob: null,
+    gracePeriodJob: null,
   };
 
   // Start quota reset job
@@ -38,7 +41,17 @@ export function startAllJobs(): JobManager {
     console.error('[Jobs] ✗ Failed to start quota reset job:', error.message);
   }
 
-  // Future jobs initialization will be added here
+  // Start grace period check job (SF-016)
+  try {
+    jobs.gracePeriodJob = startGracePeriodJob();
+    if (jobs.gracePeriodJob) {
+      console.log('[Jobs] ✓ Grace period check job started');
+    } else {
+      console.log('[Jobs] ⊘ Grace period check job disabled');
+    }
+  } catch (error: any) {
+    console.error('[Jobs] ✗ Failed to start grace period check job:', error.message);
+  }
 
   console.log('[Jobs] Background jobs initialization complete');
 
@@ -57,7 +70,10 @@ export function stopAllJobs(jobs: JobManager): void {
     console.log('[Jobs] ✓ Quota reset job stopped');
   }
 
-  // Future job cleanup will be added here
+  if (jobs.gracePeriodJob) {
+    jobs.gracePeriodJob.stop();
+    console.log('[Jobs] ✓ Grace period check job stopped');
+  }
 
   console.log('[Jobs] All jobs stopped');
 }

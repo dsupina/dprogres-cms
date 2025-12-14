@@ -770,6 +770,188 @@ async createVersion(input: CreateVersionInput): Promise<ServiceResponse<ContentV
 }
 ```
 
+## Subscription Lifecycle State Machine Pattern (SF-016)
+
+### State Machine Transitions
+**Subscription status changes follow a defined state machine**
+
+```typescript
+// Valid state transitions
+const STATE_TRANSITIONS: Record<SubscriptionStatus, SubscriptionStatus[]> = {
+  trialing: ['active', 'canceled', 'past_due', 'incomplete'],
+  active: ['past_due', 'canceled', 'trialing'],
+  past_due: ['active', 'canceled', 'unpaid'],
+  canceled: [], // Terminal state
+  incomplete: ['active', 'incomplete_expired', 'canceled'],
+  incomplete_expired: [], // Terminal state
+  unpaid: ['active', 'canceled'],
+};
+
+// Transition handler
+async function handleStatusTransition(
+  subscriptionId: number,
+  newStatus: SubscriptionStatus
+): Promise<ServiceResponse<StateTransitionResult>> {
+  const subscription = await getSubscription(subscriptionId);
+  const previousStatus = subscription.status;
+
+  // Log unexpected transitions but still process (Stripe is source of truth)
+  if (!STATE_TRANSITIONS[previousStatus].includes(newStatus)) {
+    console.warn(`Unexpected transition: ${previousStatus} → ${newStatus}`);
+  }
+
+  // Update status and trigger side effects
+  await updateSubscriptionStatus(subscriptionId, newStatus);
+
+  // Handle specific transitions
+  if (newStatus === 'past_due') {
+    emit('lifecycle:grace_period_started', { subscriptionId, gracePeriodDays: 7 });
+  }
+  if (newStatus === 'canceled') {
+    await downgradeToFreeTier(subscription.organization_id);
+  }
+
+  return { success: true, data: { previousStatus, newStatus } };
+}
+```
+
+### Grace Period Enforcement
+**7-day grace period before automatic cancellation**
+
+```typescript
+// Daily scheduled job
+async function processGracePeriodExpirations(): Promise<void> {
+  // Find subscriptions past grace period (7+ days in past_due)
+  const expiredSubs = await pool.query(`
+    SELECT id, organization_id
+    FROM subscriptions
+    WHERE status = 'past_due'
+    AND updated_at <= NOW() - INTERVAL '7 days'
+  `);
+
+  for (const sub of expiredSubs) {
+    // Cancel subscription
+    await pool.query(
+      `UPDATE subscriptions SET status = 'canceled', canceled_at = NOW() WHERE id = $1`,
+      [sub.id]
+    );
+
+    // Downgrade organization to free tier
+    await downgradeToFreeTier(sub.organization_id);
+
+    // Emit event for notifications
+    emit('lifecycle:grace_period_expired', {
+      organizationId: sub.organization_id,
+      subscriptionId: sub.id,
+    });
+  }
+}
+
+// Warning emails at 3 days before expiration (4 days into grace period)
+async function checkGracePeriodWarnings(): Promise<void> {
+  const warningSubs = await pool.query(`
+    SELECT s.id, s.organization_id, o.name
+    FROM subscriptions s
+    JOIN organizations o ON s.organization_id = o.id
+    WHERE s.status = 'past_due'
+    AND s.updated_at >= NOW() - INTERVAL '5 days'
+    AND s.updated_at < NOW() - INTERVAL '4 days'
+  `);
+
+  for (const sub of warningSubs) {
+    await sendPaymentFailedEmail(sub.organization_id, {
+      daysRemaining: 3,
+    });
+  }
+}
+```
+
+### Automatic Downgrade to Free Tier
+**Quota reset and tier change on subscription cancellation**
+
+```typescript
+const FREE_TIER_QUOTAS = {
+  sites: 1,
+  posts: 100,
+  users: 1,
+  storage_bytes: 1073741824, // 1GB
+  api_calls: 10000,
+};
+
+async function downgradeToFreeTier(organizationId: number): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Update organization plan tier
+    await client.query(
+      `UPDATE organizations SET plan_tier = 'free', updated_at = NOW() WHERE id = $1`,
+      [organizationId]
+    );
+
+    // Reset quotas to free tier limits
+    for (const [dimension, limit] of Object.entries(FREE_TIER_QUOTAS)) {
+      await client.query(
+        `UPDATE usage_quotas SET quota_limit = $1, updated_at = NOW()
+         WHERE organization_id = $2 AND dimension = $3`,
+        [limit, organizationId, dimension]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    // Invalidate subscription cache
+    invalidateSubscriptionCache(organizationId);
+
+    // Emit events
+    emit('lifecycle:downgrade_completed', { organizationId, newTier: 'free' });
+    emit('lifecycle:quota_reset', { organizationId, newLimits: FREE_TIER_QUOTAS });
+
+    // Send notification email (fire and forget)
+    sendSubscriptionCanceledEmail(organizationId);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+```
+
+### Webhook Integration
+**Lifecycle service integrated with Stripe webhooks**
+
+```typescript
+// In webhooks.ts
+case 'customer.subscription.deleted':
+  // Update status to canceled
+  await updateSubscriptionStatus(subscriptionId, 'canceled');
+
+  // Downgrade organization to free tier (SF-016)
+  await downgradeToFreeTier(organizationId);
+
+  // Invalidate cache
+  invalidateSubscriptionCache(organizationId);
+
+  // Send cancellation email
+  return () => sendSubscriptionCanceledEmail(organizationId);
+
+case 'invoice.payment_failed':
+  // Get previous status
+  const prevStatus = await getSubscriptionStatus(subscriptionId);
+
+  // Update to past_due
+  await updateSubscriptionStatus(subscriptionId, 'past_due');
+
+  // Emit grace period started if transitioning to past_due
+  if (prevStatus !== 'past_due') {
+    emit('lifecycle:grace_period_started', {
+      organizationId,
+      gracePeriodDays: GRACE_PERIOD_DAYS,
+    });
+  }
+```
+
 ## Multi-Agent Development Pattern
 
 ### Specialized Agent Orchestration
