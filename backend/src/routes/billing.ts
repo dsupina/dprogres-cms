@@ -355,7 +355,7 @@ router.post('/checkout', authenticateToken, async (req: Request, res: Response) 
       planTier: plan_tier,
       billingCycle: billing_cycle,
       userId,
-      successUrl: `${baseUrl}/admin/billing?checkout=success`,
+      successUrl: `${baseUrl}/admin/billing/success`,
       cancelUrl: `${baseUrl}/admin/billing?checkout=canceled`,
       trialDays: trial_days,
     });
