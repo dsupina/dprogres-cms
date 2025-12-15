@@ -46,7 +46,10 @@ export default function OrganizationSettingsPage() {
 
   const handleRefresh = () => {
     refetchOrg();
-    refetchMembers();
+    // Only refetch members if organization exists to prevent runtime errors
+    if (organization?.id) {
+      refetchMembers();
+    }
   };
 
   const handleTransferOwnership = (memberId: number, memberName: string) => {
