@@ -77,7 +77,10 @@ router.get('/current', async (req: Request, res: Response) => {
 
     // Get user's organizations
     const orgsResult = await organizationService.listUserOrganizations(userId);
-    if (!orgsResult.success || !orgsResult.data || orgsResult.data.length === 0) {
+    if (!orgsResult.success) {
+      return res.status(500).json({ success: false, error: orgsResult.error || 'Failed to retrieve organizations' });
+    }
+    if (!orgsResult.data || orgsResult.data.length === 0) {
       return res.status(404).json({ success: false, error: 'No organization found' });
     }
 
