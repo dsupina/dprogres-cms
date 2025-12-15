@@ -340,6 +340,105 @@ This document catalogs all reusable components in the codebase with usage exampl
 
 ---
 
+### Organization Components (`frontend/src/components/organization/`)
+
+#### OrganizationDetailsForm
+**Purpose**: Display and edit organization details (name, logo)
+**Location**: `frontend/src/components/organization/OrganizationDetailsForm.tsx`
+**Status**: ✅ Completed (December 2025)
+**Ticket**: SF-021
+
+```tsx
+// Usage Example
+<OrganizationDetailsForm
+  organization={organizationData}
+  canEdit={userRole === 'owner'}
+/>
+```
+
+**Key Features**:
+- Organization name display/edit
+- Logo upload with preview
+- Owner-only editing permission
+- Plan tier badge display
+
+---
+
+#### MembersTable
+**Purpose**: Display organization members with role management actions
+**Location**: `frontend/src/components/organization/MembersTable.tsx`
+**Status**: ✅ Completed (December 2025)
+**Ticket**: SF-021
+
+```tsx
+// Usage Example
+<MembersTable
+  organizationId={orgId}
+  members={membersList}
+  currentUserRole={userRole}
+  currentUserId={userId}
+  onTransferOwnership={handleTransferOwnership}
+/>
+```
+
+**Key Features**:
+- Member list with role badges (owner, admin, editor, publisher, viewer)
+- Role change dropdown menu
+- Remove member action
+- Transfer ownership option (owner only)
+- Current user indicator "(You)"
+
+---
+
+#### InviteMemberForm
+**Purpose**: Invite new members and manage pending invitations
+**Location**: `frontend/src/components/organization/InviteMemberForm.tsx`
+**Status**: ✅ Completed (December 2025)
+**Ticket**: SF-021
+
+```tsx
+// Usage Example
+<InviteMemberForm
+  organizationId={orgId}
+  canInvite={['owner', 'admin'].includes(userRole)}
+/>
+```
+
+**Key Features**:
+- Email and role input form
+- Optional custom message
+- Pending invitations list
+- Revoke invitation action
+- Expiration date display
+
+---
+
+#### TransferOwnershipModal
+**Purpose**: Confirmation modal for transferring organization ownership
+**Location**: `frontend/src/components/organization/TransferOwnershipModal.tsx`
+**Status**: ✅ Completed (December 2025)
+**Ticket**: SF-021
+
+```tsx
+// Usage Example
+<TransferOwnershipModal
+  organizationId={orgId}
+  organizationName="My Organization"
+  newOwnerId={memberId}
+  newOwnerName="New Owner"
+  onClose={() => setShowModal(false)}
+/>
+```
+
+**Key Features**:
+- Warning banner about irreversible action
+- Transfer details summary
+- "TRANSFER" confirmation text requirement
+- Auto-capitalization of input
+- What will change checklist
+
+---
+
 ## Backend Components
 
 ### Configuration

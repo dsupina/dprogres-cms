@@ -14,7 +14,8 @@ import {
   Globe,
   Menu as MenuIcon,
   Share2,
-  CreditCard
+  CreditCard,
+  Building2
 } from 'lucide-react';
 import { useAuthStore } from '../../lib/auth';
 import Button from '../ui/Button';
@@ -31,6 +32,7 @@ const navigation = [
   { name: 'Sites', href: '/admin/sites', icon: Globe },
   { name: 'Menus', href: '/admin/menus', icon: MenuIcon },
   { name: 'Billing', href: '/admin/billing', icon: CreditCard },
+  { name: 'Organization', href: '/admin/organization', icon: Building2 },
   { name: 'Settings', href: '/admin/settings', icon: Settings },
 ];
 
