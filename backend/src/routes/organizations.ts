@@ -397,7 +397,9 @@ router.put('/:id/members/:memberId/role', async (req: Request, res: Response) =>
       const status = result.error?.includes('not found') ? 404 :
                      result.error?.includes('Only organization') ||
                      result.error?.includes('Cannot change owner') ||
-                     result.error?.includes('cannot change your own') ? 403 : 400;
+                     result.error?.includes('cannot change your own') ||
+                     result.error?.includes('not a member') ||
+                     result.error?.includes('does not have access') ? 403 : 400;
       return res.status(status).json({ success: false, error: result.error });
     }
 
@@ -430,7 +432,9 @@ router.delete('/:id/members/:memberId', async (req: Request, res: Response) => {
       const status = result.error?.includes('not found') ? 404 :
                      result.error?.includes('Only organization') ||
                      result.error?.includes('Cannot remove') ||
-                     result.error?.includes('cannot remove yourself') ? 403 : 400;
+                     result.error?.includes('cannot remove yourself') ||
+                     result.error?.includes('not a member') ||
+                     result.error?.includes('does not have access') ? 403 : 400;
       return res.status(status).json({ success: false, error: result.error });
     }
 
