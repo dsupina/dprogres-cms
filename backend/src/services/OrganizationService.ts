@@ -230,11 +230,11 @@ export class OrganizationService extends EventEmitter {
         return { success: false, error: accessResult.error };
       }
 
-      // Get member count (separate query for performance)
+      // Get active member count (separate query for performance)
       const { rows: [{ count }] } = await pool.query<{ count: string }>(
         `SELECT COUNT(*) as count
          FROM organization_members
-         WHERE organization_id = $1`,
+         WHERE organization_id = $1 AND deleted_at IS NULL`,
         [organizationId]
       );
 
@@ -435,10 +435,10 @@ export class OrganizationService extends EventEmitter {
         };
       }
 
-      // Verify new owner is a member
+      // Verify new owner is an active member
       const { rows: members } = await client.query(
         `SELECT id, role FROM organization_members
-         WHERE organization_id = $1 AND user_id = $2`,
+         WHERE organization_id = $1 AND user_id = $2 AND deleted_at IS NULL`,
         [organizationId, newOwnerId]
       );
 
@@ -508,14 +508,16 @@ export class OrganizationService extends EventEmitter {
     userId: number
   ): Promise<ServiceResponse<OrganizationWithMembers[]>> {
     try {
-      // Get organizations where user is a member
+      // Get organizations where user is an active member
       const { rows } = await pool.query<OrganizationWithMembers>(
         `SELECT
            o.*,
-           (SELECT COUNT(*) FROM organization_members WHERE organization_id = o.id) as member_count
+           (SELECT COUNT(*) FROM organization_members WHERE organization_id = o.id AND deleted_at IS NULL) as member_count
          FROM organizations o
          INNER JOIN organization_members om ON o.id = om.organization_id
-         WHERE om.user_id = $1 AND o.deleted_at IS NULL
+         WHERE om.user_id = $1
+           AND om.deleted_at IS NULL
+           AND o.deleted_at IS NULL
          ORDER BY o.created_at DESC`,
         [userId]
       );
@@ -553,6 +555,7 @@ export class OrganizationService extends EventEmitter {
          INNER JOIN organizations o ON om.organization_id = o.id
          WHERE om.organization_id = $1
            AND om.user_id = $2
+           AND om.deleted_at IS NULL
            AND o.deleted_at IS NULL`,
         [organizationId, userId]
       );
