@@ -170,7 +170,9 @@ router.put('/:id', async (req: Request, res: Response) => {
     const result = await organizationService.updateOrganization(organizationId, value, userId);
     if (!result.success) {
       const status = result.error?.includes('not found') ? 404 :
-                     result.error?.includes('Only organization owner') ? 403 : 400;
+                     result.error?.includes('Only organization owner') ? 403 :
+                     result.error?.includes('cannot be empty') ||
+                     result.error?.includes('No fields to update') ? 400 : 500;
       return res.status(status).json({ success: false, error: result.error });
     }
 
