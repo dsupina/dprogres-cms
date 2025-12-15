@@ -121,7 +121,9 @@ router.get('/:id', async (req: Request, res: Response) => {
 
     const result = await organizationService.getOrganization(organizationId, userId);
     if (!result.success) {
-      return res.status(result.error === 'Organization not found' ? 404 : 403).json({
+      const status = result.error === 'Organization not found' ? 404 :
+                     result.error?.includes('does not have access') ? 403 : 500;
+      return res.status(status).json({
         success: false,
         error: result.error,
       });
