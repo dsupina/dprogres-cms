@@ -348,15 +348,18 @@ router.delete('/:id/invites/:inviteId', async (req: Request, res: Response) => {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
+    const organizationId = parseInt(req.params.id, 10);
     const inviteId = parseInt(req.params.inviteId, 10);
-    if (isNaN(inviteId)) {
-      return res.status(400).json({ success: false, error: 'Invalid invite ID' });
+    if (isNaN(organizationId) || isNaN(inviteId)) {
+      return res.status(400).json({ success: false, error: 'Invalid organization or invite ID' });
     }
 
-    const result = await memberService.revokeInvite(inviteId, userId);
+    const result = await memberService.revokeInvite(organizationId, inviteId, userId);
     if (!result.success) {
       const status = result.error?.includes('not found') ? 404 :
-                     result.error?.includes('Only organization') ? 403 : 400;
+                     result.error?.includes('does not belong') ? 400 :
+                     result.error?.includes('Only organization') ||
+                     result.error?.includes('not a member') ? 403 : 500;
       return res.status(status).json({ success: false, error: result.error });
     }
 
