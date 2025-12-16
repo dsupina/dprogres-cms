@@ -295,10 +295,12 @@ router.post('/:id/invites', async (req: Request, res: Response) => {
     });
 
     if (!result.success) {
-      const status = result.error?.includes('not a member') ||
+      const status = result.error?.includes('not found') ? 404 :
+                     result.error?.includes('not a member') ||
                      result.error?.includes('Only organization') ? 403 :
                      result.error?.includes('already a member') ||
-                     result.error?.includes('already exists') ? 409 : 400;
+                     result.error?.includes('already exists') ? 409 :
+                     result.error?.includes('Invalid') ? 400 : 500;
       return res.status(status).json({ success: false, error: result.error });
     }
 
