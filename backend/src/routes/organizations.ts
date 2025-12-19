@@ -359,7 +359,8 @@ router.delete('/:id/invites/:inviteId', async (req: Request, res: Response) => {
     const result = await memberService.revokeInvite(organizationId, inviteId, userId);
     if (!result.success) {
       const status = result.error?.includes('not found') ? 404 :
-                     result.error?.includes('does not belong') ? 400 :
+                     result.error?.includes('does not belong') ||
+                     result.error?.includes('Cannot revoke') ? 400 :
                      result.error?.includes('Only organization') ||
                      result.error?.includes('not a member') ? 403 : 500;
       return res.status(status).json({ success: false, error: result.error });
@@ -486,7 +487,7 @@ router.post('/:id/transfer-ownership', async (req: Request, res: Response) => {
       const status = result.error?.includes('not found') ? 404 :
                      result.error?.includes('Only current owner') ||
                      result.error?.includes('must be an existing') ? 403 :
-                     result.error?.includes('Cannot transfer') ? 400 : 400;
+                     result.error?.includes('Cannot transfer') ? 400 : 500;
       return res.status(status).json({ success: false, error: result.error });
     }
 
