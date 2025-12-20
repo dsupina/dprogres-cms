@@ -96,6 +96,7 @@ jest.mock('../../services/OrganizationService', () => ({
 // Import after mocks
 import { subscriptionService } from '../../services/SubscriptionService';
 import { QuotaService } from '../../services/QuotaService';
+import { SubscriptionLifecycleService } from '../../services/SubscriptionLifecycleService';
 import { invalidateSubscriptionCache } from '../../middleware/quota';
 
 describe('SF-023: Stripe & Quotas Integration Tests', () => {
@@ -295,71 +296,141 @@ describe('SF-023: Stripe & Quotas Integration Tests', () => {
      * which handles subscription lifecycle events triggered by webhooks.
      */
 
-    it('should verify SubscriptionLifecycleService processes grace period events', async () => {
-      // The SubscriptionLifecycleService.processGracePeriodExpirations() is called
-      // by a cron job and processes subscriptions that have been past_due too long.
-      // This test verifies the service is properly integrated.
+    let lifecycleService: SubscriptionLifecycleService;
 
-      // Mock finding past_due subscriptions that exceeded grace period
-      mockPoolQuery.mockResolvedValueOnce({
-        rows: [{
-          id: 1,
-          organization_id: 1,
-          stripe_subscription_id: 'sub_expired_grace',
-          updated_at: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000), // 15 days ago
-        }],
+    beforeEach(() => {
+      lifecycleService = new SubscriptionLifecycleService();
+      mockPoolQuery.mockReset();
+      mockPoolConnect.mockReset();
+      mockClientQuery.mockReset();
+      mockClientRelease.mockReset();
+
+      // Default client mock setup
+      mockClientQuery.mockResolvedValue({ rows: [] });
+      mockClientRelease.mockResolvedValue(undefined);
+      mockPoolConnect.mockResolvedValue({
+        query: mockClientQuery,
+        release: mockClientRelease,
       });
-
-      // Verify the query pattern for finding expired grace period subscriptions
-      expect(mockPoolQuery).toBeDefined();
     });
 
-    it('should verify subscription events table supports idempotency', async () => {
-      // The subscription_events table has unique constraint on stripe_event_id
-      // This test verifies the idempotency pattern
-
-      // First insert should succeed
-      mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });
-
-      // Second insert with same event ID should return no rows (ON CONFLICT DO NOTHING)
-      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
-
-      expect(mockPoolQuery).toBeDefined();
-    });
-
-    it('should verify webhook handlers use transaction locking', async () => {
-      // Webhook handlers use SELECT FOR UPDATE SKIP LOCKED to prevent
-      // concurrent processing of the same event
-
-      // Mock transaction with locking
+    it('should handle subscription status transition via SubscriptionLifecycleService', async () => {
+      // Setup mocks for handleStatusTransition
       mockPoolConnect.mockResolvedValueOnce({
         query: mockClientQuery,
         release: mockClientRelease,
       });
 
       mockClientQuery.mockResolvedValueOnce(undefined); // BEGIN
-      mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, processed_at: null }] }); // SELECT FOR UPDATE SKIP LOCKED
-      mockClientQuery.mockResolvedValueOnce(undefined); // handler operations
-      mockClientQuery.mockResolvedValueOnce(undefined); // UPDATE processed_at
+      mockClientQuery.mockResolvedValueOnce({
+        rows: [{
+          id: 1,
+          organization_id: 1,
+          stripe_subscription_id: 'sub_test123',
+          status: 'active',
+          plan_tier: 'starter',
+          current_period_end: new Date(),
+        }],
+      }); // SELECT FOR UPDATE
+      mockClientQuery.mockResolvedValueOnce(undefined); // UPDATE status
       mockClientQuery.mockResolvedValueOnce(undefined); // COMMIT
 
-      // Verify transaction pattern is available
-      expect(mockClientQuery).toBeDefined();
-      expect(mockClientRelease).toBeDefined();
+      const result = await lifecycleService.handleStatusTransition(1, 'past_due');
+
+      expect(result.success).toBe(true);
+      expect(result.data?.previousStatus).toBe('active');
+      expect(result.data?.newStatus).toBe('past_due');
+      expect(mockClientQuery).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE subscriptions'),
+        expect.any(Array)
+      );
     });
 
-    it('should verify processed events are skipped', async () => {
-      // When an event has processed_at set, it should be skipped immediately
-
-      // Quick idempotency check returns processed event
+    it('should process grace period expirations via SubscriptionLifecycleService', async () => {
+      // Mock finding past_due subscriptions that exceeded grace period
       mockPoolQuery.mockResolvedValueOnce({
-        rows: [{ processed_at: new Date() }],
+        rows: [{
+          id: 1,
+          organization_id: 1,
+          stripe_subscription_id: 'sub_expired_grace',
+          status: 'past_due',
+          plan_tier: 'starter',
+          current_period_end: new Date(),
+          updated_at: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000), // 15 days ago
+          days_in_grace: 15,
+        }],
       });
 
-      // The response should be { received: true, duplicate: true }
-      // No further processing should occur
+      // Mock transaction for processing expired subscription
+      mockPoolConnect.mockResolvedValueOnce({
+        query: mockClientQuery,
+        release: mockClientRelease,
+      });
 
-      expect(mockPoolQuery).toBeDefined();
+      mockClientQuery.mockResolvedValueOnce(undefined); // BEGIN
+      mockClientQuery.mockResolvedValueOnce({ rows: [{ id: 1, status: 'past_due' }] }); // SELECT FOR UPDATE
+      mockClientQuery.mockResolvedValueOnce(undefined); // UPDATE to canceled
+      mockClientQuery.mockResolvedValueOnce(undefined); // UPDATE organization to free
+      mockClientQuery.mockResolvedValueOnce(undefined); // UPDATE quotas
+      mockClientQuery.mockResolvedValueOnce(undefined); // UPDATE quotas
+      mockClientQuery.mockResolvedValueOnce(undefined); // UPDATE quotas
+      mockClientQuery.mockResolvedValueOnce(undefined); // UPDATE quotas
+      mockClientQuery.mockResolvedValueOnce(undefined); // UPDATE quotas
+      mockClientQuery.mockResolvedValueOnce(undefined); // COMMIT
+
+      const result = await lifecycleService.processGracePeriodExpirations();
+
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveLength(1);
+      expect(result.data?.[0].shouldCancel).toBe(true);
+      expect(result.data?.[0].organizationId).toBe(1);
+    });
+
+    it('should return not found for non-existent subscription', async () => {
+      mockPoolConnect.mockResolvedValueOnce({
+        query: mockClientQuery,
+        release: mockClientRelease,
+      });
+
+      mockClientQuery.mockResolvedValueOnce(undefined); // BEGIN
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // SELECT FOR UPDATE returns nothing
+      mockClientQuery.mockResolvedValueOnce(undefined); // ROLLBACK
+
+      const result = await lifecycleService.handleStatusTransition(999, 'canceled');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not found');
+    });
+
+    it('should skip subscriptions that changed status during grace period processing', async () => {
+      // Initial query finds past_due subscription
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{
+          id: 1,
+          organization_id: 1,
+          stripe_subscription_id: 'sub_changed',
+          status: 'past_due',
+          plan_tier: 'starter',
+          current_period_end: new Date(),
+          updated_at: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+          days_in_grace: 10,
+        }],
+      });
+
+      // But when we try to lock it, it's no longer past_due
+      mockPoolConnect.mockResolvedValueOnce({
+        query: mockClientQuery,
+        release: mockClientRelease,
+      });
+
+      mockClientQuery.mockResolvedValueOnce(undefined); // BEGIN
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // SELECT FOR UPDATE returns nothing (status changed)
+      mockClientQuery.mockResolvedValueOnce(undefined); // ROLLBACK
+
+      const result = await lifecycleService.processGracePeriodExpirations();
+
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveLength(0); // No subscriptions were canceled
     });
   });
 
@@ -832,18 +903,187 @@ describe('SF-023: Stripe & Quotas Integration Tests', () => {
 
 // Conditional tests that require real Stripe test mode
 (SKIP_STRIPE_TESTS ? describe.skip : describe)('SF-023: Real Stripe Test Mode Integration', () => {
-  // These tests require actual Stripe test mode credentials
-  // Run with: TEST_STRIPE=true npm test -- sf023-stripe-quotas.integration.test.ts
+  /**
+   * These tests require actual Stripe test mode credentials.
+   * Run with: TEST_STRIPE=true npm test -- sf023-stripe-quotas.integration.test.ts
+   *
+   * Required environment variables:
+   * - STRIPE_SECRET_KEY (must be a test mode key starting with sk_test_)
+   * - STRIPE_PRICE_STARTER_MONTHLY (a real test price ID)
+   */
 
-  it('should create actual checkout session with real Stripe API', async () => {
-    // This test would use real Stripe API
-    // Only runs when TEST_STRIPE=true
-    console.log('Skipping real Stripe test - requires TEST_STRIPE=true');
+  // Helper to get Stripe instance (lazy initialization)
+  const getStripe = () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Stripe = require('stripe');
+    return new Stripe(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: '2023-10-16',
+    });
+  };
+
+  let testCustomerId: string | null = null;
+
+  afterAll(async () => {
+    // Cleanup: Delete test customer if created
+    if (testCustomerId && process.env.STRIPE_SECRET_KEY) {
+      try {
+        const stripe = getStripe();
+        await stripe.customers.del(testCustomerId);
+        console.log(`Cleaned up test customer: ${testCustomerId}`);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+    }
   });
 
-  it('should verify webhook signature with real Stripe secrets', async () => {
-    // This test would use real Stripe webhook secrets
-    // Only runs when TEST_STRIPE=true
-    console.log('Skipping real Stripe webhook test - requires TEST_STRIPE=true');
+  it('should create actual checkout session with real Stripe API', async () => {
+    // Skip if no Stripe key configured
+    if (!process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_')) {
+      console.warn('Skipping: STRIPE_SECRET_KEY must be a test mode key');
+      return;
+    }
+
+    const stripe = getStripe();
+
+    // Create a test customer
+    const customer = await stripe.customers.create({
+      email: 'integration-test@example.com',
+      name: 'SF-023 Integration Test',
+      metadata: {
+        test: 'true',
+        created_by: 'sf023-integration-test',
+      },
+    });
+    testCustomerId = customer.id;
+
+    expect(customer.id).toMatch(/^cus_/);
+    expect(customer.email).toBe('integration-test@example.com');
+
+    // Create a checkout session
+    const priceId = process.env.STRIPE_PRICE_STARTER_MONTHLY || 'price_test';
+
+    try {
+      const session = await stripe.checkout.sessions.create({
+        customer: customer.id,
+        mode: 'subscription',
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: 'https://example.com/success?session_id={CHECKOUT_SESSION_ID}',
+        cancel_url: 'https://example.com/cancel',
+        metadata: {
+          organization_id: '999', // Test org ID
+          plan_tier: 'starter',
+          billing_cycle: 'monthly',
+          test: 'true',
+        },
+      });
+
+      // Verify session was created correctly
+      expect(session.id).toMatch(/^cs_/);
+      expect(session.customer).toBe(customer.id);
+      expect(session.mode).toBe('subscription');
+      expect(session.url).toContain('checkout.stripe.com');
+      expect(session.metadata?.organization_id).toBe('999');
+      expect(session.metadata?.plan_tier).toBe('starter');
+
+      console.log(`Created real checkout session: ${session.id}`);
+    } catch (error: any) {
+      // If price doesn't exist, that's expected in some test environments
+      if (error.code === 'resource_missing' && error.param === 'line_items[0][price]') {
+        console.warn('Skipping checkout session creation: test price ID not found');
+        return;
+      }
+      throw error;
+    }
+  });
+
+  it('should retrieve and validate a Stripe customer', async () => {
+    // Skip if no Stripe key configured
+    if (!process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_')) {
+      console.warn('Skipping: STRIPE_SECRET_KEY must be a test mode key');
+      return;
+    }
+
+    const stripe = getStripe();
+
+    // Create a customer
+    const customer = await stripe.customers.create({
+      email: 'retrieve-test@example.com',
+      name: 'Retrieve Test Customer',
+      metadata: { test: 'true', created_by: 'sf023-integration-test' },
+    });
+
+    // Clean up at end
+    const customerId = customer.id;
+
+    try {
+      // Retrieve and validate
+      const retrieved = await stripe.customers.retrieve(customerId);
+
+      expect(retrieved.id).toBe(customerId);
+      expect(retrieved.email).toBe('retrieve-test@example.com');
+      expect(retrieved.deleted).toBeFalsy();
+    } finally {
+      // Cleanup
+      await stripe.customers.del(customerId);
+    }
+  });
+
+  it('should construct and verify webhook event signature', async () => {
+    // Skip if no webhook secret configured
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret || !process.env.STRIPE_SECRET_KEY) {
+      console.warn('Skipping: STRIPE_WEBHOOK_SECRET not configured');
+      return;
+    }
+
+    const stripe = getStripe();
+
+    // Create a mock event payload
+    const payload = JSON.stringify({
+      id: 'evt_test_webhook',
+      type: 'customer.created',
+      data: {
+        object: {
+          id: 'cus_test',
+          email: 'webhook-test@example.com',
+        },
+      },
+    });
+
+    // Generate a valid signature
+    const timestamp = Math.floor(Date.now() / 1000);
+    const crypto = require('crypto');
+    const signedPayload = `${timestamp}.${payload}`;
+    const signature = crypto
+      .createHmac('sha256', webhookSecret)
+      .update(signedPayload)
+      .digest('hex');
+
+    const header = `t=${timestamp},v1=${signature}`;
+
+    // Verify the webhook can be constructed
+    const event = stripe.webhooks.constructEvent(payload, header, webhookSecret);
+
+    expect(event.id).toBe('evt_test_webhook');
+    expect(event.type).toBe('customer.created');
+    expect(event.data.object.email).toBe('webhook-test@example.com');
+  });
+
+  it('should reject invalid webhook signatures', async () => {
+    // Skip if no webhook secret configured
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret || !process.env.STRIPE_SECRET_KEY) {
+      console.warn('Skipping: STRIPE_WEBHOOK_SECRET not configured');
+      return;
+    }
+
+    const stripe = getStripe();
+
+    const payload = JSON.stringify({ id: 'evt_fake', type: 'test' });
+    const invalidHeader = 't=12345,v1=invalid_signature';
+
+    expect(() => {
+      stripe.webhooks.constructEvent(payload, invalidHeader, webhookSecret);
+    }).toThrow(/signature/i);
   });
 });
