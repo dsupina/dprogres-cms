@@ -769,10 +769,12 @@ export class MemberService extends EventEmitter {
    * Revoke a pending invitation
    *
    * Business Rules:
+   * - Invite must belong to the specified organization
    * - Only owner/admin can revoke invites
    * - Can only revoke unaccepted invites
    */
   async revokeInvite(
+    organizationId: number,
     inviteId: number,
     actorId: number
   ): Promise<ServiceResponse<void>> {
@@ -794,6 +796,15 @@ export class MemberService extends EventEmitter {
 
       const invite = invites[0];
 
+      // Verify invite belongs to the specified organization
+      if (invite.organization_id !== organizationId) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          error: 'Invitation does not belong to this organization',
+        };
+      }
+
       // Check if already accepted
       if (invite.accepted_at) {
         await client.query('ROLLBACK');
@@ -807,7 +818,7 @@ export class MemberService extends EventEmitter {
       const { rows: actorMembers } = await client.query<OrganizationMember>(
         `SELECT role FROM organization_members
          WHERE organization_id = $1 AND user_id = $2 AND deleted_at IS NULL`,
-        [invite.organization_id, actorId]
+        [organizationId, actorId]
       );
 
       if (actorMembers.length === 0) {

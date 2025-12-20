@@ -29,6 +29,7 @@ import SitesPage from './pages/admin/SitesPage';
 import DistributionQueuePage from './pages/admin/DistributionQueuePage';
 import BillingPage from './pages/admin/BillingPage';
 import BillingSuccessPage from './pages/admin/BillingSuccessPage';
+import OrganizationSettingsPage from './pages/admin/OrganizationSettingsPage';
 
 // Import existing components
 import PublicLayout from './components/layout/PublicLayout';
@@ -88,6 +89,7 @@ function App() {
         <Route path="distribution-queue" element={<DistributionQueuePage />} />
         <Route path="billing" element={<BillingPage />} />
         <Route path="billing/success" element={<BillingSuccessPage />} />
+        <Route path="organization" element={<OrganizationSettingsPage />} />
       </Route>
 
       {/* 404 Route */}

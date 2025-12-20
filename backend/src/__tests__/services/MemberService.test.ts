@@ -685,6 +685,7 @@ describe('MemberService', () => {
   });
 
   describe('revokeInvite', () => {
+    const organizationId = 1;
     const inviteId = 1;
     const actorId = 2;
 
@@ -706,7 +707,7 @@ describe('MemberService', () => {
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // DELETE invite
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // COMMIT
 
-      const result = await memberService.revokeInvite(inviteId, actorId);
+      const result = await memberService.revokeInvite(organizationId, inviteId, actorId);
 
       expect(result.success).toBe(true);
       expect(mockClientQuery).toHaveBeenCalledWith('COMMIT');
@@ -717,10 +718,31 @@ describe('MemberService', () => {
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // invite not found
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
-      const result = await memberService.revokeInvite(inviteId, actorId);
+      const result = await memberService.revokeInvite(organizationId, inviteId, actorId);
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Invitation not found');
+      expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
+    });
+
+    it('should return error if invite belongs to different organization', async () => {
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // BEGIN
+      mockClientQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 1,
+            organization_id: 2, // Different org
+            email: 'test@example.com',
+            accepted_at: null,
+          },
+        ],
+      }); // invite check
+      mockClientQuery.mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+      const result = await memberService.revokeInvite(organizationId, inviteId, actorId);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invitation does not belong to this organization');
       expect(mockClientQuery).toHaveBeenCalledWith('ROLLBACK');
     });
 
@@ -730,13 +752,14 @@ describe('MemberService', () => {
         rows: [
           {
             id: 1,
+            organization_id: 1,
             accepted_at: new Date(), // Already accepted
           },
         ],
       }); // invite check
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
-      const result = await memberService.revokeInvite(inviteId, actorId);
+      const result = await memberService.revokeInvite(organizationId, inviteId, actorId);
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Cannot revoke an accepted invitation');
@@ -759,7 +782,7 @@ describe('MemberService', () => {
       }); // actor is editor
       mockClientQuery.mockResolvedValueOnce({ rows: [] }); // ROLLBACK
 
-      const result = await memberService.revokeInvite(inviteId, actorId);
+      const result = await memberService.revokeInvite(organizationId, inviteId, actorId);
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Only organization owners and admins');

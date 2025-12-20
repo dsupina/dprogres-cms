@@ -207,6 +207,56 @@ After initial implementation, automated code review identified 4 Priority 1 secu
 
 ---
 
+### Recently Completed: SF-021 Organization Settings Page (December 2025)
+
+**Implementation Achievements**:
+- ✅ Full-stack organization settings page with CRUD operations
+- ✅ Backend API routes for organization management (`/api/organizations/*`)
+- ✅ Organization details form with logo upload support
+- ✅ Members table with role management (owner, admin, editor, publisher, viewer)
+- ✅ Invite member form with pending invitations list
+- ✅ Transfer ownership modal with confirmation safeguard
+- ✅ Role-based UI permissions (owner-only editing, admin+ member management)
+- ✅ 26 backend unit tests (100% passing)
+- ✅ 38 frontend component tests (100% passing)
+- ✅ Integration with existing OrganizationService and MemberService
+- ✅ Documentation updated (COMPONENTS.md with all 4 new components)
+
+**Components Created**:
+- **OrganizationDetailsForm**: Display/edit organization name and logo
+- **MembersTable**: Member list with role badges and action dropdown
+- **InviteMemberForm**: Email/role input with pending invitations list
+- **TransferOwnershipModal**: Confirmation modal with "TRANSFER" text requirement
+
+**API Endpoints Added**:
+- `GET /api/organizations/current` - Get current user's organization
+- `GET /api/organizations/:id` - Get organization by ID
+- `PUT /api/organizations/:id` - Update organization details
+- `POST /api/organizations/:id/logo` - Upload organization logo
+- `GET /api/organizations/:id/members` - List organization members
+- `POST /api/organizations/:id/invites` - Invite new member
+- `GET /api/organizations/:id/invites` - List pending invitations
+- `DELETE /api/organizations/:id/invites/:inviteId` - Revoke invitation
+- `PUT /api/organizations/:id/members/:memberId/role` - Update member role
+- `DELETE /api/organizations/:id/members/:memberId` - Remove member
+- `POST /api/organizations/:id/transfer-ownership` - Transfer ownership
+
+**Test Coverage**:
+- Backend: 26 tests covering all route handlers and validation
+- Frontend: 38 tests across MembersTable, InviteMemberForm, TransferOwnershipModal
+
+**Dependencies Leveraged**:
+- SF-006 (Member Management Service) - MemberService for invite/role operations
+- SF-017 (Billing Page UI) - UI patterns and component structure
+
+**Lessons Learned**:
+- Leveraging existing services (OrganizationService, MemberService) accelerated development
+- Collapsible forms improve UX for secondary actions
+- Confirmation text ("TRANSFER") provides critical safety for irreversible actions
+- Auto-capitalization in confirmation inputs improves usability
+
+---
+
 ### Previously Completed: SF-002 Stripe Account Setup & Configuration (January 2025)
 
 **Implementation Achievements**:
