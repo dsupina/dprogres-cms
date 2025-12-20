@@ -254,7 +254,9 @@ router.get('/:id/members', async (req: Request, res: Response) => {
 
     const result = await memberService.listMembers(organizationId, userId);
     if (!result.success) {
-      return res.status(403).json({ success: false, error: result.error });
+      const status = result.error?.includes('not a member') ||
+                     result.error?.includes('do not have access') ? 403 : 500;
+      return res.status(status).json({ success: false, error: result.error });
     }
 
     return res.json({ success: true, data: result.data });

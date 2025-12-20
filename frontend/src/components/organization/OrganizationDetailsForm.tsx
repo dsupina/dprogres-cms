@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'react-hot-toast';
 import { Building2, Upload, Save } from 'lucide-react';
@@ -16,6 +16,12 @@ export default function OrganizationDetailsForm({ organization, canEdit }: Organ
   const [logoPreview, setLogoPreview] = useState<string | null>(organization.logo_url || null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
+
+  // Sync local state when organization prop changes
+  useEffect(() => {
+    setName(organization.name);
+    setLogoPreview(organization.logo_url || null);
+  }, [organization.name, organization.logo_url]);
 
   // Update organization mutation
   const updateMutation = useMutation({
