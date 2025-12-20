@@ -556,58 +556,94 @@ describe('SF-023: Stripe & Quotas Integration Tests', () => {
       );
     });
 
-    it('should prevent quota overflow with high-volume concurrent requests', async () => {
-      // Simulate multiple rapid requests that could cause race conditions
-      const numRequests = 5;
-      let currentUsage = 95;
+    it('should prevent quota overflow when approaching limit', async () => {
+      // Test sequential requests approaching quota limit
+      // Note: Real concurrency protection happens at database level via
+      // check_and_increment_quota function. This test verifies the quota
+      // enforcement logic works correctly as usage approaches the limit.
+      const results: Array<{ success: boolean; error?: string }> = [];
 
-      // Setup mocks for each request
-      for (let i = 0; i < numRequests; i++) {
-        // Quota existence check
-        mockPoolQuery.mockResolvedValueOnce({
-          rows: [{ current_usage: currentUsage + i, quota_limit: 100 }],
-        });
-
-        // Database function result - allow until limit
-        const allowed = (currentUsage + i) < 100;
-        mockPoolQuery.mockResolvedValueOnce({
-          rows: [{ allowed }],
-        });
-
-        if (allowed) {
-          // Status fetch for events
-          mockPoolQuery.mockResolvedValueOnce({
-            rows: [{
-              dimension: 'posts',
-              current_usage: currentUsage + i + 1,
-              quota_limit: 100,
-              period_start: new Date(),
-              period_end: null,
-              last_reset_at: null,
-            }],
-          });
-        }
-      }
-
-      // Fire all requests concurrently
-      const requests = Array.from({ length: numRequests }, () =>
-        quotaService.incrementQuota({
-          organizationId: 1,
+      // Request 1: Usage at 98/100, should succeed
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 98, quota_limit: 100 }],
+      });
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ allowed: true }] });
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{
           dimension: 'posts',
-          amount: 1,
-        })
+          current_usage: 99,
+          quota_limit: 100,
+          period_start: new Date(),
+          period_end: null,
+          last_reset_at: null,
+        }],
+      });
+
+      results.push(await quotaService.incrementQuota({
+        organizationId: 1,
+        dimension: 'posts',
+        amount: 1,
+      }));
+
+      // Request 2: Usage at 99/100, should succeed
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 99, quota_limit: 100 }],
+      });
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ allowed: true }] });
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{
+          dimension: 'posts',
+          current_usage: 100,
+          quota_limit: 100,
+          period_start: new Date(),
+          period_end: null,
+          last_reset_at: null,
+        }],
+      });
+
+      results.push(await quotaService.incrementQuota({
+        organizationId: 1,
+        dimension: 'posts',
+        amount: 1,
+      }));
+
+      // Request 3: Usage at 100/100, should fail
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 100, quota_limit: 100 }],
+      });
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ allowed: false }] });
+
+      results.push(await quotaService.incrementQuota({
+        organizationId: 1,
+        dimension: 'posts',
+        amount: 1,
+      }));
+
+      // Request 4: Still at 100/100, should fail
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 100, quota_limit: 100 }],
+      });
+      mockPoolQuery.mockResolvedValueOnce({ rows: [{ allowed: false }] });
+
+      results.push(await quotaService.incrementQuota({
+        organizationId: 1,
+        dimension: 'posts',
+        amount: 1,
+      }));
+
+      // Verify results: first 2 succeed, last 2 fail
+      expect(results[0].success).toBe(true);
+      expect(results[1].success).toBe(true);
+      expect(results[2].success).toBe(false);
+      expect(results[2].error).toContain('Quota exceeded');
+      expect(results[3].success).toBe(false);
+      expect(results[3].error).toContain('Quota exceeded');
+
+      // Verify atomic function was called for each request
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        'SELECT check_and_increment_quota($1, $2, $3) as allowed',
+        [1, 'posts', 1]
       );
-
-      const results = await Promise.all(requests);
-
-      // Count successes and failures
-      const successes = results.filter(r => r.success).length;
-      const failures = results.filter(r => !r.success).length;
-
-      // We started at 95/100, so at most 5 more can fit
-      // With our mock setup, first 5 should succeed
-      expect(successes).toBeLessThanOrEqual(5);
-      expect(successes + failures).toBe(numRequests);
     });
 
     it('should handle decrement with SELECT FOR UPDATE to prevent races', async () => {
