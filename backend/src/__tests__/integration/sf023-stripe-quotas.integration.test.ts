@@ -378,6 +378,14 @@ describe('SF-023: Stripe & Quotas Integration Tests', () => {
       mockClientQuery.mockResolvedValueOnce(undefined); // UPDATE quotas
       mockClientQuery.mockResolvedValueOnce(undefined); // COMMIT
 
+      // Mock post-commit actions:
+      // 1. Stripe cancel pending flag update
+      mockPoolQuery.mockResolvedValueOnce(undefined);
+      // 2. Organization lookup for sendDowngradeNotification
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ name: 'Test Organization' }],
+      });
+
       const result = await lifecycleService.processGracePeriodExpirations();
 
       expect(result.success).toBe(true);
@@ -907,16 +915,25 @@ describe('SF-023: Stripe & Quotas Integration Tests', () => {
    * These tests require actual Stripe test mode credentials.
    * Run with: TEST_STRIPE=true npm test -- sf023-stripe-quotas.integration.test.ts
    *
-   * Required environment variables:
-   * - STRIPE_SECRET_KEY (must be a test mode key starting with sk_test_)
+   * Required environment variables (checks _TEST variants first, then falls back):
+   * - STRIPE_SECRET_KEY_TEST or STRIPE_SECRET_KEY (must be a test mode key starting with sk_test_)
+   * - STRIPE_WEBHOOK_SECRET_TEST or STRIPE_WEBHOOK_SECRET
    * - STRIPE_PRICE_STARTER_MONTHLY (a real test price ID)
    */
+
+  // Get Stripe secret key (prefer _TEST variant for test environments)
+  const getStripeSecretKey = () =>
+    process.env.STRIPE_SECRET_KEY_TEST || process.env.STRIPE_SECRET_KEY;
+
+  // Get Stripe webhook secret (prefer _TEST variant for test environments)
+  const getWebhookSecret = () =>
+    process.env.STRIPE_WEBHOOK_SECRET_TEST || process.env.STRIPE_WEBHOOK_SECRET;
 
   // Helper to get Stripe instance (lazy initialization)
   const getStripe = () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Stripe = require('stripe');
-    return new Stripe(process.env.STRIPE_SECRET_KEY, {
+    return new Stripe(getStripeSecretKey(), {
       apiVersion: '2023-10-16',
     });
   };
@@ -925,7 +942,7 @@ describe('SF-023: Stripe & Quotas Integration Tests', () => {
 
   afterAll(async () => {
     // Cleanup: Delete test customer if created
-    if (testCustomerId && process.env.STRIPE_SECRET_KEY) {
+    if (testCustomerId && getStripeSecretKey()) {
       try {
         const stripe = getStripe();
         await stripe.customers.del(testCustomerId);
@@ -938,8 +955,9 @@ describe('SF-023: Stripe & Quotas Integration Tests', () => {
 
   it('should create actual checkout session with real Stripe API', async () => {
     // Skip if no Stripe key configured
-    if (!process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_')) {
-      console.warn('Skipping: STRIPE_SECRET_KEY must be a test mode key');
+    const stripeKey = getStripeSecretKey();
+    if (!stripeKey?.startsWith('sk_test_')) {
+      console.warn('Skipping: STRIPE_SECRET_KEY_TEST or STRIPE_SECRET_KEY must be a test mode key');
       return;
     }
 
@@ -998,8 +1016,9 @@ describe('SF-023: Stripe & Quotas Integration Tests', () => {
 
   it('should retrieve and validate a Stripe customer', async () => {
     // Skip if no Stripe key configured
-    if (!process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_')) {
-      console.warn('Skipping: STRIPE_SECRET_KEY must be a test mode key');
+    const stripeKey = getStripeSecretKey();
+    if (!stripeKey?.startsWith('sk_test_')) {
+      console.warn('Skipping: STRIPE_SECRET_KEY_TEST or STRIPE_SECRET_KEY must be a test mode key');
       return;
     }
 
@@ -1030,9 +1049,10 @@ describe('SF-023: Stripe & Quotas Integration Tests', () => {
 
   it('should construct and verify webhook event signature', async () => {
     // Skip if no webhook secret configured
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    if (!webhookSecret || !process.env.STRIPE_SECRET_KEY) {
-      console.warn('Skipping: STRIPE_WEBHOOK_SECRET not configured');
+    const webhookSecret = getWebhookSecret();
+    const stripeKey = getStripeSecretKey();
+    if (!webhookSecret || !stripeKey) {
+      console.warn('Skipping: STRIPE_WEBHOOK_SECRET_TEST or STRIPE_WEBHOOK_SECRET not configured');
       return;
     }
 
@@ -1071,9 +1091,10 @@ describe('SF-023: Stripe & Quotas Integration Tests', () => {
 
   it('should reject invalid webhook signatures', async () => {
     // Skip if no webhook secret configured
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    if (!webhookSecret || !process.env.STRIPE_SECRET_KEY) {
-      console.warn('Skipping: STRIPE_WEBHOOK_SECRET not configured');
+    const webhookSecret = getWebhookSecret();
+    const stripeKey = getStripeSecretKey();
+    if (!webhookSecret || !stripeKey) {
+      console.warn('Skipping: STRIPE_WEBHOOK_SECRET_TEST or STRIPE_WEBHOOK_SECRET not configured');
       return;
     }
 
