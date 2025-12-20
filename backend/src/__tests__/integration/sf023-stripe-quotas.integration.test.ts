@@ -36,37 +36,37 @@ jest.mock('../../utils/database', () => ({
   },
 }));
 
-// Mock Stripe conditionally
+// Mock Stripe for service-level tests
+// Note: jest.mock is hoisted, so conditional wrapping doesn't work.
+// The "Real Stripe Test Mode Integration" tests bypass this by directly
+// instantiating the Stripe SDK rather than using the mocked config.
 const mockStripeCustomersCreate: any = jest.fn();
 const mockStripeCheckoutSessionsCreate: any = jest.fn();
 const mockStripeWebhooksConstructEvent: any = jest.fn();
 const mockStripeSubscriptionsRetrieve: any = jest.fn();
 const mockStripeSubscriptionsCancel: any = jest.fn();
 
-// Only mock Stripe if not running real Stripe tests
-if (SKIP_STRIPE_TESTS) {
-  jest.mock('../../config/stripe', () => ({
-    stripe: {
-      customers: {
-        create: mockStripeCustomersCreate,
-      },
-      checkout: {
-        sessions: {
-          create: mockStripeCheckoutSessionsCreate,
-        },
-      },
-      webhooks: {
-        constructEvent: mockStripeWebhooksConstructEvent,
-      },
-      subscriptions: {
-        retrieve: mockStripeSubscriptionsRetrieve,
-        cancel: mockStripeSubscriptionsCancel,
+jest.mock('../../config/stripe', () => ({
+  stripe: {
+    customers: {
+      create: mockStripeCustomersCreate,
+    },
+    checkout: {
+      sessions: {
+        create: mockStripeCheckoutSessionsCreate,
       },
     },
-    getStripePriceId: jest.fn((tier: string, cycle: string) => `price_test_${tier}_${cycle}`),
-    STRIPE_WEBHOOK_SECRET: 'whsec_test_secret',
-  }));
-}
+    webhooks: {
+      constructEvent: mockStripeWebhooksConstructEvent,
+    },
+    subscriptions: {
+      retrieve: mockStripeSubscriptionsRetrieve,
+      cancel: mockStripeSubscriptionsCancel,
+    },
+  },
+  getStripePriceId: jest.fn((tier: string, cycle: string) => `price_test_${tier}_${cycle}`),
+  STRIPE_WEBHOOK_SECRET: 'whsec_test_secret',
+}));
 
 // Mock quota middleware
 jest.mock('../../middleware/quota', () => ({
