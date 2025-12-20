@@ -668,6 +668,248 @@ describe('QuotaService', () => {
     });
   });
 
+  describe('Warning Cache Management', () => {
+    it('should track sent warnings with wasWarningSent', () => {
+      expect(quotaService.wasWarningSent(1, 'sites', 80)).toBe(false);
+
+      quotaService.markWarningSent(1, 'sites', 80);
+
+      expect(quotaService.wasWarningSent(1, 'sites', 80)).toBe(true);
+      expect(quotaService.wasWarningSent(1, 'sites', 90)).toBe(false);
+      expect(quotaService.wasWarningSent(1, 'posts', 80)).toBe(false);
+      expect(quotaService.wasWarningSent(2, 'sites', 80)).toBe(false);
+    });
+
+    it('should clear warnings for specific dimension', () => {
+      quotaService.markWarningSent(1, 'sites', 80);
+      quotaService.markWarningSent(1, 'sites', 90);
+      quotaService.markWarningSent(1, 'posts', 80);
+
+      quotaService.clearWarnings(1, 'sites');
+
+      expect(quotaService.wasWarningSent(1, 'sites', 80)).toBe(false);
+      expect(quotaService.wasWarningSent(1, 'sites', 90)).toBe(false);
+      expect(quotaService.wasWarningSent(1, 'posts', 80)).toBe(true);
+    });
+
+    it('should clear all warnings for organization', () => {
+      quotaService.markWarningSent(1, 'sites', 80);
+      quotaService.markWarningSent(1, 'posts', 90);
+      quotaService.markWarningSent(2, 'sites', 80);
+
+      quotaService.clearWarnings(1);
+
+      expect(quotaService.wasWarningSent(1, 'sites', 80)).toBe(false);
+      expect(quotaService.wasWarningSent(1, 'posts', 90)).toBe(false);
+      expect(quotaService.wasWarningSent(2, 'sites', 80)).toBe(true);
+    });
+
+    it('should clear specific warning threshold with clearWarningThreshold', () => {
+      quotaService.markWarningSent(1, 'sites', 80);
+      quotaService.markWarningSent(1, 'sites', 90);
+
+      quotaService.clearWarningThreshold(1, 'sites', 80);
+
+      expect(quotaService.wasWarningSent(1, 'sites', 80)).toBe(false);
+      expect(quotaService.wasWarningSent(1, 'sites', 90)).toBe(true);
+    });
+
+    it('should clear all warnings globally with clearAllWarnings', () => {
+      quotaService.markWarningSent(1, 'sites', 80);
+      quotaService.markWarningSent(2, 'posts', 90);
+      quotaService.markWarningSent(3, 'api_calls', 95);
+
+      quotaService.clearAllWarnings();
+
+      expect(quotaService.wasWarningSent(1, 'sites', 80)).toBe(false);
+      expect(quotaService.wasWarningSent(2, 'posts', 90)).toBe(false);
+      expect(quotaService.wasWarningSent(3, 'api_calls', 95)).toBe(false);
+    });
+
+    it('should not emit duplicate warnings for same threshold', async () => {
+      // First increment - triggers warning
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 80, quota_limit: 100 }],
+      });
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ allowed: true }],
+      });
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            dimension: 'posts',
+            current_usage: 85,
+            quota_limit: 100,
+            period_start: new Date(),
+            period_end: null,
+            last_reset_at: null,
+          },
+        ],
+      });
+
+      const eventSpy = jest.fn();
+      quotaService.on('quota:warning', eventSpy);
+
+      await quotaService.incrementQuota({
+        organizationId: 1,
+        dimension: 'posts',
+      });
+
+      expect(eventSpy).toHaveBeenCalledTimes(1);
+
+      // Second increment - should NOT emit warning (already sent at 80%)
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 86, quota_limit: 100 }],
+      });
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ allowed: true }],
+      });
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            dimension: 'posts',
+            current_usage: 87,
+            quota_limit: 100,
+            period_start: new Date(),
+            period_end: null,
+            last_reset_at: null,
+          },
+        ],
+      });
+
+      await quotaService.incrementQuota({
+        organizationId: 1,
+        dimension: 'posts',
+      });
+
+      // Still only 1 call (no duplicate warning)
+      expect(eventSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should emit warning at next higher threshold after passing lower', async () => {
+      // First increment at 85% - triggers 80% warning
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 80, quota_limit: 100 }],
+      });
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ allowed: true }],
+      });
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            dimension: 'api_calls',
+            current_usage: 85,
+            quota_limit: 100,
+            period_start: new Date(),
+            period_end: null,
+            last_reset_at: null,
+          },
+        ],
+      });
+
+      const eventSpy = jest.fn();
+      quotaService.on('quota:warning', eventSpy);
+
+      await quotaService.incrementQuota({
+        organizationId: 1,
+        dimension: 'api_calls',
+      });
+
+      expect(eventSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ percentage: 80 })
+      );
+
+      // Second increment crosses 90% - triggers 90% warning
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ current_usage: 90, quota_limit: 100 }],
+      });
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ allowed: true }],
+      });
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            dimension: 'api_calls',
+            current_usage: 91,
+            quota_limit: 100,
+            period_start: new Date(),
+            period_end: null,
+            last_reset_at: null,
+          },
+        ],
+      });
+
+      await quotaService.incrementQuota({
+        organizationId: 1,
+        dimension: 'api_calls',
+      });
+
+      expect(eventSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ percentage: 90 })
+      );
+      expect(eventSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('should clear warning cache when quota is reset', async () => {
+      quotaService.markWarningSent(1, 'api_calls', 80);
+      quotaService.markWarningSent(1, 'api_calls', 90);
+
+      expect(quotaService.wasWarningSent(1, 'api_calls', 80)).toBe(true);
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ dimension: 'api_calls' }],
+      });
+
+      await quotaService.resetMonthlyQuotas(1);
+
+      expect(quotaService.wasWarningSent(1, 'api_calls', 80)).toBe(false);
+      expect(quotaService.wasWarningSent(1, 'api_calls', 90)).toBe(false);
+    });
+
+    it('should clear all warnings on global quota reset', async () => {
+      quotaService.markWarningSent(1, 'api_calls', 80);
+      quotaService.markWarningSent(2, 'api_calls', 90);
+      quotaService.markWarningSent(3, 'sites', 95);
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ rows_updated: 50 }],
+      });
+
+      await quotaService.resetAllMonthlyQuotas();
+
+      expect(quotaService.wasWarningSent(1, 'api_calls', 80)).toBe(false);
+      expect(quotaService.wasWarningSent(2, 'api_calls', 90)).toBe(false);
+      expect(quotaService.wasWarningSent(3, 'sites', 95)).toBe(false);
+    });
+
+    it('should clear warning cache when quota override is set', async () => {
+      quotaService.markWarningSent(1, 'sites', 80);
+      quotaService.markWarningSent(1, 'sites', 90);
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [
+          {
+            dimension: 'sites',
+            current_usage: 5,
+            quota_limit: 100,
+            period_start: new Date(),
+            period_end: null,
+            last_reset_at: null,
+          },
+        ],
+      });
+
+      await quotaService.setQuotaOverride({
+        organizationId: 1,
+        dimension: 'sites',
+        newLimit: 100,
+      });
+
+      expect(quotaService.wasWarningSent(1, 'sites', 80)).toBe(false);
+      expect(quotaService.wasWarningSent(1, 'sites', 90)).toBe(false);
+    });
+  });
+
   describe('Performance Tests', () => {
     it('should check quota in less than 50ms', async () => {
       mockPoolQuery.mockResolvedValueOnce({
