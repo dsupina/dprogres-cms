@@ -528,6 +528,93 @@ describe('OrganizationService', () => {
     });
   });
 
+  describe('getAdminEmails', () => {
+    it('should return admin emails for organization', async () => {
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [
+          { email: 'owner@example.com', name: 'Owner User' },
+          { email: 'admin@example.com', name: 'Admin User' },
+        ],
+      });
+
+      const result = await organizationService.getAdminEmails(1);
+
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveLength(2);
+      expect(result.data![0]).toEqual({
+        email: 'owner@example.com',
+        name: 'Owner User',
+      });
+      expect(result.data![1]).toEqual({
+        email: 'admin@example.com',
+        name: 'Admin User',
+      });
+    });
+
+    it('should return empty array if no admins found', async () => {
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      const result = await organizationService.getAdminEmails(999);
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual([]);
+    });
+
+    it('should handle null name as undefined', async () => {
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ email: 'admin@example.com', name: null }],
+      });
+
+      const result = await organizationService.getAdminEmails(1);
+
+      expect(result.success).toBe(true);
+      expect(result.data![0]).toEqual({
+        email: 'admin@example.com',
+        name: undefined,
+      });
+    });
+
+    it('should handle database errors', async () => {
+      mockPoolQuery.mockRejectedValueOnce(new Error('Database error'));
+
+      const result = await organizationService.getAdminEmails(1);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Failed to retrieve admin emails');
+    });
+
+    it('should only include owners and admins', async () => {
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [
+          { email: 'owner@example.com', name: 'Owner' },
+          { email: 'admin@example.com', name: 'Admin' },
+        ],
+      });
+
+      await organizationService.getAdminEmails(1);
+
+      // Verify the query only selects owner and admin roles
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining("role IN ('owner', 'admin')"),
+        [1]
+      );
+    });
+
+    it('should exclude soft-deleted members', async () => {
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ email: 'admin@example.com', name: 'Admin' }],
+      });
+
+      await organizationService.getAdminEmails(1);
+
+      // Verify the query excludes deleted members
+      expect(mockPoolQuery).toHaveBeenCalledWith(
+        expect.stringContaining('om.deleted_at IS NULL'),
+        [1]
+      );
+    });
+  });
+
   describe('Event Emission', () => {
     it('should emit organization:created event', async () => {
       const eventHandler = jest.fn();

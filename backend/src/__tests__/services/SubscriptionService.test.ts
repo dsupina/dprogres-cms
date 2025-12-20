@@ -528,5 +528,364 @@ describe('SubscriptionService', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('owner');
     });
+
+    it('should handle Stripe API errors gracefully', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ stripe_subscription_id: 'sub_test123', plan_tier: 'starter' }],
+      });
+
+      mockStripeSubscriptionsRetrieve.mockRejectedValueOnce(new Error('Stripe API error'));
+
+      const result = await subscriptionService.upgradeSubscription(1, 1, 'pro', 'monthly');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Failed to upgrade subscription');
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('should handle Stripe customer creation errors in createCheckoutSession', async () => {
+      // Mock database query (organization)
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      // Mock active subscription check (no active subscription)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock database query (no existing subscription)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock Stripe customer creation failure
+      mockStripeCustomersCreate.mockRejectedValueOnce(new Error('Card declined'));
+
+      const result = await subscriptionService.createCheckoutSession({
+        organizationId: 1,
+        planTier: 'starter',
+        billingCycle: 'monthly',
+        userId: 1,
+        successUrl: 'http://localhost/success',
+        cancelUrl: 'http://localhost/cancel',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Card declined');
+    });
+
+    it('should handle Stripe checkout session creation errors', async () => {
+      // Mock database query (organization)
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      // Mock active subscription check (no active subscription)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock database query (no existing subscription)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock Stripe customer creation
+      mockStripeCustomersCreate.mockResolvedValueOnce({
+        id: 'cus_test123',
+      });
+
+      // Mock Stripe checkout session creation failure
+      mockStripeCheckoutSessionsCreate.mockRejectedValueOnce(
+        new Error('Invalid price ID')
+      );
+
+      const result = await subscriptionService.createCheckoutSession({
+        organizationId: 1,
+        planTier: 'starter',
+        billingCycle: 'monthly',
+        userId: 1,
+        successUrl: 'http://localhost/success',
+        cancelUrl: 'http://localhost/cancel',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid price ID');
+    });
+
+    it('should handle Stripe portal session creation errors', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ stripe_customer_id: 'cus_test123' }],
+      });
+
+      mockStripeBillingPortalSessionsCreate.mockRejectedValueOnce(
+        new Error('Customer not found')
+      );
+
+      const result = await subscriptionService.getCustomerPortalUrl(
+        1,
+        1,
+        'http://localhost/return'
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Failed to create customer portal session');
+    });
+
+    it('should handle Stripe subscription update errors during cancel', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ stripe_subscription_id: 'sub_test123' }],
+      });
+
+      mockStripeSubscriptionsUpdate.mockRejectedValueOnce(
+        new Error('Subscription already canceled')
+      );
+
+      const result = await subscriptionService.cancelSubscription(1, 1, true);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Failed to cancel subscription');
+    });
+
+    it('should handle Stripe subscription cancel errors during immediate cancel', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ stripe_subscription_id: 'sub_test123' }],
+      });
+
+      mockStripeSubscriptionsCancel.mockRejectedValueOnce(
+        new Error('Cannot cancel subscription with pending invoices')
+      );
+
+      const result = await subscriptionService.cancelSubscription(1, 1, false);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Failed to cancel subscription');
+    });
+
+    it('should handle database errors in cancel after Stripe success', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ stripe_subscription_id: 'sub_test123' }],
+      });
+
+      mockStripeSubscriptionsUpdate.mockResolvedValueOnce({
+        id: 'sub_test123',
+        status: 'active',
+        cancel_at_period_end: true,
+      });
+
+      // Database update fails
+      mockPoolQuery.mockRejectedValueOnce(new Error('Database unavailable'));
+
+      const result = await subscriptionService.cancelSubscription(1, 1, true);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Failed to cancel subscription');
+    });
+  });
+
+  describe('Event Emission', () => {
+    it('should emit checkout:session_created event', async () => {
+      const eventSpy = jest.fn();
+      subscriptionService.on('checkout:session_created', eventSpy);
+
+      // Mock database query (organization)
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      // Mock active subscription check (no active subscription)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock database query (no existing subscription)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock Stripe customer creation
+      mockStripeCustomersCreate.mockResolvedValueOnce({
+        id: 'cus_test123',
+      });
+
+      // Mock Stripe checkout session creation
+      mockStripeCheckoutSessionsCreate.mockResolvedValueOnce({
+        id: 'cs_test123',
+        url: 'https://checkout.stripe.com/pay/cs_test123',
+      });
+
+      await subscriptionService.createCheckoutSession({
+        organizationId: 1,
+        planTier: 'starter',
+        billingCycle: 'monthly',
+        userId: 1,
+        successUrl: 'http://localhost/success',
+        cancelUrl: 'http://localhost/cancel',
+      });
+
+      expect(eventSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: 1,
+          sessionId: 'cs_test123',
+          planTier: 'starter',
+          billingCycle: 'monthly',
+          userId: 1,
+        })
+      );
+    });
+
+    it('should emit subscription:canceled event', async () => {
+      const eventSpy = jest.fn();
+      subscriptionService.on('subscription:canceled', eventSpy);
+
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ stripe_subscription_id: 'sub_test123' }],
+      });
+
+      mockStripeSubscriptionsUpdate.mockResolvedValueOnce({
+        id: 'sub_test123',
+        status: 'active',
+        cancel_at_period_end: true,
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, cancel_at_period_end: true, status: 'active' }],
+      });
+
+      await subscriptionService.cancelSubscription(1, 1, true);
+
+      expect(eventSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: 1,
+          cancelAtPeriodEnd: true,
+        })
+      );
+    });
+
+    it('should emit subscription:upgraded event', async () => {
+      const eventSpy = jest.fn();
+      subscriptionService.on('subscription:upgraded', eventSpy);
+
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ stripe_subscription_id: 'sub_test123', plan_tier: 'starter' }],
+      });
+
+      mockStripeSubscriptionsRetrieve.mockResolvedValueOnce({
+        items: {
+          data: [{ id: 'si_test123' }],
+        },
+      });
+
+      mockStripeSubscriptionsUpdate.mockResolvedValueOnce({
+        id: 'sub_test123',
+        status: 'active',
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, plan_tier: 'pro', billing_cycle: 'monthly' }],
+      });
+
+      await subscriptionService.upgradeSubscription(1, 1, 'pro', 'monthly');
+
+      expect(eventSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: 1,
+          oldTier: 'starter',
+          newTier: 'pro',
+        })
+      );
+    });
+  });
+
+  describe('Billing Cycle Variations', () => {
+    it('should handle annual billing cycle in checkout', async () => {
+      // Mock database query (organization)
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      // Mock active subscription check (no active subscription)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock database query (no existing subscription)
+      mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+      // Mock Stripe customer creation
+      mockStripeCustomersCreate.mockResolvedValueOnce({
+        id: 'cus_test123',
+      });
+
+      // Mock Stripe checkout session creation
+      mockStripeCheckoutSessionsCreate.mockResolvedValueOnce({
+        id: 'cs_test123',
+        url: 'https://checkout.stripe.com/pay/cs_test123',
+      });
+
+      await subscriptionService.createCheckoutSession({
+        organizationId: 1,
+        planTier: 'pro',
+        billingCycle: 'annual',
+        userId: 1,
+        successUrl: 'http://localhost/success',
+        cancelUrl: 'http://localhost/cancel',
+      });
+
+      expect(mockGetStripePriceId).toHaveBeenCalledWith('pro', 'annual');
+    });
+
+    it('should handle billing cycle change during upgrade', async () => {
+      // Mock organization ownership check
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, name: 'Test Org', slug: 'test-org', owner_id: 1 }],
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ stripe_subscription_id: 'sub_test123', plan_tier: 'starter' }],
+      });
+
+      mockStripeSubscriptionsRetrieve.mockResolvedValueOnce({
+        items: {
+          data: [{ id: 'si_test123' }],
+        },
+      });
+
+      mockStripeSubscriptionsUpdate.mockResolvedValueOnce({
+        id: 'sub_test123',
+        status: 'active',
+      });
+
+      mockPoolQuery.mockResolvedValueOnce({
+        rows: [{ id: 1, plan_tier: 'pro', billing_cycle: 'annual' }],
+      });
+
+      await subscriptionService.upgradeSubscription(1, 1, 'pro', 'annual');
+
+      expect(mockGetStripePriceId).toHaveBeenCalledWith('pro', 'annual');
+    });
   });
 });
