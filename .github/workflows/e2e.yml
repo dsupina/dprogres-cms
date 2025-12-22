@@ -67,12 +67,19 @@ jobs:
 
       - name: Install Playwright browsers
         working-directory: ./frontend
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps
 
       - name: Setup database
         run: |
+          # Wait for postgres service to be ready
+          until PGPASSWORD=postgres pg_isready -h localhost -U postgres; do
+            echo "Waiting for postgres..."
+            sleep 1
+          done
+
           # Create a 'root' role to satisfy any clients that default to the OS user
           PGPASSWORD=postgres psql -h localhost -U postgres -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='root') THEN CREATE ROLE root LOGIN PASSWORD 'root'; END IF; END \$\$;"
+
           # Apply schema / seed
           PGPASSWORD=postgres psql -h localhost -U postgres -d cms_test -f init-db.sql
 
