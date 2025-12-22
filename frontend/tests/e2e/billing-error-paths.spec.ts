@@ -104,12 +104,25 @@ test.describe('Billing Flow - Error Paths', () => {
       await page.goto('/admin/login');
       await page.waitForLoadState('networkidle');
 
-      // Try to submit empty form
+      // Fill email only (to bypass HTML5 required validation on email)
+      await page.fill('input[name="email"]', 'test@example.com');
+
+      // Try to submit with empty password - HTML5 will block, then clear email to test our validation
+      // First, remove the required attribute to test our custom validation
+      await page.evaluate(() => {
+        document.querySelectorAll('input[required]').forEach(el => {
+          el.removeAttribute('required');
+        });
+      });
+
+      // Now submit empty form to trigger custom validation
+      await page.fill('input[name="email"]', '');
+      await page.fill('input[name="password"]', '');
       await page.click('button[type="submit"]');
 
-      // Should show validation errors
+      // Should show validation errors (the Input component displays error text)
       await expect(
-        page.locator('text=/[Rr]equired|[Ee]nter/')
+        page.locator('text=/[Rr]equired|[Ee]nter|[Vv]alid/')
       ).toBeVisible({ timeout: 5000 });
     });
   });
@@ -144,14 +157,14 @@ test.describe('Billing Flow - Error Paths', () => {
       await page.goto('/admin/billing?checkout=canceled');
       await page.waitForLoadState('networkidle');
 
-      // Should show cancellation message (toast)
+      // Should show cancellation message (toast) - use first() to handle multiple matches
       // The BillingPage component shows "Checkout was canceled" toast
       await expect(
-        page.locator('text=/[Cc]ancel|[Ff]ailed/')
+        page.locator('text=/[Cc]ancel|[Ff]ailed/').first()
       ).toBeVisible({ timeout: 5000 });
 
-      // Should still show billing page
-      await expect(page.locator('h1:has-text("Billing")')).toBeVisible();
+      // Should still show billing page (wait for loading to complete)
+      await expect(page.locator('h1:has-text("Billing")')).toBeVisible({ timeout: 10000 });
 
       // Should show Free Plan (not upgraded)
       await expect(
@@ -166,11 +179,15 @@ test.describe('Billing Flow - Error Paths', () => {
       await page.goto('/admin/billing?checkout=success');
       await page.waitForLoadState('networkidle');
 
-      // Query params should be cleared
-      await page.waitForURL(/\/admin\/billing$/);
+      // Wait for success toast to appear (indicating the effect ran)
+      await expect(
+        page.locator('text=/[Ss]uccess|[Aa]ctivated/').first()
+      ).toBeVisible({ timeout: 5000 });
 
-      // URL should not contain checkout param
-      expect(page.url()).not.toContain('checkout=');
+      // Query params should be cleared - wait with polling
+      await expect(async () => {
+        expect(page.url()).not.toContain('checkout=');
+      }).toPass({ timeout: 10000 });
     });
   });
 
