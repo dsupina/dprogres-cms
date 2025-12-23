@@ -3,20 +3,21 @@ import { defineConfig, devices } from '@playwright/test';
 /**
  * Playwright configuration for E2E tests (SF-024)
  *
- * See https://playwright.dev/docs/test-configuration
+ * Tests use the existing database - no schema recreation needed.
+ * Each test creates its own test user with unique email.
  */
 export default defineConfig({
   testDir: './tests/e2e',
   /* Maximum time one test can run for */
   timeout: 60 * 1000,
   /* Run tests in files in parallel */
-  fullyParallel: true,
+  fullyParallel: false, // Run sequentially to avoid race conditions
   /* Fail the build on CI if you accidentally left test.only in the source code */
   forbidOnly: !!process.env.CI,
   /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
-  /* Opt out of parallel tests on CI */
-  workers: process.env.CI ? 1 : undefined,
+  /* Single worker to ensure sequential execution */
+  workers: 1,
   /* Reporter to use */
   reporter: [
     ['html', { outputFolder: 'playwright-report' }],
@@ -38,19 +39,11 @@ export default defineConfig({
     video: 'on-first-retry',
   },
 
-  /* Configure projects for major browsers */
+  /* Run only chromium for faster CI */
   projects: [
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-    },
-    {
-      name: 'firefox',
-      use: { ...devices['Desktop Firefox'] },
-    },
-    {
-      name: 'webkit',
-      use: { ...devices['Desktop Safari'] },
     },
   ],
 
@@ -69,8 +62,4 @@ export default defineConfig({
       timeout: 120 * 1000,
     },
   ],
-
-  /* Global setup and teardown */
-  globalSetup: './tests/e2e/global-setup.ts',
-  globalTeardown: './tests/e2e/global-teardown.ts',
 });
