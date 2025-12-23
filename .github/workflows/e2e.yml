@@ -91,8 +91,12 @@ jobs:
               "CREATE DATABASE root OWNER root;"
           fi
 
-          # Apply schema / seed to test DB
+          # Apply base schema
           PGPASSWORD=postgres psql -h localhost -U postgres -d cms_test -f init-db.sql
+
+          # Apply migrations
+          PGPASSWORD=postgres psql -h localhost -U postgres -d cms_test -f backend/src/db/migrations/003_content_versioning_with_site_support.sql
+          PGPASSWORD=postgres psql -h localhost -U postgres -d cms_test -f backend/migrations/010_add_stripe_cancel_pending.sql
 
       - name: Start backend server
         working-directory: ./backend

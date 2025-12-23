@@ -290,9 +290,10 @@ $$ LANGUAGE plpgsql;
 
 -- Insert default admin user (password: admin123)
 -- Mark as email_verified=TRUE so verification logic won't block login in CI/dev
+-- Password hash generated with bcryptjs (uses $2a prefix)
 INSERT INTO users (email, password_hash, role, first_name, last_name, email_verified, email_verification_token) VALUES
-('admin@example.com', '$2b$10$8.xS8YO5.WYhYJNvdS9rEO1qDT7aQzNhpL8vDCqT7rXBzS5Z8YC2u', 'admin', 'Admin', 'User', TRUE, NULL)
-ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role, first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name;
+('admin@example.com', '$2a$10$uCq8yMKQtpx7TH/1PW4Whutgy3qz6G1kA3HAqc.cAFqaFohjEzrni', 'admin', 'Admin', 'User', TRUE, NULL)
+ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role, first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, password_hash = EXCLUDED.password_hash;
 
 -- Insert default categories
 INSERT INTO categories (name, slug, description) VALUES 
