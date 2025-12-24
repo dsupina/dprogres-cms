@@ -9,28 +9,28 @@ const stripeSecretKey = isProduction
   ? process.env.STRIPE_SECRET_KEY_LIVE
   : process.env.STRIPE_SECRET_KEY_TEST;
 
-// In test mode, allow missing Stripe keys (E2E tests don't need real Stripe)
-if (!stripeSecretKey && !isTest) {
+// In test mode, use a dummy key if not configured (allows Stripe client to initialize)
+const effectiveStripeKey = stripeSecretKey || (isTest ? 'sk_test_dummy_key_for_testing' : null);
+
+if (!effectiveStripeKey) {
   throw new Error('Stripe secret key not configured');
 }
 
-// Initialize Stripe client (use dummy key in test mode if not configured)
-export const stripe = stripeSecretKey
-  ? new Stripe(stripeSecretKey, {
-      apiVersion: '2025-11-17.clover', // Latest Stripe API version (Clover release)
-      typescript: true,
-      // Timeout for Stripe API calls (milliseconds)
-      // Important for webhook handlers: Stripe expects webhook responses within 5 seconds
-      // This 10-second timeout allows for network latency while preventing indefinite hangs
-      // Individual API calls typically complete in <500ms, but network issues can cause delays
-      timeout: 10000, // 10 seconds
-      appInfo: {
-        name: 'DProgres CMS',
-        version: '1.0.0',
-        url: 'https://dprogres.com',
-      },
-    })
-  : (null as unknown as Stripe); // Null in test mode without keys
+// Initialize Stripe client
+export const stripe = new Stripe(effectiveStripeKey, {
+  apiVersion: '2025-11-17.clover', // Latest Stripe API version (Clover release)
+  typescript: true,
+  // Timeout for Stripe API calls (milliseconds)
+  // Important for webhook handlers: Stripe expects webhook responses within 5 seconds
+  // This 10-second timeout allows for network latency while preventing indefinite hangs
+  // Individual API calls typically complete in <500ms, but network issues can cause delays
+  timeout: 10000, // 10 seconds
+  appInfo: {
+    name: 'DProgres CMS',
+    version: '1.0.0',
+    url: 'https://dprogres.com',
+  },
+});
 
 // Price ID mapping
 export const STRIPE_PRICES = {
