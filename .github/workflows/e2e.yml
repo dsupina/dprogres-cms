@@ -13,9 +13,9 @@ env:
   JWT_SECRET: test-jwt-secret-for-ci
   JWT_REFRESH_SECRET: test-jwt-refresh-secret-for-ci
   JWT_PREVIEW_SECRET: test-preview-secret-for-ci
-  # Stripe test mode
-  STRIPE_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
-  STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_TEST_WEBHOOK_SECRET }}
+  # Stripe test mode (backend reads *_TEST vars when NODE_ENV=test)
+  STRIPE_SECRET_KEY_TEST: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+  STRIPE_WEBHOOK_SECRET_TEST: ${{ secrets.STRIPE_TEST_WEBHOOK_SECRET }}
   # Server configuration
   NODE_ENV: test
   PORT: 5000
