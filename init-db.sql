@@ -562,7 +562,12 @@ ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_domain_slug_unique;
 ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_domain_slug_unique;
 ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_domain_slug_unique;
 
--- Add site-scoped unique constraints
+-- Drop global slug unique constraints (from column definitions) to allow site-scoped duplicates
+ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
+ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_slug_key;
+ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_slug_key;
+
+-- Add site-scoped unique constraints (same slug allowed on different sites)
 ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_site_slug_unique;
 ALTER TABLE pages ADD CONSTRAINT pages_site_slug_unique UNIQUE(site_id, slug);
 
