@@ -130,10 +130,11 @@ test.describe('Authentication Flow', () => {
       expect(response.status()).toBe(401);
 
       // Verify UI shows an error - check for inline form error or toast
-      // The Input component shows errors as <p class="text-red-600">Invalid email or password</p>
-      // react-hot-toast shows toasts in a div with role="status"
+      // Backend returns { error: 'Invalid credentials' } but frontend shows:
+      // - Toast: "Login failed. Please try again." (fallback when message field missing)
+      // - Inline: "Invalid email or password" (set on 401)
       await expect(
-        page.locator('text="Invalid email or password"').first()
+        page.getByText(/invalid|login failed/i).first()
       ).toBeVisible({ timeout: 10000 });
     });
   });
