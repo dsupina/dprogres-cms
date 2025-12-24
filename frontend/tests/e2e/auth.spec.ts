@@ -117,11 +117,24 @@ test.describe('Authentication Flow', () => {
 
       await page.fill('input[name="email"]', 'nonexistent@test.example.com');
       await page.fill('input[name="password"]', 'WrongPassword123');
-      await page.click('button[type="submit"]');
 
+      // Submit and wait for the API response
+      const [response] = await Promise.all([
+        page.waitForResponse(
+          (resp) => resp.url().includes('/api/auth/login') && resp.status() === 401
+        ),
+        page.click('button[type="submit"]'),
+      ]);
+
+      // Verify backend returned 401
+      expect(response.status()).toBe(401);
+
+      // Verify UI shows an error (use multiple selectors for robustness)
       await expect(
-        page.locator('text=/[Ii]nvalid|[Ee]rror|[Ff]ailed/').first()
-      ).toBeVisible({ timeout: 5000 });
+        page
+          .locator('[role="alert"], .error, .toast-error, text=/[Ii]nvalid|[Ee]rror|[Ff]ailed/')
+          .first()
+      ).toBeVisible({ timeout: 10000 });
     });
   });
 
