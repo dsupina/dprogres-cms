@@ -2,31 +2,35 @@ import Stripe from 'stripe';
 
 // Determine environment (test vs production)
 const isProduction = process.env.NODE_ENV === 'production';
+const isTest = process.env.NODE_ENV === 'test';
 
 // Select appropriate keys based on environment
 const stripeSecretKey = isProduction
   ? process.env.STRIPE_SECRET_KEY_LIVE
   : process.env.STRIPE_SECRET_KEY_TEST;
 
-if (!stripeSecretKey) {
+// In test mode, allow missing Stripe keys (E2E tests don't need real Stripe)
+if (!stripeSecretKey && !isTest) {
   throw new Error('Stripe secret key not configured');
 }
 
-// Initialize Stripe client
-export const stripe = new Stripe(stripeSecretKey, {
-  apiVersion: '2025-11-17.clover', // Latest Stripe API version (Clover release)
-  typescript: true,
-  // Timeout for Stripe API calls (milliseconds)
-  // Important for webhook handlers: Stripe expects webhook responses within 5 seconds
-  // This 10-second timeout allows for network latency while preventing indefinite hangs
-  // Individual API calls typically complete in <500ms, but network issues can cause delays
-  timeout: 10000, // 10 seconds
-  appInfo: {
-    name: 'DProgres CMS',
-    version: '1.0.0',
-    url: 'https://dprogres.com',
-  },
-});
+// Initialize Stripe client (use dummy key in test mode if not configured)
+export const stripe = stripeSecretKey
+  ? new Stripe(stripeSecretKey, {
+      apiVersion: '2025-11-17.clover', // Latest Stripe API version (Clover release)
+      typescript: true,
+      // Timeout for Stripe API calls (milliseconds)
+      // Important for webhook handlers: Stripe expects webhook responses within 5 seconds
+      // This 10-second timeout allows for network latency while preventing indefinite hangs
+      // Individual API calls typically complete in <500ms, but network issues can cause delays
+      timeout: 10000, // 10 seconds
+      appInfo: {
+        name: 'DProgres CMS',
+        version: '1.0.0',
+        url: 'https://dprogres.com',
+      },
+    })
+  : (null as unknown as Stripe); // Null in test mode without keys
 
 // Price ID mapping
 export const STRIPE_PRICES = {
@@ -53,7 +57,8 @@ export const STRIPE_WEBHOOK_SECRET = isProduction
   ? process.env.STRIPE_WEBHOOK_SECRET_LIVE
   : process.env.STRIPE_WEBHOOK_SECRET_TEST;
 
-if (!STRIPE_WEBHOOK_SECRET) {
+// In test mode, allow missing webhook secret
+if (!STRIPE_WEBHOOK_SECRET && !isTest) {
   throw new Error('Stripe webhook secret not configured');
 }
 
