@@ -208,6 +208,28 @@ CREATE INDEX IF NOT EXISTS idx_usage_quotas_org ON usage_quotas(organization_id)
 CREATE INDEX IF NOT EXISTS idx_usage_quotas_dimension ON usage_quotas(dimension);
 CREATE INDEX IF NOT EXISTS idx_usage_quotas_period_end ON usage_quotas(period_end) WHERE period_end IS NOT NULL;
 
+-- Function to reset monthly quotas (called by QuotaService scheduled job)
+CREATE OR REPLACE FUNCTION reset_monthly_quotas()
+RETURNS INTEGER AS $$
+DECLARE
+  rows_updated INTEGER;
+BEGIN
+  -- Reset quotas where period has ended
+  UPDATE usage_quotas
+  SET
+    current_usage = 0,
+    period_start = NOW(),
+    period_end = NOW() + INTERVAL '1 month',
+    last_reset_at = NOW(),
+    updated_at = NOW()
+  WHERE period_end IS NOT NULL
+    AND period_end <= NOW();
+
+  GET DIAGNOSTICS rows_updated = ROW_COUNT;
+  RETURN rows_updated;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Subscriptions table for Stripe integration
 CREATE TABLE IF NOT EXISTS subscriptions (
   id SERIAL PRIMARY KEY,
