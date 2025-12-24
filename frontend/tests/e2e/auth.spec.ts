@@ -129,12 +129,11 @@ test.describe('Authentication Flow', () => {
       // Verify backend returned 401
       expect(response.status()).toBe(401);
 
-      // Verify UI shows an error (use CSS selectors with text filter)
+      // Verify UI shows an error - check for inline form error or toast
+      // The Input component shows errors as <p class="text-red-600">Invalid email or password</p>
+      // react-hot-toast shows toasts in a div with role="status"
       await expect(
-        page
-          .locator('[role="alert"], .error, .toast-error')
-          .filter({ hasText: /invalid|error|failed/i })
-          .first()
+        page.locator('text="Invalid email or password"').first()
       ).toBeVisible({ timeout: 10000 });
     });
   });
