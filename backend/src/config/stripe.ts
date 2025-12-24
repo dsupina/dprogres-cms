@@ -2,18 +2,22 @@ import Stripe from 'stripe';
 
 // Determine environment (test vs production)
 const isProduction = process.env.NODE_ENV === 'production';
+const isTest = process.env.NODE_ENV === 'test';
 
 // Select appropriate keys based on environment
 const stripeSecretKey = isProduction
   ? process.env.STRIPE_SECRET_KEY_LIVE
   : process.env.STRIPE_SECRET_KEY_TEST;
 
-if (!stripeSecretKey) {
+// In test mode, use a dummy key if not configured (allows Stripe client to initialize)
+const effectiveStripeKey = stripeSecretKey || (isTest ? 'sk_test_dummy_key_for_testing' : null);
+
+if (!effectiveStripeKey) {
   throw new Error('Stripe secret key not configured');
 }
 
 // Initialize Stripe client
-export const stripe = new Stripe(stripeSecretKey, {
+export const stripe = new Stripe(effectiveStripeKey, {
   apiVersion: '2025-11-17.clover', // Latest Stripe API version (Clover release)
   typescript: true,
   // Timeout for Stripe API calls (milliseconds)
@@ -53,7 +57,8 @@ export const STRIPE_WEBHOOK_SECRET = isProduction
   ? process.env.STRIPE_WEBHOOK_SECRET_LIVE
   : process.env.STRIPE_WEBHOOK_SECRET_TEST;
 
-if (!STRIPE_WEBHOOK_SECRET) {
+// In test mode, allow missing webhook secret
+if (!STRIPE_WEBHOOK_SECRET && !isTest) {
   throw new Error('Stripe webhook secret not configured');
 }
 

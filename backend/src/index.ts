@@ -6,7 +6,7 @@ dotenv.config();
 // CRITICAL: Telemetry must be initialized BEFORE importing instrumented modules (express, pg, etc.)
 import { initializeTelemetry } from './config/telemetry';
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 let otelSDK: Awaited<ReturnType<typeof initializeTelemetry>> | null = null;
 
 // Wrap server initialization in async IIFE to handle async OTEL startup (SF-011)

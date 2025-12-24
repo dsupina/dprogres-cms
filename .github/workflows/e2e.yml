@@ -1,0 +1,127 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**']
+  pull_request:
+    branches: [main]
+
+env:
+  # Test database configuration
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cms_test
+  # JWT secrets for test environment
+  JWT_SECRET: test-jwt-secret-for-ci
+  JWT_REFRESH_SECRET: test-jwt-refresh-secret-for-ci
+  JWT_PREVIEW_SECRET: test-preview-secret-for-ci
+  # Stripe test mode (backend reads *_TEST vars when NODE_ENV=test)
+  STRIPE_SECRET_KEY_TEST: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+  STRIPE_WEBHOOK_SECRET_TEST: ${{ secrets.STRIPE_TEST_WEBHOOK_SECRET }}
+  # Server configuration
+  NODE_ENV: test
+  PORT: 5000
+  # Frontend configuration
+  PLAYWRIGHT_BASE_URL: http://localhost:5173
+  PLAYWRIGHT_API_URL: http://localhost:5000
+
+jobs:
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cms_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: ./frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Setup database
+        run: |
+          # Wait for postgres service to be ready
+          until PGPASSWORD=postgres pg_isready -h localhost -U postgres; do
+            echo "Waiting for postgres..."
+            sleep 1
+          done
+
+          # Apply base schema (includes all billing tables)
+          PGPASSWORD=postgres psql -h localhost -U postgres -d cms_test -f init-db.sql
+
+          # Apply migrations in order
+          PGPASSWORD=postgres psql -h localhost -U postgres -d cms_test -f backend/src/db/migrations/003_content_versioning_with_site_support.sql
+          PGPASSWORD=postgres psql -h localhost -U postgres -d cms_test -f backend/src/db/migrations/004_distribution_infrastructure.sql
+
+      - name: Start backend server
+        working-directory: ./backend
+        run: |
+          npm run dev &
+          # Wait for server to be ready
+          npx wait-on http://localhost:5000/api/health -t 60000
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cms_test
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: cms_test
+
+      - name: Start frontend server
+        working-directory: ./frontend
+        run: |
+          npm run dev &
+          # Wait for server to be ready
+          npx wait-on http://localhost:5173 -t 60000
+
+      - name: Run E2E tests
+        working-directory: ./frontend
+        run: npx playwright test --reporter=github
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
+
+      - name: Upload test screenshots
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-screenshots
+          path: frontend/test-results/
+          retention-days: 7

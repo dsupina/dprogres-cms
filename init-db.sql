@@ -12,6 +12,10 @@ CREATE TABLE users (
     role VARCHAR(50) DEFAULT 'author',
     first_name VARCHAR(100),
     last_name VARCHAR(100),
+    email_verified BOOLEAN DEFAULT FALSE,
+    email_verification_token VARCHAR(255),
+    email_verification_sent_at TIMESTAMP,
+    current_organization_id INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -118,10 +122,255 @@ CREATE INDEX idx_posts_created_at ON posts(created_at);
 CREATE INDEX idx_categories_slug ON categories(slug);
 CREATE INDEX idx_pages_slug ON pages(slug);
 CREATE INDEX idx_media_files_uploaded_by ON media_files(uploaded_by);
+CREATE INDEX idx_users_email_verification_token ON users(email_verification_token);
+
+-- ==============================================
+-- MULTI-TENANT ORGANIZATIONS (EPIC-003)
+-- ==============================================
+
+-- Organizations table
+CREATE TABLE IF NOT EXISTS organizations (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  slug VARCHAR(255) UNIQUE NOT NULL,
+  owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  plan_tier VARCHAR(50) DEFAULT 'free' NOT NULL,
+  logo_url TEXT,
+  stripe_customer_id VARCHAR(255),
+  stripe_subscription_id VARCHAR(255),
+  deleted_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  CONSTRAINT valid_plan_tier CHECK (plan_tier IN ('free', 'starter', 'pro', 'enterprise'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_organizations_owner ON organizations(owner_id);
+CREATE INDEX IF NOT EXISTS idx_organizations_slug ON organizations(slug);
+CREATE INDEX IF NOT EXISTS idx_organizations_plan_tier ON organizations(plan_tier);
+CREATE INDEX IF NOT EXISTS idx_users_current_org ON users(current_organization_id);
+
+-- Organization members table
+CREATE TABLE IF NOT EXISTS organization_members (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role VARCHAR(50) NOT NULL,
+  invited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at TIMESTAMP,
+  joined_at TIMESTAMP DEFAULT NOW(),
+  CONSTRAINT valid_role CHECK (role IN ('owner', 'admin', 'editor', 'publisher', 'viewer', 'member'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_org_members_org ON organization_members(organization_id);
+CREATE INDEX IF NOT EXISTS idx_org_members_user ON organization_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_org_members_role ON organization_members(role);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_org_members_unique_active ON organization_members(organization_id, user_id) WHERE deleted_at IS NULL;
+
+-- Organization invites table
+CREATE TABLE IF NOT EXISTS organization_invites (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  email VARCHAR(255) NOT NULL,
+  role VARCHAR(50) NOT NULL,
+  invited_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  invite_token VARCHAR(255) UNIQUE NOT NULL,
+  expires_at TIMESTAMP NOT NULL,
+  accepted_at TIMESTAMP,
+  accepted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  CONSTRAINT valid_invite_role CHECK (role IN ('admin', 'editor', 'publisher', 'viewer'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_org_invites_org ON organization_invites(organization_id);
+CREATE INDEX IF NOT EXISTS idx_org_invites_token ON organization_invites(invite_token);
+CREATE INDEX IF NOT EXISTS idx_org_invites_email ON organization_invites(email);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_org_invites_unique_pending ON organization_invites(organization_id, email) WHERE accepted_at IS NULL;
+
+-- Usage quotas table
+CREATE TABLE IF NOT EXISTS usage_quotas (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  dimension VARCHAR(50) NOT NULL,
+  current_usage BIGINT DEFAULT 0 NOT NULL,
+  quota_limit BIGINT NOT NULL,
+  period_start TIMESTAMP NOT NULL,
+  period_end TIMESTAMP,
+  last_reset_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  CONSTRAINT valid_dimension CHECK (dimension IN ('sites', 'posts', 'users', 'storage_bytes', 'api_calls')),
+  CONSTRAINT valid_usage CHECK (current_usage >= 0),
+  CONSTRAINT valid_limit CHECK (quota_limit > 0),
+  UNIQUE(organization_id, dimension)
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_quotas_org ON usage_quotas(organization_id);
+CREATE INDEX IF NOT EXISTS idx_usage_quotas_dimension ON usage_quotas(dimension);
+CREATE INDEX IF NOT EXISTS idx_usage_quotas_period_end ON usage_quotas(period_end) WHERE period_end IS NOT NULL;
+
+-- Function to reset monthly quotas (called by QuotaService scheduled job)
+CREATE OR REPLACE FUNCTION reset_monthly_quotas()
+RETURNS INTEGER AS $$
+DECLARE
+  rows_updated INTEGER;
+BEGIN
+  -- Reset quotas where period has ended
+  UPDATE usage_quotas
+  SET
+    current_usage = 0,
+    period_start = NOW(),
+    period_end = NOW() + INTERVAL '1 month',
+    last_reset_at = NOW(),
+    updated_at = NOW()
+  WHERE period_end IS NOT NULL
+    AND period_end <= NOW();
+
+  GET DIAGNOSTICS rows_updated = ROW_COUNT;
+  RETURN rows_updated;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Subscriptions table for Stripe integration
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  stripe_customer_id VARCHAR(255) NOT NULL,
+  stripe_subscription_id VARCHAR(255) UNIQUE NOT NULL,
+  stripe_price_id VARCHAR(255) NOT NULL,
+  plan_tier VARCHAR(50) NOT NULL,
+  billing_cycle VARCHAR(20) NOT NULL,
+  status VARCHAR(50) NOT NULL,
+  current_period_start TIMESTAMP NOT NULL,
+  current_period_end TIMESTAMP NOT NULL,
+  cancel_at_period_end BOOLEAN DEFAULT FALSE,
+  canceled_at TIMESTAMP,
+  trial_start TIMESTAMP,
+  trial_end TIMESTAMP,
+  amount_cents INTEGER NOT NULL,
+  currency VARCHAR(3) DEFAULT 'USD',
+  stripe_cancel_pending BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  CONSTRAINT valid_sub_plan_tier CHECK (plan_tier IN ('free', 'starter', 'pro', 'enterprise')),
+  CONSTRAINT valid_billing_cycle CHECK (billing_cycle IN ('monthly', 'annual')),
+  CONSTRAINT valid_status CHECK (status IN ('active', 'past_due', 'canceled', 'trialing', 'incomplete', 'incomplete_expired', 'unpaid', 'paused')),
+  CONSTRAINT valid_amount CHECK (amount_cents >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_org ON subscriptions(organization_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_customer ON subscriptions(stripe_customer_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_sub ON subscriptions(stripe_subscription_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_period_end ON subscriptions(current_period_end);
+
+-- Partial unique index: Only one active subscription per organization
+CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_org_active_unique
+  ON subscriptions(organization_id)
+  WHERE status NOT IN ('canceled', 'incomplete_expired');
+
+-- Invoices table
+CREATE TABLE IF NOT EXISTS invoices (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  subscription_id INTEGER REFERENCES subscriptions(id) ON DELETE SET NULL,
+  stripe_invoice_id VARCHAR(255) UNIQUE NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  amount_paid_cents INTEGER NOT NULL,
+  currency VARCHAR(3) DEFAULT 'USD',
+  status VARCHAR(50) NOT NULL,
+  invoice_pdf_url TEXT,
+  hosted_invoice_url TEXT,
+  billing_reason VARCHAR(100),
+  period_start TIMESTAMP NOT NULL,
+  period_end TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  paid_at TIMESTAMP,
+  CONSTRAINT valid_invoice_status CHECK (status IN ('draft', 'open', 'paid', 'void', 'uncollectible')),
+  CONSTRAINT valid_invoice_amount CHECK (amount_cents >= 0 AND amount_paid_cents >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_org ON invoices(organization_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_subscription ON invoices(subscription_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_stripe ON invoices(stripe_invoice_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+CREATE INDEX IF NOT EXISTS idx_invoices_created ON invoices(created_at DESC);
+
+-- Payment methods table
+CREATE TABLE IF NOT EXISTS payment_methods (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  stripe_payment_method_id VARCHAR(255) UNIQUE NOT NULL,
+  type VARCHAR(50) NOT NULL,
+  card_brand VARCHAR(50),
+  card_last4 VARCHAR(4),
+  card_exp_month INTEGER,
+  card_exp_year INTEGER,
+  is_default BOOLEAN DEFAULT FALSE,
+  deleted_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  CONSTRAINT valid_pm_type CHECK (type IN ('card', 'sepa_debit', 'us_bank_account'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_methods_org ON payment_methods(organization_id);
+CREATE INDEX IF NOT EXISTS idx_payment_methods_stripe ON payment_methods(stripe_payment_method_id);
+CREATE INDEX IF NOT EXISTS idx_payment_methods_default ON payment_methods(organization_id, is_default);
+
+-- Subscription events (audit log for Stripe webhooks)
+CREATE TABLE IF NOT EXISTS subscription_events (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
+  subscription_id INTEGER REFERENCES subscriptions(id) ON DELETE SET NULL,
+  stripe_event_id VARCHAR(255) UNIQUE NOT NULL,
+  event_type VARCHAR(100) NOT NULL,
+  data JSONB NOT NULL,
+  processed_at TIMESTAMP DEFAULT NOW(),
+  processing_error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscription_events_org ON subscription_events(organization_id);
+CREATE INDEX IF NOT EXISTS idx_subscription_events_subscription ON subscription_events(subscription_id);
+CREATE INDEX IF NOT EXISTS idx_subscription_events_stripe ON subscription_events(stripe_event_id);
+CREATE INDEX IF NOT EXISTS idx_subscription_events_type ON subscription_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_subscription_events_processed ON subscription_events(processed_at DESC);
+
+-- Function to check quota before increment
+CREATE OR REPLACE FUNCTION check_and_increment_quota(
+  org_id INTEGER,
+  quota_dimension VARCHAR(50),
+  increment_amount BIGINT DEFAULT 1
+) RETURNS BOOLEAN AS $$
+DECLARE
+  current_val BIGINT;
+  limit_val BIGINT;
+BEGIN
+  SELECT current_usage, quota_limit INTO current_val, limit_val
+  FROM usage_quotas
+  WHERE organization_id = org_id AND dimension = quota_dimension
+  FOR UPDATE;
+
+  IF current_val IS NULL THEN
+    RETURN FALSE;
+  END IF;
+
+  IF current_val + increment_amount > limit_val THEN
+    RETURN FALSE;
+  END IF;
+
+  UPDATE usage_quotas
+  SET current_usage = current_usage + increment_amount, updated_at = NOW()
+  WHERE organization_id = org_id AND dimension = quota_dimension;
+
+  RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql;
 
 -- Insert default admin user (password: admin123)
-INSERT INTO users (email, password_hash, role, first_name, last_name) VALUES 
-('admin@example.com', '$2b$10$8.xS8YO5.WYhYJNvdS9rEO1qDT7aQzNhpL8vDCqT7rXBzS5Z8YC2u', 'admin', 'Admin', 'User');
+-- Mark as email_verified=TRUE so verification logic won't block login in CI/dev
+-- Password hash generated with bcryptjs (uses $2a prefix)
+INSERT INTO users (email, password_hash, role, first_name, last_name, email_verified, email_verification_token) VALUES
+('admin@example.com', '$2a$10$uCq8yMKQtpx7TH/1PW4Whutgy3qz6G1kA3HAqc.cAFqaFohjEzrni', 'admin', 'Admin', 'User', TRUE, NULL)
+ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role, first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, password_hash = EXCLUDED.password_hash;
 
 -- Insert default categories
 INSERT INTO categories (name, slug, description) VALUES 
@@ -335,7 +584,12 @@ ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_domain_slug_unique;
 ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_domain_slug_unique;
 ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_domain_slug_unique;
 
--- Add site-scoped unique constraints
+-- Drop global slug unique constraints (from column definitions) to allow site-scoped duplicates
+ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
+ALTER TABLE posts DROP CONSTRAINT IF EXISTS posts_slug_key;
+ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_slug_key;
+
+-- Add site-scoped unique constraints (same slug allowed on different sites)
 ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_site_slug_unique;
 ALTER TABLE pages ADD CONSTRAINT pages_site_slug_unique UNIQUE(site_id, slug);
 
