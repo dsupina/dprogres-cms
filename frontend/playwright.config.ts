@@ -60,6 +60,9 @@ export default defineConfig({
       url: 'http://localhost:5000/api/health',
       reuseExistingServer: true,
       timeout: 120 * 1000,
+      env: {
+        PORT: '5000',
+      },
     },
   ],
 });
