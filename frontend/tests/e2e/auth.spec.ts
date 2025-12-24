@@ -129,10 +129,11 @@ test.describe('Authentication Flow', () => {
       // Verify backend returned 401
       expect(response.status()).toBe(401);
 
-      // Verify UI shows an error (use multiple selectors for robustness)
+      // Verify UI shows an error (use CSS selectors with text filter)
       await expect(
         page
-          .locator('[role="alert"], .error, .toast-error, text=/[Ii]nvalid|[Ee]rror|[Ff]ailed/')
+          .locator('[role="alert"], .error, .toast-error')
+          .filter({ hasText: /invalid|error|failed/i })
           .first()
       ).toBeVisible({ timeout: 10000 });
     });
