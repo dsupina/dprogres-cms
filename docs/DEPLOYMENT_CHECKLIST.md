@@ -183,14 +183,16 @@ SENDGRID_FROM_NAME=DProgres CMS
 
 ```bash
 # Build images
-docker-compose -f docker-compose.prod.yml build
+docker-compose build
 
-# Start services
-docker-compose -f docker-compose.prod.yml up -d
+# Start services in production mode
+docker-compose up -d
 
 # Check logs
-docker-compose -f docker-compose.prod.yml logs -f app
+docker-compose logs -f app
 ```
+
+**Note**: For production, ensure environment variables are set before running docker-compose. You may create a `docker-compose.override.yml` for production-specific settings or use environment-specific `.env` files.
 
 ### Deployment Verification
 
@@ -241,12 +243,12 @@ docker-compose -f docker-compose.prod.yml logs -f app
 
 ```bash
 # Docker rollback to previous image
-docker-compose -f docker-compose.prod.yml down
-docker-compose -f docker-compose.prod.yml up -d --build
+docker-compose down
+docker-compose up -d --build
 
 # Or revert to specific tag
 docker pull dprogres/cms:v1.2.3
-docker-compose -f docker-compose.prod.yml up -d
+docker-compose up -d
 ```
 
 ### Database Rollback
