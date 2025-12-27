@@ -1118,6 +1118,57 @@ When deploying migration `003_create_usage_quotas.sql`, the following happens au
 
 ---
 
+---
+
+## Production Deployment
+
+### Environment Configuration
+
+The billing system automatically selects between test and live Stripe keys based on `NODE_ENV`:
+
+| Environment | NODE_ENV    | Stripe Mode | Keys Used      |
+|-------------|-------------|-------------|----------------|
+| Development | development | Test        | `*_TEST`       |
+| Staging     | development | Test        | `*_TEST`       |
+| Production  | production  | Live        | `*_LIVE`       |
+
+### Required Production Environment Variables
+
+```env
+# Stripe API Keys (Live Mode)
+STRIPE_PUBLISHABLE_KEY_LIVE=pk_live_...
+STRIPE_SECRET_KEY_LIVE=sk_live_...
+STRIPE_WEBHOOK_SECRET_LIVE=whsec_...
+
+# Stripe Price IDs (Live Mode)
+STRIPE_PRICE_STARTER_MONTHLY_LIVE=price_...
+STRIPE_PRICE_STARTER_ANNUAL_LIVE=price_...
+STRIPE_PRICE_PRO_MONTHLY_LIVE=price_...
+STRIPE_PRICE_PRO_ANNUAL_LIVE=price_...
+```
+
+### Production Webhook Endpoint
+
+Configure in Stripe Dashboard (live mode):
+- **URL**: `https://api.dprogres.com/api/webhooks/stripe`
+- **Events**: See [Handled Events](#handled-events) table above
+
+### Pre-Production Checklist
+
+Before deploying to production:
+
+1. [ ] Complete business verification in Stripe Dashboard
+2. [ ] Create products/prices in live mode
+3. [ ] Configure production webhook endpoint
+4. [ ] Set all production environment variables
+5. [ ] Test webhook delivery with `stripe trigger --live`
+6. [ ] Verify first transaction processes successfully
+
+See `docs/STRIPE_SETUP.md` for detailed production setup instructions.
+See `docs/DEPLOYMENT_CHECKLIST.md` for complete deployment checklist.
+
+---
+
 **Last Updated**: December 2025
-**Version**: 1.4
-**Related Tickets**: SF-009 (Quota System Implementation), SF-015 (Complete Webhook Event Handling), SF-017 (Billing Page UI & Layout), SF-018 (Stripe Checkout Integration), SF-019 (Stripe Customer Portal Link)
+**Version**: 1.5
+**Related Tickets**: SF-009 (Quota System Implementation), SF-015 (Complete Webhook Event Handling), SF-017 (Billing Page UI & Layout), SF-018 (Stripe Checkout Integration), SF-019 (Stripe Customer Portal Link), SF-025 (Production Stripe Setup)
