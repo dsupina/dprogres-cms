@@ -1,774 +1,137 @@
-# Billing & Quota API Documentation
+# Billing API Documentation
 
-This document describes the API endpoints for subscription management and quota enforcement.
+This document provides comprehensive documentation for all billing-related API endpoints in DProgres CMS.
 
-## Table of Contents
+## Base URL
 
-- [Quota Management](#quota-management)
-- [Subscription Management](#subscription-management)
-- [Webhook Events](#webhook-events)
+All endpoints are prefixed with `/api/billing` unless otherwise noted.
 
----
+## Authentication
 
-## Quota Management
+All billing endpoints (except `/plans`) require JWT authentication via the `Authorization` header:
 
-### GET /api/quotas/:organizationId
-
-Get quota status for all dimensions for an organization.
-
-**Authentication**: Required (Admin)
-
-**Parameters**:
-- `organizationId` (path, integer) - Organization ID
-
-**Response**:
-```json
-{
-  "success": true,
-  "data": {
-    "sites": {
-      "dimension": "sites",
-      "current_usage": 5,
-      "quota_limit": 10,
-      "remaining": 5,
-      "percentage_used": 50,
-      "period_start": "2025-01-01T00:00:00.000Z",
-      "period_end": null,
-      "last_reset_at": null
-    },
-    "posts": {
-      "dimension": "posts",
-      "current_usage": 100,
-      "quota_limit": 1000,
-      "remaining": 900,
-      "percentage_used": 10,
-      "period_start": "2025-01-01T00:00:00.000Z",
-      "period_end": null,
-      "last_reset_at": null
-    },
-    "users": {
-      "dimension": "users",
-      "current_usage": 3,
-      "quota_limit": 5,
-      "remaining": 2,
-      "percentage_used": 60,
-      "period_start": "2025-01-01T00:00:00.000Z",
-      "period_end": null,
-      "last_reset_at": null
-    },
-    "storage_bytes": {
-      "dimension": "storage_bytes",
-      "current_usage": 524288000,
-      "quota_limit": 1073741824,
-      "remaining": 549453824,
-      "percentage_used": 48.83,
-      "period_start": "2025-01-01T00:00:00.000Z",
-      "period_end": null,
-      "last_reset_at": null
-    },
-    "api_calls": {
-      "dimension": "api_calls",
-      "current_usage": 45000,
-      "quota_limit": 100000,
-      "remaining": 55000,
-      "percentage_used": 45,
-      "period_start": "2025-01-01T00:00:00.000Z",
-      "period_end": "2025-02-01T00:00:00.000Z",
-      "last_reset_at": "2025-01-01T00:00:00.000Z"
-    }
-  }
-}
+```
+Authorization: Bearer <access_token>
 ```
 
-**Error Responses**:
-- `400` - Invalid organization ID
-- `404` - No quota records found
+## Endpoints
 
----
+### Subscription Management
 
-### POST /api/quotas/:organizationId/check
-
-Check if organization can perform action (within quota). **Does NOT increment usage**.
-
-**Authentication**: Required (Admin)
-
-**Parameters**:
-- `organizationId` (path, integer) - Organization ID
-
-**Request Body**:
-```json
-{
-  "dimension": "sites",
-  "amount": 1
-}
-```
-
-**Field Descriptions**:
-- `dimension` (string, required) - Quota dimension: `sites`, `posts`, `users`, `storage_bytes`, `api_calls`
-- `amount` (integer, optional) - Amount to check (default: 1)
-
-**Response**:
-```json
-{
-  "success": true,
-  "data": {
-    "allowed": true,
-    "current": 50,
-    "limit": 100,
-    "remaining": 50,
-    "percentage_used": 50
-  }
-}
-```
-
-**Error Responses**:
-- `400` - Invalid organization ID or request body
-- `404` - No quota record found
-
----
-
-### POST /api/quotas/:organizationId/increment
-
-Increment quota usage atomically. Returns error if quota exceeded.
-
-**Authentication**: Required (Admin)
-
-**Parameters**:
-- `organizationId` (path, integer) - Organization ID
-
-**Request Body**:
-```json
-{
-  "dimension": "posts",
-  "amount": 1
-}
-```
-
-**Field Descriptions**:
-- `dimension` (string, required) - Quota dimension
-- `amount` (integer, optional) - Amount to increment (default: 1)
-
-**Response** (Success):
-```json
-{
-  "success": true,
-  "data": true
-}
-```
-
-**Response** (Quota Exceeded):
-```json
-{
-  "success": false,
-  "error": "Quota exceeded for dimension: posts"
-}
-```
-
-**Error Responses**:
-- `400` - Invalid organization ID or request body
-- `403` - Quota exceeded
-- `404` - No quota record found
-
-**Usage Pattern**:
-```typescript
-// 1. Check quota first
-const check = await quotaService.checkQuota({
-  organizationId: 1,
-  dimension: 'posts',
-});
-
-if (!check.data?.allowed) {
-  return res.status(403).json({ error: 'Quota exceeded' });
-}
-
-// 2. Perform action (create post, etc.)
-const post = await createPost(data);
-
-// 3. Increment quota
-await quotaService.incrementQuota({
-  organizationId: 1,
-  dimension: 'posts',
-});
-```
-
----
-
-### POST /api/quotas/:organizationId/decrement
-
-Decrement quota usage (when deleting resources).
-
-**Authentication**: Required (Admin)
-
-**Parameters**:
-- `organizationId` (path, integer) - Organization ID
-
-**Request Body**:
-```json
-{
-  "dimension": "sites",
-  "amount": 1
-}
-```
-
-**Response**:
-```json
-{
-  "success": true,
-  "data": true
-}
-```
-
-**Error Responses**:
-- `400` - Invalid organization ID or request body
-- `404` - No quota record found
-
----
-
-### POST /api/quotas/:organizationId/reset
-
-Reset monthly quotas for an organization (resets `api_calls` dimension).
-
-**IMPORTANT Safeguards**:
-1. Only resets quotas where `period_end < NOW()` (billing period has expired)
-2. Advances `period_end` by 1 month to prevent repeated daily resets
-3. Prevents accidental mid-cycle resets that would bypass quota enforcement
-
-**Authentication**: Required (Admin)
-
-**Parameters**:
-- `organizationId` (path, integer) - Organization ID
-
-**Response**:
-```json
-{
-  "success": true,
-  "data": 1
-}
-```
-
-**What Happens on Reset**:
-- `current_usage` → 0
-- `last_reset_at` → NOW()
-- `period_start` → NOW()
-- `period_end` → period_end + 1 month (advances billing cycle)
-- `updated_at` → NOW()
-
-**Field Descriptions**:
-- `data` (integer) - Number of quotas reset (0 if no periods have expired, typically 1 for api_calls when period expired)
-
-**Error Responses**:
-- `400` - Invalid organization ID
-- `404` - No quota records found
-
-**Note**: Returns `data: 0` if the billing period has not yet expired, even if quota records exist. This is expected behavior to prevent premature resets. When a reset occurs, the billing period automatically advances by 1 month.
-
----
-
-### PUT /api/quotas/:organizationId/:dimension/override
-
-Set quota override for Enterprise customers. Allows manual adjustment of quota limits.
-
-**Authentication**: Required (Admin)
-
-**Parameters**:
-- `organizationId` (path, integer) - Organization ID
-- `dimension` (path, string) - Quota dimension (`sites`, `posts`, `users`, `storage_bytes`, `api_calls`)
-
-**Request Body**:
-```json
-{
-  "new_limit": 100
-}
-```
-
-**Field Descriptions**:
-- `new_limit` (integer, required) - New quota limit (must be > 0)
-
-**Response**:
-```json
-{
-  "success": true,
-  "data": {
-    "dimension": "sites",
-    "current_usage": 5,
-    "quota_limit": 100,
-    "remaining": 95,
-    "percentage_used": 5,
-    "period_start": "2025-01-01T00:00:00.000Z",
-    "period_end": null,
-    "last_reset_at": null
-  }
-}
-```
-
-**Error Responses**:
-- `400` - Invalid organization ID, dimension, or new_limit <= 0
-- `404` - No quota record found
-
----
-
-### POST /api/quotas/reset-all
-
-Reset all monthly quotas across all organizations (admin only, for scheduled jobs).
-
-**Authentication**: Required (Admin)
-
-**Response**:
-```json
-{
-  "success": true,
-  "data": 50
-}
-```
-
-**Field Descriptions**:
-- `data` (integer) - Number of quota records reset across all organizations
-
-**Error Responses**:
-- `500` - Database error
-
-**Usage**:
-This endpoint should be called by a scheduled cron job (e.g., monthly) to reset all `api_calls` quotas.
-
----
-
-## Quota Dimensions
-
-The system tracks five quota dimensions per organization:
-
-| Dimension | Description | Reset Behavior | Tier Limits |
-|-----------|-------------|----------------|-------------|
-| `sites` | Number of sites | Never resets | Free: 1, Starter: 5, Pro: 25, Enterprise: Custom |
-| `posts` | Number of posts | Never resets | Free: 100, Starter: 1,000, Pro: 10,000, Enterprise: Custom |
-| `users` | Number of users/members | Never resets | Free: 1, Starter: 5, Pro: 25, Enterprise: Custom |
-| `storage_bytes` | Total storage (bytes) | Never resets | Free: 1GB, Starter: 10GB, Pro: 100GB, Enterprise: Custom |
-| `api_calls` | Monthly API calls | Resets monthly | Free: 10,000, Starter: 100,000, Pro: 1,000,000, Enterprise: Custom |
-
----
-
-## Quota Events
-
-The QuotaService emits events for monitoring and alerting:
-
-### quota:approaching_limit
-
-Fired when usage reaches 80%, 90%, or 95% of quota limit.
-
-**Event Payload**:
-```typescript
-{
-  organizationId: number;
-  dimension: QuotaDimension;
-  percentage: 80 | 90 | 95;
-  current: number;
-  limit: number;
-  timestamp: Date;
-}
-```
-
-**Usage**:
-```typescript
-quotaService.on('quota:approaching_limit', (event) => {
-  // Send warning email to organization owner
-  emailService.sendQuotaWarning(event.organizationId, event);
-});
-```
-
-### quota:limit_reached
-
-Fired when usage reaches exactly 100% of quota limit (limit fully consumed).
-
-**Event Payload**:
-```typescript
-{
-  organizationId: number;
-  dimension: QuotaDimension;
-  current: number;
-  limit: number;
-  timestamp: Date;
-}
-```
-
-**Usage**:
-```typescript
-quotaService.on('quota:limit_reached', (event) => {
-  // Alert that quota is fully consumed
-  emailService.sendQuotaFullyConsumed(event.organizationId, event);
-});
-```
-
-**Note**: This event fires when an increment brings usage to exactly 100%. The next increment attempt will fail with `quota:exceeded`.
-
-### quota:exceeded
-
-Fired when an increment attempt is rejected because quota limit would be exceeded.
-
-**Event Payload**:
-```typescript
-{
-  organizationId: number;
-  dimension: QuotaDimension;
-  timestamp: Date;
-}
-```
-
-### quota:reset
-
-Fired when monthly quotas are reset.
-
-**Event Payload**:
-```typescript
-{
-  organizationId: number;
-  dimensions: QuotaDimension[];
-  timestamp: Date;
-}
-```
-
-### quota:override_set
-
-Fired when quota limit is manually changed (Enterprise).
-
-**Event Payload**:
-```typescript
-{
-  organizationId: number;
-  dimension: QuotaDimension;
-  newLimit: number;
-  timestamp: Date;
-}
-```
-
-### quota:incremented
-
-Fired when usage is incremented.
-
-**Event Payload**:
-```typescript
-{
-  organizationId: number;
-  dimension: QuotaDimension;
-  amount: number;
-  current: number;
-  timestamp: Date;
-}
-```
-
-### quota:decremented
-
-Fired when usage is decremented.
-
-**Event Payload**:
-```typescript
-{
-  organizationId: number;
-  dimension: QuotaDimension;
-  amount: number;
-  current: number;
-  timestamp: Date;
-}
-```
-
----
-
-## Implementation Notes
-
-### Atomicity
-
-Quota increments use the PostgreSQL function `check_and_increment_quota()` which performs atomic check-and-increment operations with row-level locking (`SELECT FOR UPDATE`). This prevents race conditions when multiple requests try to increment the same quota simultaneously.
-
-### Performance
-
-- Quota checks: <50ms target (verified in tests)
-- Atomic increments: ~85ms average
-- Event emission: <5ms overhead
-
-### Best Practices
-
-1. **Always check before incrementing**:
-   ```typescript
-   const check = await quotaService.checkQuota({...});
-   if (!check.data?.allowed) {
-     return error('Quota exceeded');
-   }
-   // Perform action
-   await quotaService.incrementQuota({...});
-   ```
-
-2. **Decrement on deletion**:
-   ```typescript
-   await deletePost(postId);
-   await quotaService.decrementQuota({
-     organizationId,
-     dimension: 'posts',
-   });
-   ```
-
-3. **Listen to events for monitoring**:
-   ```typescript
-   quotaService.on('quota:approaching_limit', handleWarning);
-   quotaService.on('quota:exceeded', handleExceeded);
-   ```
-
----
-
-## Billing Dashboard Endpoints
-
-The billing dashboard provides endpoints for displaying subscription information, invoices, and usage data.
-
-### GET /api/billing/subscription
+#### GET /api/billing/subscription
 
 Get the current subscription for the authenticated user's organization.
 
-**Authentication**: Required (JWT)
+**Authentication**: Required
 
 **Response**:
-
 ```json
 {
   "success": true,
   "data": {
     "has_subscription": true,
-    "plan_tier": "starter",
-    "plan_name": "Starter",
+    "plan_tier": "pro",
+    "plan_name": "Pro",
     "billing_cycle": "monthly",
     "status": "active",
     "current_period_start": "2025-01-01T00:00:00.000Z",
     "current_period_end": "2025-02-01T00:00:00.000Z",
     "cancel_at_period_end": false,
     "canceled_at": null,
-    "amount_cents": 2900,
-    "price_display": "$29/month",
-    "organization_name": "My Organization"
+    "amount_cents": 9900,
+    "price_display": "$99/month",
+    "organization_name": "Acme Corp"
   }
 }
 ```
 
-**Status Values**:
-- `active` - Subscription is active and in good standing
-- `past_due` - Payment failed, in grace period
-- `canceled` - Subscription has been canceled
+**Subscription Statuses**:
+- `active` - Subscription is current and paid
 - `trialing` - In trial period
+- `past_due` - Payment failed, in grace period (7 days)
+- `canceled` - Subscription has been canceled
+- `incomplete` - Initial payment failed
+- `unpaid` - Multiple payment failures
 
 ---
 
-### GET /api/billing/invoices
+#### POST /api/billing/checkout
 
-Get invoice history for the authenticated user's organization.
+Create a Stripe Checkout session for plan upgrade.
 
-**Authentication**: Required (JWT)
-
-**Query Parameters**:
-
-| Parameter | Type   | Default | Description           |
-|-----------|--------|---------|----------------------|
-| page      | number | 1       | Page number          |
-| limit     | number | 10      | Items per page (max 100) |
-
-**Response**:
-
-```json
-{
-  "success": true,
-  "data": {
-    "invoices": [
-      {
-        "id": 1,
-        "invoice_number": "in_1ABC123",
-        "amount": "$29.00",
-        "amount_cents": 2900,
-        "currency": "USD",
-        "status": "paid",
-        "status_display": "Paid",
-        "pdf_url": "https://stripe.com/invoice.pdf",
-        "hosted_url": "https://stripe.com/invoice",
-        "billing_reason": "subscription_create",
-        "period_start": "2025-01-01T00:00:00.000Z",
-        "period_end": "2025-02-01T00:00:00.000Z",
-        "created_at": "2025-01-01T00:00:00.000Z",
-        "paid_at": "2025-01-01T00:00:00.000Z"
-      }
-    ],
-    "pagination": {
-      "page": 1,
-      "limit": 10,
-      "total": 5,
-      "total_pages": 1,
-      "has_more": false
-    }
-  }
-}
-```
-
-**Invoice Status Values**:
-- `draft` - Invoice is being prepared
-- `open` - Invoice is awaiting payment
-- `paid` - Invoice has been paid
-- `void` - Invoice has been voided
-- `uncollectible` - Invoice could not be collected
-
----
-
-### GET /api/billing/usage
-
-Get quota usage for the authenticated user's organization.
-
-**Authentication**: Required (JWT)
-
-**Response**:
-
-```json
-{
-  "success": true,
-  "data": {
-    "plan_tier": "starter",
-    "usage": [
-      {
-        "dimension": "sites",
-        "label": "Sites",
-        "current": 2,
-        "limit": 3,
-        "remaining": 1,
-        "percentage": 66.67,
-        "current_display": "2",
-        "limit_display": "3",
-        "is_unlimited": false,
-        "is_warning": false,
-        "is_critical": false
-      },
-      {
-        "dimension": "storage_bytes",
-        "label": "Storage",
-        "current": 1073741824,
-        "limit": 10737418240,
-        "remaining": 9663676416,
-        "percentage": 10,
-        "current_display": "1 GB",
-        "limit_display": "10 GB",
-        "is_unlimited": false,
-        "is_warning": false,
-        "is_critical": false
-      }
-    ]
-  }
-}
-```
-
-**Usage Dimensions**:
-- `sites` - Number of sites
-- `posts` - Number of posts
-- `users` - Number of team members
-- `storage_bytes` - Storage usage in bytes
-- `api_calls` - Monthly API calls
-
-**Warning Thresholds**:
-- `is_warning`: true when usage >= 80%
-- `is_critical`: true when usage >= 95%
-
----
-
-### POST /api/billing/portal
-
-Get a Stripe Customer Portal URL for managing billing.
-
-**Authentication**: Required (JWT)
+**Authentication**: Required (owner only)
 
 **Request Body**:
-
 ```json
 {
-  "return_url": "https://example.com/admin/billing"
-}
-```
-
-**Response**:
-
-```json
-{
-  "success": true,
-  "data": {
-    "portal_url": "https://billing.stripe.com/session/..."
-  }
-}
-```
-
-**Error Response (No Subscription)**:
-
-```json
-{
-  "success": false,
-  "error": "No active subscription found"
-}
-```
-
----
-
-### POST /api/billing/checkout
-
-Create a Stripe Checkout session for a new subscription. After successful payment, Stripe redirects to the success page.
-
-**Authentication**: Required (JWT)
-
-**Request Body**:
-
-```json
-{
-  "plan_tier": "starter",
+  "plan_tier": "pro",
   "billing_cycle": "monthly",
   "trial_days": 14
 }
 ```
 
-| Field         | Type   | Required | Description                    |
-|---------------|--------|----------|--------------------------------|
-| plan_tier     | string | Yes      | `starter` or `pro`             |
-| billing_cycle | string | Yes      | `monthly` or `annual`          |
-| trial_days    | number | No       | Trial period (0-30 days)       |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `plan_tier` | string | Yes | Target plan: `starter` or `pro` |
+| `billing_cycle` | string | Yes | `monthly` or `annual` |
+| `trial_days` | number | No | Optional trial period (0-30 days) |
 
 **Response**:
-
 ```json
 {
   "success": true,
   "data": {
     "session_id": "cs_test_...",
-    "checkout_url": "https://checkout.stripe.com/pay/..."
+    "checkout_url": "https://checkout.stripe.com/..."
   }
 }
 ```
 
-**Redirect URLs**:
-- **Success**: `/admin/billing/success` - Shows confirmation with auto-redirect to billing page
-- **Cancel**: `/admin/billing?checkout=canceled` - Returns to billing page with error toast
-
-**Frontend Integration** (SF-018):
-```typescript
-// In UpgradeModal component
-const handleUpgrade = async (planTier: 'starter' | 'pro', billingCycle: 'monthly' | 'annual') => {
-  const result = await billingService.createCheckout({ plan_tier: planTier, billing_cycle: billingCycle });
-  window.location.href = result.checkout_url; // Redirect to Stripe Checkout
-};
-```
-
-**Error Response (Already Subscribed)**:
-
-```json
-{
-  "success": false,
-  "error": "Organization already has an active subscription"
-}
-```
+**Error Responses**:
+- `400 Bad Request` - Invalid plan_tier or billing_cycle
+- `401 Unauthorized` - Not authenticated
+- `403 Forbidden` - Not organization owner
 
 ---
 
-### GET /api/billing/plans
+#### POST /api/billing/portal
 
-Get available subscription plans and pricing. This endpoint is public.
+Generate a Stripe Customer Portal URL for self-service billing management.
 
-**Authentication**: None (public endpoint)
+**Authentication**: Required (owner only)
+
+**Request Body**:
+```json
+{
+  "return_url": "https://app.example.com/admin/billing"
+}
+```
 
 **Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "portal_url": "https://billing.stripe.com/p/session/..."
+  }
+}
+```
 
+The Customer Portal allows users to:
+- Update payment methods
+- View invoice history
+- Cancel subscription
+- Change billing details
+
+---
+
+### Plans & Pricing
+
+#### GET /api/billing/plans
+
+Get available subscription plans and pricing. **No authentication required.**
+
+**Response**:
 ```json
 {
   "success": true,
@@ -878,77 +241,153 @@ Get available subscription plans and pricing. This endpoint is public.
 
 ---
 
-## Subscription Management
+### Usage & Quotas
 
-(To be documented: SF-003 SubscriptionService endpoints)
+#### GET /api/billing/usage
 
----
+Get quota usage for the authenticated user's organization.
 
-## Webhook Events
-
-The webhook endpoint receives events from Stripe and processes them idempotently.
-
-### POST /api/webhooks/stripe
-
-Process Stripe webhook events.
-
-**Authentication**: None (uses Stripe signature verification)
-
-**Headers**:
-- `stripe-signature` (required) - Stripe webhook signature for verification
-
-**Request Body**: Raw Stripe event payload
+**Authentication**: Required
 
 **Response**:
 ```json
 {
-  "received": true
+  "success": true,
+  "data": {
+    "plan_tier": "pro",
+    "usage": [
+      {
+        "dimension": "sites",
+        "label": "Sites",
+        "current": 5,
+        "limit": 10,
+        "remaining": 5,
+        "percentage": 50,
+        "current_display": "5",
+        "limit_display": "10",
+        "is_unlimited": false,
+        "is_warning": false,
+        "is_critical": false
+      },
+      {
+        "dimension": "posts",
+        "label": "Posts",
+        "current": 2500,
+        "limit": 10000,
+        "remaining": 7500,
+        "percentage": 25,
+        "current_display": "2.5K",
+        "limit_display": "10K",
+        "is_unlimited": false,
+        "is_warning": false,
+        "is_critical": false
+      },
+      {
+        "dimension": "storage_bytes",
+        "label": "Storage",
+        "current": 5368709120,
+        "limit": 107374182400,
+        "remaining": 102005473280,
+        "percentage": 5,
+        "current_display": "5 GB",
+        "limit_display": "100 GB",
+        "is_unlimited": false,
+        "is_warning": false,
+        "is_critical": false
+      }
+    ]
+  }
 }
 ```
 
-**Error Responses**:
-- `400` - Invalid signature or webhook processing error
-- `500` - Internal server error
+**Usage Thresholds**:
+- `is_warning`: true when usage >= 80%
+- `is_critical`: true when usage >= 95%
+- `is_unlimited`: true for enterprise tier (-1 limits)
 
 ---
 
-### Handled Events
+### Invoices
 
-| Event Type | Handler | Description | Added In |
-|------------|---------|-------------|----------|
-| `checkout.session.completed` | `handleCheckoutCompleted` | Process successful checkout | SF-004 |
-| `customer.subscription.created` | `handleSubscriptionCreated` | New subscription created | SF-004 |
-| `customer.subscription.updated` | `handleSubscriptionUpdated` | Subscription plan/status changed | SF-004 |
-| `customer.subscription.deleted` | `handleSubscriptionDeleted` | Subscription canceled | SF-004 |
-| `invoice.paid` | `handleInvoicePaid` | Payment successful | SF-004 |
-| `invoice.payment_failed` | `handleInvoicePaymentFailed` | Payment failed | SF-004 |
-| `customer.updated` | `handleCustomerUpdated` | Sync customer name/email to org | SF-015 |
-| `payment_method.attached` | `handlePaymentMethodAttached` | Store payment method details | SF-015 |
-| `payment_method.detached` | `handlePaymentMethodDetached` | Soft delete payment method | SF-015 |
-| `customer.subscription.trial_will_end` | `handleTrialWillEnd` | Send 3-day trial warning email | SF-015 |
-| `invoice.upcoming` | `handleInvoiceUpcoming` | Send 7-day renewal notice email | SF-015 |
+#### GET /api/billing/invoices
 
----
+Get invoice history for the organization.
 
-### Event Processing Details
+**Authentication**: Required
 
-#### customer.updated (SF-015)
+**Query Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | number | 10 | Results per page (max: 100) |
+| `page` | number | 1 | Page number |
 
-Syncs customer data from Stripe to the local organization table.
-
-**Fields Synced**:
-- `name` → `organizations.name`
-- `email` → `organizations.billing_email`
-
-**Example Stripe Event**:
+**Response**:
 ```json
 {
-  "type": "customer.updated",
+  "success": true,
   "data": {
-    "object": {
-      "id": "cus_123",
-      "name": "Acme Corp Updated",
-      "email": "billing@acme.com"
+    "invoices": [
+      {
+        "id": 1,
+        "invoice_number": "in_1ABC123...",
+        "amount": "$99.00",
+        "amount_cents": 9900,
+        "currency": "USD",
+        "status": "paid",
+        "status_display": "Paid",
+        "pdf_url": "https://pay.stripe.com/invoice/...",
+        "hosted_url": "https://invoice.stripe.com/...",
+        "billing_reason": "subscription_cycle",
+        "period_start": "2025-01-01T00:00:00.000Z",
+        "period_end": "2025-02-01T00:00:00.000Z",
+        "created_at": "2025-01-01T00:00:00.000Z",
+        "paid_at": "2025-01-01T00:01:23.000Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 10,
+      "total": 12,
+      "total_pages": 2,
+      "has_more": true
+    }
+  }
+}
+```
+
+**Invoice Statuses**:
+- `paid` - Successfully paid
+- `open` - Awaiting payment
+- `draft` - Not yet finalized
+- `void` - Canceled
+- `uncollectible` - Payment failed permanently
+
+---
+
+## Quota Management API
+
+### GET /api/quotas/:organizationId
+
+Get quota status for all dimensions.
+
+**Authentication**: Required (admin)
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "sites": {
+      "current_usage": 5,
+      "quota_limit": 10,
+      "remaining": 5,
+      "percentage_used": 50
+    },
+    "posts": {
+      "current_usage": 250,
+      "quota_limit": 10000,
+      "remaining": 9750,
+      "percentage_used": 2.5
     }
   }
 }
@@ -956,34 +395,269 @@ Syncs customer data from Stripe to the local organization table.
 
 ---
 
-#### payment_method.attached (SF-015)
+### POST /api/quotas/:organizationId/check
 
-Stores payment method details when attached to a customer.
+Check if an action is within quota limits (does not increment).
 
-**Stored Fields**:
-- `stripe_payment_method_id` - Stripe PM ID
-- `type` - Payment method type (card, bank_account, etc.)
-- `last_four` - Last 4 digits of card
-- `exp_month` / `exp_year` - Card expiration
-- `brand` - Card brand (visa, mastercard, etc.)
-- `is_default` - First method becomes default automatically
+**Authentication**: Required (admin)
 
-**Database Table**: `payment_methods`
-
-**Example Stripe Event**:
+**Request Body**:
 ```json
 {
-  "type": "payment_method.attached",
+  "dimension": "sites",
+  "amount": 1
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
   "data": {
-    "object": {
-      "id": "pm_123",
-      "customer": "cus_123",
-      "type": "card",
-      "card": {
-        "last4": "4242",
-        "exp_month": 12,
-        "exp_year": 2025,
-        "brand": "visa"
+    "allowed": true,
+    "current_usage": 5,
+    "quota_limit": 10,
+    "remaining": 5
+  }
+}
+```
+
+---
+
+### POST /api/quotas/:organizationId/increment
+
+Atomically increment quota usage after creating a resource.
+
+**Authentication**: Required (admin)
+
+**Request Body**:
+```json
+{
+  "dimension": "posts",
+  "amount": 1
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "incremented": true,
+    "new_usage": 251
+  }
+}
+```
+
+**Error Response** (quota exceeded):
+```json
+{
+  "success": false,
+  "error": "Quota exceeded for posts",
+  "errorCode": "QUOTA_EXCEEDED"
+}
+```
+
+---
+
+### POST /api/quotas/:organizationId/decrement
+
+Decrement quota usage when deleting a resource.
+
+**Authentication**: Required (admin)
+
+**Request Body**:
+```json
+{
+  "dimension": "posts",
+  "amount": 1
+}
+```
+
+---
+
+### PUT /api/quotas/:organizationId/:dimension/override
+
+Set custom quota limit (Enterprise customers).
+
+**Authentication**: Required (admin)
+
+**Request Body**:
+```json
+{
+  "new_limit": 50000
+}
+```
+
+---
+
+### POST /api/quotas/reset-all
+
+Reset all monthly quotas across all organizations (scheduled job).
+
+**Authentication**: Required (admin)
+
+---
+
+## Metrics API (SF-026)
+
+All metrics endpoints require admin authentication.
+
+### GET /api/metrics/billing
+
+Get billing metrics for dashboard.
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "mrr": 49500,
+    "arr": 594000,
+    "subscriptionCount": 50,
+    "subscriptionsByTier": {
+      "free": 20,
+      "starter": 20,
+      "pro": 10
+    },
+    "subscriptionsByStatus": {
+      "active": 45,
+      "trialing": 3,
+      "past_due": 2
+    },
+    "churnRate": 2.5,
+    "trialCount": 3,
+    "conversionRate": 60.0,
+    "avgRevenuePerUser": 1100,
+    "mrr_display": "$495.00",
+    "arr_display": "$5,940.00",
+    "arpu_display": "$11.00",
+    "churn_rate_display": "2.5%",
+    "conversion_rate_display": "60.0%"
+  }
+}
+```
+
+---
+
+### GET /api/metrics/webhooks
+
+Get webhook processing statistics.
+
+**Query Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `window` | number | 60 | Time window in minutes (5-1440) |
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "totalProcessed": 150,
+    "successCount": 148,
+    "failureCount": 2,
+    "failureRate": 1.3,
+    "avgProcessingTimeMs": 85,
+    "p95ProcessingTimeMs": 150,
+    "eventTypeBreakdown": {
+      "invoice.payment_succeeded": { "count": 50, "avgMs": 90 },
+      "customer.subscription.updated": { "count": 40, "avgMs": 80 }
+    },
+    "recentFailures": [],
+    "failure_rate_display": "1.3%",
+    "avg_time_display": "85ms",
+    "p95_time_display": "150ms",
+    "window_minutes": 60
+  }
+}
+```
+
+---
+
+### GET /api/metrics/payments
+
+Get payment metrics.
+
+**Query Parameters**:
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `days` | number | 30 | Lookback period (1-365) |
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "totalPayments": 100,
+    "successfulPayments": 97,
+    "failedPayments": 3,
+    "successRate": 97.0,
+    "totalRevenue": 495000,
+    "avgPaymentAmount": 5103,
+    "success_rate_display": "97.0%",
+    "total_revenue_display": "$4,950.00",
+    "avg_payment_display": "$51.03",
+    "days": 30
+  }
+}
+```
+
+---
+
+### GET /api/metrics/health
+
+Get system health status.
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "overall": "healthy",
+    "components": {
+      "database": { "status": "healthy", "latencyMs": 5 },
+      "stripe": { "status": "healthy", "lastCheck": "2025-01-01T00:00:00.000Z" },
+      "email": { "status": "healthy" },
+      "webhooks": { "status": "healthy", "failureRate": 1.3 }
+    }
+  }
+}
+```
+
+**Health Statuses**:
+- `healthy` - All systems operational
+- `degraded` - Some components experiencing issues
+- `unhealthy` - Critical failure
+
+---
+
+### GET /api/metrics/alerts
+
+Get configured alerts and cooldown status.
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "alerts": [
+      {
+        "id": "webhook_failure_rate",
+        "name": "Webhook Failure Rate",
+        "category": "webhook",
+        "threshold": 5,
+        "windowMinutes": 60,
+        "cooldownMinutes": 30,
+        "severity": "critical",
+        "enabled": true,
+        "channels": ["email", "slack", "sentry"]
+      }
+    ],
+    "cooldowns": {
+      "webhook_failure_rate": {
+        "lastTriggeredAt": "2025-01-01T12:00:00.000Z",
+        "count": 1
       }
     }
   }
@@ -992,183 +666,143 @@ Stores payment method details when attached to a customer.
 
 ---
 
-#### payment_method.detached (SF-015)
+### PATCH /api/metrics/alerts/:alertId
 
-Soft deletes payment method when detached from customer.
+Update alert configuration.
 
-**Behavior**:
-- Sets `deleted_at` timestamp (soft delete for audit trail)
-- Sets `is_default = false`
-- Promotes next most recent method to default if this was default
-
----
-
-#### customer.subscription.trial_will_end (SF-015)
-
-Sends email notification 3 days before trial ends.
-
-**Email Template**: `trial_ending`
-
-**Template Variables**:
-```typescript
+**Request Body**:
+```json
 {
-  plan_tier: string;        // "Pro", "Enterprise"
-  trial_end_date: string;   // "January 15, 2025"
-  days_remaining: 3;
-  features_at_risk?: string[]; // ["Priority Support", "Advanced Analytics"]
+  "enabled": false,
+  "threshold": 10,
+  "windowMinutes": 30,
+  "cooldownMinutes": 60,
+  "channels": ["email", "sentry"]
 }
 ```
 
-**Recipients**: Organization admin emails (via OrganizationService.getAdminEmails)
+---
+
+### POST /api/metrics/alerts/:alertId/reset
+
+Reset alert cooldown for testing or manual intervention.
 
 ---
 
-#### invoice.upcoming (SF-015)
+### GET /api/metrics/summary
 
-Sends email notification 7 days before invoice is generated.
+Get combined dashboard overview.
 
-**Email Template**: `invoice_upcoming`
-
-**Template Variables**:
-```typescript
+**Response**:
+```json
 {
-  plan_tier: string;        // "Pro Plan"
-  amount: string;           // "99.00"
-  currency?: string;        // "USD"
-  billing_date: string;     // "January 22, 2025"
-  billing_period?: string;  // "January 15, 2025 - February 14, 2025"
+  "success": true,
+  "data": {
+    "billing": {
+      "mrr": 49500,
+      "mrr_display": "$495",
+      "subscriptions": 50,
+      "churn_rate": 2.5
+    },
+    "payments": {
+      "success_rate": 97.0,
+      "revenue_30d": 495000,
+      "revenue_display": "$4,950"
+    },
+    "health": {
+      "overall": "healthy",
+      "components": {
+        "database": "healthy",
+        "stripe": "healthy",
+        "email": "healthy",
+        "webhooks": "healthy"
+      }
+    },
+    "webhooks": {
+      "processed_1h": 150,
+      "failure_rate": 1.3,
+      "avg_time_ms": 85
+    },
+    "generated_at": "2025-01-01T00:00:00.000Z"
+  }
 }
 ```
 
-**Recipients**: Organization admin emails
-
 ---
 
-### Idempotency
+## Webhook Endpoint
 
-All webhook events are processed idempotently:
+### POST /api/webhooks/stripe
 
-1. **Event ID Check**: Before processing, the handler checks `webhook_events` table for existing `stripe_event_id`
-2. **Skip if Processed**: If event was already processed, returns `{ received: true }` without re-processing
-3. **Status Tracking**: Events are tracked with status: `processing` → `processed` or `failed`
+Stripe webhook endpoint for event processing.
 
-**Database Table**: `webhook_events`
+**Authentication**: Stripe signature verification (not JWT)
 
-```sql
-CREATE TABLE webhook_events (
-  id SERIAL PRIMARY KEY,
-  stripe_event_id VARCHAR(255) UNIQUE NOT NULL,
-  event_type VARCHAR(100) NOT NULL,
-  status VARCHAR(20) NOT NULL DEFAULT 'processing',
-  error_message TEXT,
-  created_at TIMESTAMP DEFAULT NOW(),
-  processed_at TIMESTAMP
-);
+**Headers**:
+```
+stripe-signature: t=...,v1=...
 ```
 
----
+**Handled Events**:
+| Event | Description |
+|-------|-------------|
+| `checkout.session.completed` | New subscription created via checkout |
+| `customer.subscription.created` | Subscription created |
+| `customer.subscription.updated` | Subscription modified |
+| `customer.subscription.deleted` | Subscription canceled |
+| `customer.subscription.trial_will_end` | Trial ending in 3 days |
+| `invoice.payment_succeeded` | Payment successful |
+| `invoice.payment_failed` | Payment failed |
+| `invoice.upcoming` | Invoice coming up in 7 days |
+| `customer.updated` | Customer details changed |
+| `payment_method.attached` | New payment method added |
+| `payment_method.detached` | Payment method removed |
 
-### Transaction Safety
+**Response**:
+- `200 OK` - Event processed successfully
+- `400 Bad Request` - Invalid signature
+- `500 Internal Server Error` - Transient error (Stripe will retry)
 
-All webhook handlers run within a database transaction:
-
-1. **BEGIN**: Transaction starts
-2. **Record Event**: Insert into `webhook_events` with status `processing`
-3. **Process Handler**: Execute specific event handler
-4. **Update Status**: Mark event as `processed`
-5. **COMMIT**: Commit transaction
-
-If any step fails:
-- **ROLLBACK**: Transaction rolled back
-- **Status**: Event marked as `failed` with error message
-- **Retry**: Failed events can be retried via admin endpoint
-
-**Email Notifications**: Sent AFTER successful transaction commit (outside transaction) to prevent email delivery issues from rolling back database changes
-
----
-
-## Deployment & Migration Notes
-
-### Migration 003: Quota Backfill
-
-When deploying migration `003_create_usage_quotas.sql`, the following happens automatically:
-
-1. **Table Creation**: Creates `usage_quotas` table with constraints and indexes
-2. **Function Creation**: Creates PostgreSQL functions for atomic quota operations
-3. **Automatic Backfill**: Seeds default Free tier quotas for ALL existing organizations
-
-**Backfill Behavior**:
-- Uses `INSERT ... ON CONFLICT DO NOTHING` for idempotency (safe to re-run)
-- Assigns Free tier limits to all existing organizations:
-  - `sites`: 1 site
-  - `posts`: 100 posts
-  - `users`: 1 user
-  - `storage_bytes`: 1GB (1,073,741,824 bytes)
-  - `api_calls`: 10,000 calls/month
-- Sets `period_end` to NOW() + 1 month for `api_calls` dimension
-- Sets `current_usage` to 0 for all dimensions
-
-**New Organizations**:
-- Quota records are created during signup in the SubscriptionService
-- Same Free tier defaults applied
-
-**Upgrading Organizations**:
-- Use `PUT /api/quotas/:organizationId/:dimension/override` to adjust limits
-- Enterprise customers can have custom quota limits
+**Idempotency**: Events are tracked by `stripe_event_id` to prevent duplicate processing.
 
 ---
 
----
+## Error Responses
 
-## Production Deployment
+All endpoints return errors in a consistent format:
 
-### Environment Configuration
-
-The billing system automatically selects between test and live Stripe keys based on `NODE_ENV`:
-
-| Environment | NODE_ENV    | Stripe Mode | Keys Used      |
-|-------------|-------------|-------------|----------------|
-| Development | development | Test        | `*_TEST`       |
-| Staging     | development | Test        | `*_TEST`       |
-| Production  | production  | Live        | `*_LIVE`       |
-
-### Required Production Environment Variables
-
-```env
-# Stripe API Keys (Live Mode)
-STRIPE_PUBLISHABLE_KEY_LIVE=pk_live_...
-STRIPE_SECRET_KEY_LIVE=sk_live_...
-STRIPE_WEBHOOK_SECRET_LIVE=whsec_...
-
-# Stripe Price IDs (Live Mode)
-STRIPE_PRICE_STARTER_MONTHLY_LIVE=price_...
-STRIPE_PRICE_STARTER_ANNUAL_LIVE=price_...
-STRIPE_PRICE_PRO_MONTHLY_LIVE=price_...
-STRIPE_PRICE_PRO_ANNUAL_LIVE=price_...
+```json
+{
+  "success": false,
+  "error": "Error message describing the issue",
+  "errorCode": "ERROR_CODE"
+}
 ```
 
-### Production Webhook Endpoint
-
-Configure in Stripe Dashboard (live mode):
-- **URL**: `https://api.dprogres.com/api/webhooks/stripe`
-- **Events**: See [Handled Events](#handled-events) table above
-
-### Pre-Production Checklist
-
-Before deploying to production:
-
-1. [ ] Complete business verification in Stripe Dashboard
-2. [ ] Create products/prices in live mode
-3. [ ] Configure production webhook endpoint
-4. [ ] Set all production environment variables
-5. [ ] Test webhook delivery with `stripe trigger --live`
-6. [ ] Verify first transaction processes successfully
-
-See `docs/STRIPE_SETUP.md` for detailed production setup instructions.
-See `docs/DEPLOYMENT_CHECKLIST.md` for complete deployment checklist.
+**Common Error Codes**:
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `VALIDATION_ERROR` | 400 | Invalid request parameters |
+| `UNAUTHORIZED` | 401 | Missing or invalid authentication |
+| `FORBIDDEN` | 403 | Insufficient permissions |
+| `QUOTA_EXCEEDED` | 403 | Usage quota exceeded |
+| `NOT_FOUND` | 404 | Resource not found |
+| `INTERNAL_ERROR` | 500 | Server error |
 
 ---
 
-**Last Updated**: December 2025
-**Version**: 1.5
-**Related Tickets**: SF-009 (Quota System Implementation), SF-015 (Complete Webhook Event Handling), SF-017 (Billing Page UI & Layout), SF-018 (Stripe Checkout Integration), SF-019 (Stripe Customer Portal Link), SF-025 (Production Stripe Setup)
+## Rate Limiting
+
+The billing API has the following rate limits:
+- Standard endpoints: 100 requests per minute per user
+- Webhook endpoint: No limit (Stripe controls delivery rate)
+- Checkout creation: 10 requests per minute per organization
+
+---
+
+## Related Documentation
+
+- [Architecture](./ARCHITECTURE_SAAS.md) - System architecture
+- [Deployment](./DEPLOYMENT_SAAS.md) - Deployment guide
+- [Troubleshooting](./TROUBLESHOOTING_BILLING.md) - Common issues
+- [Runbook](./RUNBOOK_BILLING.md) - Operational procedures
