@@ -1420,6 +1420,103 @@ await emailService.sendTemplatedEmail('payment_receipt', recipients, variables);
 
 ---
 
+#### Monitoring Service (SF-026)
+**Purpose**: Centralized monitoring and alerting service for subscription system and critical metrics
+**Location**: `backend/src/services/MonitoringService.ts`
+**Status**: ✅ Completed (December 2025)
+
+```typescript
+// Usage Example
+import { monitoringService } from '../services/MonitoringService';
+
+// Initialize the service
+monitoringService.initialize();
+
+// Record a webhook metric
+monitoringService.recordWebhookMetric({
+  eventId: 'evt_123',
+  eventType: 'invoice.payment_succeeded',
+  processingTimeMs: 150,
+  success: true,
+  timestamp: new Date(),
+});
+
+// Record an error
+monitoringService.recordError('webhook', 'Signature verification failed');
+
+// Get webhook statistics
+const stats = monitoringService.getWebhookStats(60); // Last 60 minutes
+console.log(`Failure rate: ${stats.failureRate}%`);
+
+// Get billing metrics
+const billingResult = await monitoringService.getBillingMetrics();
+console.log(`MRR: $${(billingResult.data.mrr / 100).toFixed(2)}`);
+
+// Get system health status
+const healthResult = await monitoringService.getHealthStatus();
+console.log(`Overall: ${healthResult.data.overall}`);
+
+// Listen for alerts
+monitoringService.on('monitoring:alert_triggered', (event) => {
+  console.log(`Alert: ${event.alertName} - ${event.message}`);
+});
+```
+
+**Key Features**:
+- **Webhook Metrics**: Track processing times, success/failure rates, event type breakdown
+- **Alert System**: Threshold-based alerting with configurable cooldown periods
+- **Multi-Channel Notifications**: Email, Slack, and Sentry integration
+- **Billing Metrics**: MRR, ARR, subscription counts, churn rate, conversion rate
+- **Payment Metrics**: Success rate, revenue tracking, average payment amounts
+- **Health Checks**: Database, Stripe, email, and webhook health monitoring
+
+**Default Alerts**:
+| Alert ID | Category | Threshold | Window | Severity |
+|----------|----------|-----------|--------|----------|
+| webhook_failure_rate | webhook | >5 failures | 60 min | critical |
+| payment_failure_rate | payment | >3 failures | 60 min | critical |
+| quota_enforcement_errors | quota | >10 errors | 60 min | warning |
+| api_response_time | api | >300ms p95 | 5 min | warning |
+| database_connection_errors | database | >3 errors | 5 min | critical |
+| email_delivery_failures | email | >5 failures | 60 min | warning |
+
+**Environment Variables**:
+```bash
+SENTRY_DSN=https://xxx@sentry.io/123           # Optional: Sentry error tracking
+SLACK_WEBHOOK_URL=https://hooks.slack.com/... # Optional: Slack alerts
+ALERT_EMAIL=alerts@example.com                # Optional: Email alerts
+```
+
+**API Endpoints** (`/api/metrics/*`):
+- `GET /billing` - MRR, subscriptions, churn metrics
+- `GET /webhooks` - Webhook processing statistics
+- `GET /payments` - Payment success rates and revenue
+- `GET /health` - System health status
+- `GET /alerts` - Alert configurations and cooldowns
+- `PATCH /alerts/:id` - Update alert configuration
+- `POST /alerts/:id/reset` - Reset alert cooldown
+- `GET /summary` - Combined dashboard metrics
+
+**Events Emitted**:
+- `monitoring:alert_triggered` - When an alert threshold is breached
+- `monitoring:metric_recorded` - When a metric is recorded
+- `monitoring:health_check` - When health check is performed
+
+**Types**:
+- `WebhookMetric` - Webhook processing metric
+- `WebhookStats` - Aggregated webhook statistics
+- `AlertConfig` - Alert configuration
+- `AlertEvent` - Alert trigger event
+- `BillingMetrics` - MRR, churn, subscription metrics
+- `PaymentMetrics` - Payment success and revenue metrics
+- `HealthStatus` - System health status
+
+**Tests**:
+- `backend/src/__tests__/services/MonitoringService.test.ts` (24 tests, 100% passing)
+- **Coverage**: Initialization, webhook metrics, error tracking, alert system, health checks
+
+---
+
 #### Organization Service (SF-005)
 **Purpose**: Organization management with ownership, membership, and access control
 **Location**: `backend/src/services/OrganizationService.ts`

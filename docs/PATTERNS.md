@@ -3275,3 +3275,230 @@ router.post('/webhooks/retry/:eventId', async (req, res) => {
 | `payment_method.detached` | `handlePaymentMethodDetached` | Soft delete, promote default |
 | `customer.subscription.trial_will_end` | `handleTrialWillEnd` | Send 3-day warning email |
 | `invoice.upcoming` | `handleInvoiceUpcoming` | Send 7-day renewal notice |
+
+## Billing Metrics & Monitoring Pattern (SF-026)
+
+### Correct MRR/ARR Calculation
+**Only count confirmed revenue from active subscriptions**
+
+```sql
+-- ❌ WRONG: Including non-paying statuses
+SELECT SUM(CASE
+  WHEN status IN ('active', 'trialing', 'past_due') AND billing_cycle = 'annual'
+    THEN amount_cents / 12
+  WHEN status IN ('active', 'trialing', 'past_due')
+    THEN amount_cents
+  ELSE 0
+END) as mrr
+FROM subscriptions
+
+-- ✅ CORRECT: Only active subscriptions, decimal division
+SELECT SUM(CASE
+  WHEN status = 'active' AND billing_cycle = 'annual'
+    THEN amount_cents / 12.0
+  WHEN status = 'active'
+    THEN amount_cents
+  ELSE 0
+END)::integer as mrr
+FROM subscriptions
+```
+
+**Why this matters**:
+- `trialing` - Customer hasn't paid yet, may not convert
+- `past_due` - Payment failed, revenue not guaranteed
+- `active` - Only status that represents confirmed recurring revenue
+- Integer division (`/ 12`) truncates; use `/ 12.0` and cast at end
+
+### Payment Attempt Metrics
+**Only count invoices where payment was actually attempted**
+
+```sql
+-- ❌ WRONG: Counting all invoices
+SELECT
+  COUNT(*) as total,
+  COUNT(*) FILTER (WHERE status = 'paid') as successful,
+  COUNT(*) FILTER (WHERE status IN ('open', 'void', 'uncollectible')) as failed
+
+-- ✅ CORRECT: Only count actual payment attempts
+SELECT
+  COUNT(*) FILTER (WHERE status IN ('paid', 'uncollectible')) as total_attempts,
+  COUNT(*) FILTER (WHERE status = 'paid') as successful,
+  COUNT(*) FILTER (WHERE status = 'uncollectible') as failed
+```
+
+**Stripe Invoice Lifecycle**:
+| Status | Meaning | Count as Attempt? |
+|--------|---------|-------------------|
+| `draft` | Invoice being created | No |
+| `open` | Finalized, may not be attempted yet | No |
+| `paid` | Payment succeeded | Yes (success) |
+| `uncollectible` | All retries failed | Yes (failure) |
+| `void` | Canceled/voided | No |
+
+### Zero-Data Edge Cases
+**Handle empty result sets properly**
+
+```typescript
+// ❌ WRONG: Division fallback inflates metrics
+const arpu = totalRevenue / (activeCount || 1);
+
+// ✅ CORRECT: Explicit zero check
+const arpu = activeCount > 0 ? totalRevenue / activeCount : 0;
+
+// ❌ WRONG: 100% success with no data is misleading
+const successRate = total > 0 ? (successful / total) * 100 : 100;
+
+// ✅ CORRECT: Return 0 for "no data"
+const successRate = total > 0 ? (successful / total) * 100 : 0;
+```
+
+### Percentile Calculations
+**Use nearest-rank method for p95/p99**
+
+```typescript
+// ❌ WRONG: floor gives max value in array
+const p95Index = Math.floor(sortedTimes.length * 0.95);
+
+// ✅ CORRECT: Nearest-rank method
+function calculatePercentile(sortedArray: number[], percentile: number): number {
+  if (sortedArray.length === 0) return 0;
+  const index = Math.min(
+    Math.ceil(sortedArray.length * percentile) - 1,
+    sortedArray.length - 1
+  );
+  return sortedArray[Math.max(0, index)];
+}
+
+const p95 = calculatePercentile(sortedTimes, 0.95);
+const p99 = calculatePercentile(sortedTimes, 0.99);
+```
+
+### Alert System Wiring
+**Ensure all alert types are connected to their metric sources**
+
+```typescript
+// Monitoring service with properly wired alerts
+class MonitoringService extends EventEmitter {
+  private alerts: Map<string, AlertConfig> = new Map();
+
+  // ❌ WRONG: Generic check doesn't handle all metric types
+  checkAlertThreshold(alertId: string): void {
+    const alert = this.alerts.get(alertId);
+    const errorCount = this.getErrorCount(alert.category, alert.windowMinutes);
+    if (errorCount > alert.threshold) this.triggerAlert(alertId, errorCount);
+  }
+
+  // ✅ CORRECT: Handle each metric type appropriately
+  checkAlertThreshold(alertId: string): void {
+    const alert = this.alerts.get(alertId);
+    let currentValue: number;
+
+    switch (alertId) {
+      case 'api_response_time':
+        currentValue = this.getApiP95ResponseTime(alert.windowMinutes);
+        break;
+      case 'webhook_failure_rate':
+        currentValue = this.getWebhookStats(alert.windowMinutes).failureCount;
+        break;
+      default:
+        currentValue = this.getErrorCount(alert.category, alert.windowMinutes);
+    }
+
+    if (currentValue > alert.threshold) {
+      this.triggerAlert(alertId, currentValue);
+    }
+  }
+}
+```
+
+### Recording Metrics at Event Sources
+**Wire up metric recording where events occur**
+
+```typescript
+// ❌ WRONG: Alert exists but no code records the metric
+// DEFAULT_ALERTS includes 'payment_failure_rate'
+// But handleInvoiceFailed() doesn't call recordError()
+
+// ✅ CORRECT: Record at the event source
+async handleInvoiceFailed(invoice: Stripe.Invoice): Promise<void> {
+  const failureReason = invoice.last_finalization_error?.message ||
+                        invoice.last_payment_error?.message ||
+                        'Payment failed';
+
+  // ... handle the business logic ...
+
+  // Record for monitoring/alerting
+  monitoringService.recordError('payment', `Invoice ${invoice.id}: ${failureReason}`);
+
+  // Record webhook metric
+  monitoringService.recordWebhookMetric({
+    eventId: event.id,
+    eventType: 'invoice.payment_failed',
+    processingTimeMs,
+    success: true, // Webhook processed successfully even though payment failed
+    timestamp: new Date(),
+  });
+}
+```
+
+### TypeScript Import Pattern for Monitoring Types
+**Separate type imports from value imports**
+
+```typescript
+// ❌ WRONG: Importing value as type-only
+import type { AlertConfig, DEFAULT_ALERTS } from '../types/monitoring';
+
+// ✅ CORRECT: Separate type and value imports
+import type { AlertConfig, AlertEvent, WebhookMetric } from '../types/monitoring';
+import { DEFAULT_ALERTS } from '../types/monitoring';
+
+// The types/monitoring.ts file:
+export interface AlertConfig {
+  id: string;
+  name: string;
+  threshold: number;
+  // ...
+}
+
+// This is a VALUE (array), not just a type
+export const DEFAULT_ALERTS: AlertConfig[] = [
+  { id: 'webhook_failure_rate', name: 'Webhook Failure Alert', threshold: 5 },
+  { id: 'api_response_time', name: 'API Response Time Alert', threshold: 300 },
+  // ...
+];
+```
+
+### Package Dependencies for Optional Features
+**Always add dependencies even for optional integrations**
+
+```typescript
+// ❌ WRONG: Using require without package.json entry
+export function initSentry(): void {
+  if (!process.env.SENTRY_DSN) return;
+  try {
+    Sentry = require('@sentry/node'); // Will throw if not installed!
+    Sentry.init({ dsn: process.env.SENTRY_DSN });
+  } catch {
+    console.log('Sentry SDK not available');
+  }
+}
+
+// ✅ CORRECT: Add to package.json first
+// package.json: "@sentry/node": "^8.42.0"
+// Then the require will work when SENTRY_DSN is set
+```
+
+### Monitoring Service Integration Checklist
+
+When adding monitoring/alerting:
+
+1. **Define alert config** in types file with threshold and window
+2. **Add to DEFAULT_ALERTS** array (value export, not type-only)
+3. **Record metrics** at every event source (webhooks, API handlers)
+4. **Wire alert checks** to appropriate metric getters
+5. **Handle edge cases** (zero data, missing values)
+6. **Use correct formulas** (p95: ceil-1, division: use decimals)
+7. **Add dependencies** to package.json for any new packages
+8. **Test with empty data** to catch divide-by-zero issues
+
+**Related**: SF-004 (Stripe Webhooks), SF-015 (Webhook Events), CLAUDE.md (Common Pitfalls)

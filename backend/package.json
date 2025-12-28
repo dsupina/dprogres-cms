@@ -21,6 +21,7 @@
     "@opentelemetry/sdk-node": "^0.208.0",
     "@opentelemetry/semantic-conventions": "^1.38.0",
     "@sendgrid/mail": "^8.1.6",
+    "@sentry/node": "^8.42.0",
     "@types/diff-match-patch": "^1.0.36",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",

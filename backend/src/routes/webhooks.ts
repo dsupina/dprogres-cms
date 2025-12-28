@@ -4,8 +4,11 @@ import { pool } from '../utils/database';
 import { emailService } from '../services/EmailService';
 import { organizationService } from '../services/OrganizationService';
 import { subscriptionLifecycleService, GRACE_PERIOD_DAYS } from '../services/SubscriptionLifecycleService';
+import { monitoringService } from '../services/MonitoringService';
+import { captureException, addBreadcrumb } from '../config/sentry';
 import { invalidateSubscriptionCache } from '../middleware/quota';
 import type Stripe from 'stripe';
+import type { WebhookEventType } from '../types/monitoring';
 
 const router = Router();
 
@@ -135,8 +138,13 @@ router.post('/stripe', async (req: Request, res: Response) => {
     };
     console.error('SECURITY: Webhook signature verification failed:', JSON.stringify(securityEvent));
 
-    // TODO: Send to security monitoring system (e.g., Sentry, DataDog)
-    // await securityMonitor.logEvent(securityEvent);
+    // SF-026: Record security event in monitoring and Sentry
+    monitoringService.recordError('webhook', `Signature verification failed: ${err.message}`);
+    captureException(err, {
+      type: 'webhook_signature_failed',
+      ip: securityEvent.ip,
+      userAgent: securityEvent.userAgent,
+    });
 
     return res.status(400).json({ error: `Webhook Error: ${err.message}` });
   }
@@ -228,6 +236,9 @@ router.post('/stripe', async (req: Request, res: Response) => {
 
       const eventRecordId = existingEvent.id;
 
+      // SF-026: Track processing start time for metrics
+      const processingStartTime = Date.now();
+
       // Pass client to handlers to avoid deadlock (outer transaction holds row lock)
       // Pass preloaded subscription data to avoid Stripe API call inside transaction
       // Handlers may return a post-commit callback for actions like sending emails
@@ -242,6 +253,25 @@ router.post('/stripe', async (req: Request, res: Response) => {
       );
 
       await client.query('COMMIT');
+
+      // SF-026: Record successful webhook metric
+      const processingTimeMs = Date.now() - processingStartTime;
+      monitoringService.recordWebhookMetric({
+        eventId: event.id,
+        eventType: event.type as WebhookEventType,
+        processingTimeMs,
+        success: true,
+        timestamp: new Date(),
+        retryCount: isRetry ? 1 : 0,
+      });
+
+      // Add breadcrumb for debugging
+      addBreadcrumb({
+        category: 'webhook',
+        message: `Processed ${event.type}`,
+        level: 'info',
+        data: { eventId: event.id, processingTimeMs },
+      });
 
       // Execute post-commit callback (e.g., send emails) AFTER transaction commits
       // This prevents duplicate emails on retry since event is now marked as processed
@@ -261,6 +291,24 @@ router.post('/stripe', async (req: Request, res: Response) => {
 
     // Determine if error is transient (should retry) or permanent (should not retry)
     const isRetryable = isTransientError(error);
+
+    // SF-026: Record failed webhook metric and send to Sentry
+    monitoringService.recordWebhookMetric({
+      eventId: event.id,
+      eventType: event.type as WebhookEventType,
+      processingTimeMs: 0,
+      success: false,
+      error: error.message,
+      timestamp: new Date(),
+    });
+
+    // Capture in Sentry for investigation
+    captureException(error, {
+      eventId: event.id,
+      eventType: event.type,
+      isRetryable,
+      webhookData: event.data,
+    });
 
     // Log error to subscription_events table (use INSERT...ON CONFLICT to handle race condition)
     // CRITICAL: Must explicitly set processed_at = NULL to allow retries
@@ -1005,6 +1053,12 @@ async function handleInvoiceFailed(
     }
 
     const { id: dbSubscriptionId, organization_id: organizationId } = subRows[0];
+
+    // SF-026: Record payment failure for monitoring alerts
+    const failureReason = (invoice as any).last_finalization_error?.message ||
+                          (invoice as any).last_payment_error?.message ||
+                          'Payment failed';
+    monitoringService.recordError('payment', `Invoice ${invoice.id}: ${failureReason}`);
 
     // Validate amounts don't exceed PostgreSQL INTEGER max
     const amountPaid = invoice.amount_paid || 0;
