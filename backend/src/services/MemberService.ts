@@ -239,8 +239,8 @@ export class MemberService extends EventEmitter {
       );
 
       // Get inviter details for email
-      const { rows: [inviter] } = await client.query<{ email: string; name?: string }>(
-        'SELECT email, name FROM users WHERE id = $1',
+      const { rows: [inviter] } = await client.query<{ email: string; first_name?: string; last_name?: string }>(
+        'SELECT email, first_name, last_name FROM users WHERE id = $1',
         [invitedBy]
       );
 
@@ -250,7 +250,8 @@ export class MemberService extends EventEmitter {
       const baseUrl = inviteUrl || process.env.FRONTEND_URL || 'http://localhost:5173';
       const acceptUrl = `${baseUrl}/accept-invite?token=${inviteToken}`;
 
-      const inviterName = inviter.name || inviter.email.split('@')[0];
+      const fullName = [inviter.first_name, inviter.last_name].filter(Boolean).join(' ').trim();
+      const inviterName = fullName || inviter.email.split('@')[0];
 
       const emailHTML = generateInviteEmailHTML({
         organizationName: organization.name,
@@ -495,13 +496,15 @@ export class MemberService extends EventEmitter {
       }
 
       // Get all members with user details
+      // Use NULLIF(TRIM(CONCAT_WS(...)), '') to return null when names are missing
+      // This allows frontend to fall back to email display
       const { rows } = await pool.query<MemberWithUser>(
         `SELECT
            om.*,
            u.email as user_email,
-           u.name as user_name,
+           NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') as user_name,
            inviter.email as inviter_email,
-           inviter.name as inviter_name
+           NULLIF(TRIM(CONCAT_WS(' ', inviter.first_name, inviter.last_name)), '') as inviter_name
          FROM organization_members om
          INNER JOIN users u ON om.user_id = u.id
          LEFT JOIN users inviter ON om.invited_by = inviter.id
