@@ -357,10 +357,17 @@ export class MonitoringService extends EventEmitter {
     );
 
     for (const alert of categoryAlerts) {
-      const errorCount = this.getErrorCount(category, alert.windowMinutes);
+      let currentValue: number;
 
-      if (errorCount > alert.threshold) {
-        this.triggerAlert(alert, errorCount);
+      // API response time alert uses p95 latency, not error count
+      if (alert.id === 'api_response_time') {
+        currentValue = this.getApiP95ResponseTime(alert.windowMinutes);
+      } else {
+        currentValue = this.getErrorCount(category, alert.windowMinutes);
+      }
+
+      if (currentValue > alert.threshold) {
+        this.triggerAlert(alert, currentValue);
       }
     }
   }
@@ -569,13 +576,15 @@ DProgres CMS Monitoring Alert
    */
   async getBillingMetrics(): Promise<ServiceResponse<BillingMetrics>> {
     try {
-      // MRR calculation: Sum of monthly amount for all active subscriptions
+      // MRR calculation: Sum of monthly amount for ACTIVE subscriptions only
       // For annual subscriptions, divide by 12
+      // Status counts include ALL subscriptions for accurate dashboard reporting
       const { rows: mrrRows } = await pool.query(`
         SELECT
           SUM(CASE
-            WHEN billing_cycle = 'annual' THEN amount_cents / 12
-            ELSE amount_cents
+            WHEN status IN ('active', 'trialing', 'past_due') AND billing_cycle = 'annual' THEN amount_cents / 12
+            WHEN status IN ('active', 'trialing', 'past_due') THEN amount_cents
+            ELSE 0
           END) as mrr,
           COUNT(*) as total_subscriptions,
           COUNT(*) FILTER (WHERE plan_tier = 'free') as free_count,
@@ -587,7 +596,6 @@ DProgres CMS Monitoring Alert
           COUNT(*) FILTER (WHERE status = 'past_due') as past_due_count,
           COUNT(*) FILTER (WHERE status = 'canceled') as canceled_count
         FROM subscriptions
-        WHERE status NOT IN ('canceled')
       `);
 
       const mrrData = mrrRows[0];

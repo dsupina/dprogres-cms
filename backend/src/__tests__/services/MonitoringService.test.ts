@@ -215,6 +215,20 @@ describe('MonitoringService', () => {
       const p95 = service.getApiP95ResponseTime(60);
       expect(p95).toBe(0);
     });
+
+    it('should trigger API latency alert when p95 exceeds threshold', (done) => {
+      service.on('monitoring:alert_triggered', (event) => {
+        expect(event.alertId).toBe('api_response_time');
+        expect(event.severity).toBe('warning');
+        expect(event.currentValue).toBeGreaterThan(300); // threshold is 300ms
+        done();
+      });
+
+      // Record 25 slow API responses (threshold is 300ms p95)
+      for (let i = 0; i < 25; i++) {
+        service.recordApiResponseTime(350); // All responses above threshold
+      }
+    });
   });
 
   describe('Alert System', () => {
