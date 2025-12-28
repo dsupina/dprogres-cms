@@ -2153,10 +2153,57 @@ See `docs/tickets/EPIC-003_TICKET_INDEX.md` for complete component roadmap.
 - Input validation (email format, password length, required fields)
 - Transaction safety and rollback
 
-**TODO**: 
+**TODO**:
 - SF-013: Send actual verification emails via EmailService (currently logs to console in dev mode)
 - Integration with frontend signup form
 - Email resend functionality
 - Password reset flow
+
+---
+
+## SaaS Documentation (SF-027)
+
+Comprehensive documentation for the SaaS billing system is available in the following files:
+
+### API Documentation
+- **[API_BILLING.md](./API_BILLING.md)** - Complete API reference for billing, quotas, metrics, and webhook endpoints with request/response examples
+
+### Architecture
+- **[ARCHITECTURE_SAAS.md](./ARCHITECTURE_SAAS.md)** - System architecture diagrams including:
+  - Component architecture
+  - Database schema
+  - Stripe integration flow
+  - Subscription lifecycle state machine
+  - Quota enforcement pipeline
+  - Monitoring architecture
+  - Security layers
+  - Deployment architecture
+
+### Deployment
+- **[DEPLOYMENT_SAAS.md](./DEPLOYMENT_SAAS.md)** - Production deployment guide covering:
+  - Environment configuration
+  - Database setup and migrations
+  - Stripe configuration
+  - SendGrid email setup
+  - Monitoring setup (Sentry, Slack)
+  - Pre-deployment and post-deployment checklists
+  - Security checklist
+
+### Operations
+- **[RUNBOOK_BILLING.md](./RUNBOOK_BILLING.md)** - Operational procedures for:
+  - Routine operations (quota reset, grace period processing, reports)
+  - Customer support operations (upgrades, downgrades, refunds, cancellations)
+  - Incident response (webhook failures, mass payment failures, state mismatches)
+  - Database migration rollback
+
+### Troubleshooting
+- **[TROUBLESHOOTING_BILLING.md](./TROUBLESHOOTING_BILLING.md)** - 14 common issues with diagnostic steps:
+  - Webhook processing issues
+  - Payment failures
+  - Subscription state mismatches
+  - Quota enforcement problems
+  - Email notification failures
+  - Grace period issues
+  - And more...
 
 ---
