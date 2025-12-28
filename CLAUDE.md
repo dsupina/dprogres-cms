@@ -288,6 +288,14 @@ Organization (e.g., "Acme Corp")
 - **Integration**: Used by DistributionService for platform-specific content adaptation
 - **Note**: Currently basic implementation; full multi-LLM router planned for Phase 2
 
+#### MonitoringService (backend/src/services/MonitoringService.ts)
+- **Purpose**: Centralized monitoring and alerting for subscription system and critical metrics (SF-026)
+- **Features**: Webhook metrics, payment tracking, alert system, health checks, billing metrics
+- **Alerting**: Multi-channel (Email, Slack, Sentry) with configurable thresholds and cooldowns
+- **Metrics**: MRR, ARR, churn rate, subscription counts, payment success rates
+- **Health Checks**: Database, Stripe, email, webhook component status
+- **Integration**: Used by webhooks.ts for metric recording; provides /api/metrics/* endpoints
+
 ### File Upload & Media
 - **Multer** for file handling with size limits (MAX_FILE_SIZE env var)
 - **Sharp** for image processing and optimization
@@ -412,6 +420,11 @@ STRIPE_PRICE_PRO_ANNUAL=price_...
 SENDGRID_API_KEY=SG.your_api_key_here
 SENDGRID_FROM_EMAIL=noreply@dprogres.com
 SENDGRID_FROM_NAME=DProgres CMS
+
+# Monitoring & Alerting (SF-026) - All optional
+SENTRY_DSN=https://xxx@sentry.io/123    # Error tracking (optional)
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/... # Slack alerts (optional)
+ALERT_EMAIL=alerts@example.com          # Email alerts (optional, falls back to SENDGRID_FROM_EMAIL)
 ```
 
 ### Stripe Environment-Based Key Selection

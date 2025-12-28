@@ -20,11 +20,24 @@ let otelSDK: Awaited<ReturnType<typeof initializeTelemetry>> | null = null;
     // This ensures Express and other modules are patched by OTEL auto-instrumentations
     const { default: app } = await import('./app');
 
+    // SF-026: Initialize Sentry for error tracking (before other services)
+    const { initSentry, flush: flushSentry } = await import('./config/sentry');
+    initSentry();
+
+    // SF-026: Initialize monitoring service
+    const { monitoringService } = await import('./services/MonitoringService');
+    monitoringService.initialize();
+
     // Wire up EmailService to QuotaService for quota warning notifications (SF-012)
     const { emailService } = await import('./services/EmailService');
     const { quotaService } = await import('./services/QuotaService');
     emailService.initialize();
     emailService.subscribeToQuotaWarnings(quotaService);
+
+    // SF-026: Subscribe to monitoring alerts for logging
+    monitoringService.on('monitoring:alert_triggered', (event) => {
+      console.log(`[Alert] ${event.alertName}: ${event.message}`);
+    });
 
     // Start server
     const server = app.listen(PORT, () => {
@@ -37,11 +50,17 @@ let otelSDK: Awaited<ReturnType<typeof initializeTelemetry>> | null = null;
     const jobs = startAllJobs();
 
     // Graceful shutdown handler (SF-011)
-    const gracefulShutdown = (signal: string) => {
+    const gracefulShutdown = async (signal: string) => {
       console.log(`\n[Server] ${signal} received, shutting down gracefully...`);
 
       // Stop background jobs first
       stopAllJobs(jobs);
+
+      // SF-026: Flush Sentry events before shutdown
+      await flushSentry(2000);
+
+      // SF-026: Cleanup monitoring service
+      monitoringService.destroy();
 
       server.close(() => {
         console.log('[Server] HTTP server closed');

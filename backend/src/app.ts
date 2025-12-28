@@ -30,6 +30,7 @@ import webhooksRoutes from './routes/webhooks';
 import quotasRoutes from './routes/quotas';
 import billingRoutes from './routes/billing';
 import organizationsRoutes from './routes/organizations';
+import metricsRoutes from './routes/metrics';
 
 // Import domain middleware
 import { validateDomain, resolveDomain } from './middleware/domainValidation';
@@ -150,6 +151,7 @@ app.use('/api/versions', createVersionRoutes(pool)); // Version comparison endpo
 app.use('/api/quotas', quotasRoutes); // Quota management endpoints
 app.use('/api/billing', billingRoutes); // Billing and subscription endpoints
 app.use('/api/organizations', organizationsRoutes); // Organization settings and member management
+app.use('/api/metrics', metricsRoutes); // SF-026: Monitoring metrics and alerts
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
