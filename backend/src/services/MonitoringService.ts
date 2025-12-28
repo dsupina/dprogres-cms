@@ -586,11 +586,11 @@ DProgres CMS Monitoring Alert
       // trialing = hasn't paid yet, past_due = payment failed
       const { rows: mrrRows } = await pool.query(`
         SELECT
-          SUM(CASE
+          ROUND(SUM(CASE
             WHEN status = 'active' AND billing_cycle = 'annual' THEN amount_cents / 12.0
             WHEN status = 'active' THEN amount_cents
             ELSE 0
-          END)::integer as mrr,
+          END))::integer as mrr,
           COUNT(*) as total_subscriptions,
           COUNT(*) FILTER (WHERE plan_tier = 'free') as free_count,
           COUNT(*) FILTER (WHERE plan_tier = 'starter') as starter_count,
@@ -694,22 +694,25 @@ DProgres CMS Monitoring Alert
 
   /**
    * Get payment metrics for dashboard
+   *
+   * Combines two data sources:
+   * 1. Database: Finalized invoice statuses (paid, uncollectible)
+   * 2. In-memory: Recent payment failures still in retry (invoice.payment_failed events)
+   *
+   * This ensures we capture in-progress failures during Stripe's retry window,
+   * not just final outcomes after all retries are exhausted.
    */
   async getPaymentMetrics(days: number = 30): Promise<ServiceResponse<PaymentMetrics>> {
     try {
-      // Only count invoices where a payment was actually attempted:
-      // - 'paid' = successful payment attempt
-      // - 'uncollectible' = failed payment attempts (all retries exhausted)
-      // Exclude:
-      // - 'draft' = no payment attempt yet
-      // - 'open' = finalized but may not have been attempted (ambiguous)
-      // - 'void' = canceled, not a payment failure
+      // Get finalized payment results from database
+      // - 'paid' = successful payment
+      // - 'uncollectible' = all retries exhausted, payment failed
       const { rows } = await pool.query(
         `
         SELECT
-          COUNT(*) FILTER (WHERE status IN ('paid', 'uncollectible')) as total_attempts,
+          COUNT(*) FILTER (WHERE status IN ('paid', 'uncollectible')) as finalized_attempts,
           COUNT(*) FILTER (WHERE status = 'paid') as successful,
-          COUNT(*) FILTER (WHERE status = 'uncollectible') as failed,
+          COUNT(*) FILTER (WHERE status = 'uncollectible') as finalized_failed,
           SUM(CASE WHEN status = 'paid' THEN amount_paid_cents ELSE 0 END) as revenue,
           AVG(CASE WHEN status = 'paid' THEN amount_paid_cents ELSE NULL END) as avg_amount
         FROM invoices
@@ -718,16 +721,31 @@ DProgres CMS Monitoring Alert
       );
 
       const data = rows[0];
-      const totalAttempts = parseInt(data.total_attempts) || 0;
+      const finalizedAttempts = parseInt(data.finalized_attempts) || 0;
       const successful = parseInt(data.successful) || 0;
+      const finalizedFailed = parseInt(data.finalized_failed) || 0;
+
+      // Get in-progress payment failures from in-memory tracking
+      // These are invoice.payment_failed events where invoice is still 'open' (in retry)
+      // Convert days to minutes for the in-memory query
+      const windowMinutes = days * 24 * 60;
+      const inProgressFailures = this.getErrorCount('payment', windowMinutes);
+
+      // Combine metrics:
+      // - Total attempts = finalized (paid + uncollectible) + in-progress failures
+      // - Failed = finalized failures + in-progress failures
+      // Note: Some in-progress failures may eventually succeed, so this is a
+      // point-in-time snapshot that captures active issues
+      const totalAttempts = finalizedAttempts + inProgressFailures;
+      const totalFailed = finalizedFailed + inProgressFailures;
 
       return {
         success: true,
         data: {
           totalPayments: totalAttempts,
           successfulPayments: successful,
-          failedPayments: parseInt(data.failed) || 0,
-          // Return 0 when no payment attempts - don't misrepresent "no data" as 100% success
+          failedPayments: totalFailed,
+          // Success rate accounts for both finalized and in-progress failures
           successRate: totalAttempts > 0 ? (successful / totalAttempts) * 100 : 0,
           totalRevenue: parseInt(data.revenue) || 0,
           avgPaymentAmount: Math.round(parseFloat(data.avg_amount) || 0),
