@@ -582,10 +582,10 @@ DProgres CMS Monitoring Alert
       const { rows: mrrRows } = await pool.query(`
         SELECT
           SUM(CASE
-            WHEN status IN ('active', 'trialing', 'past_due') AND billing_cycle = 'annual' THEN amount_cents / 12
+            WHEN status IN ('active', 'trialing', 'past_due') AND billing_cycle = 'annual' THEN amount_cents / 12.0
             WHEN status IN ('active', 'trialing', 'past_due') THEN amount_cents
             ELSE 0
-          END) as mrr,
+          END)::integer as mrr,
           COUNT(*) as total_subscriptions,
           COUNT(*) FILTER (WHERE plan_tier = 'free') as free_count,
           COUNT(*) FILTER (WHERE plan_tier = 'starter') as starter_count,
