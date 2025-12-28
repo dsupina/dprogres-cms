@@ -650,9 +650,9 @@ DProgres CMS Monitoring Alert
           ? (conversionRows[0].converted / conversionRows[0].total) * 100
           : 0;
 
-      // ARPU
-      const activeCount = parseInt(mrrData.active_count) || 1;
-      const arpu = mrr / activeCount;
+      // ARPU - only calculate if there are active subscribers, otherwise 0
+      const activeCount = parseInt(mrrData.active_count) || 0;
+      const arpu = activeCount > 0 ? mrr / activeCount : 0;
 
       return {
         success: true,
@@ -715,7 +715,8 @@ DProgres CMS Monitoring Alert
           totalPayments: total,
           successfulPayments: successful,
           failedPayments: parseInt(data.failed) || 0,
-          successRate: total > 0 ? (successful / total) * 100 : 100,
+          // Return 0 when no payments - don't misrepresent "no data" as 100% success
+          successRate: total > 0 ? (successful / total) * 100 : 0,
           totalRevenue: parseInt(data.revenue) || 0,
           avgPaymentAmount: Math.round(parseFloat(data.avg_amount) || 0),
           periodStart: new Date(Date.now() - days * 24 * 60 * 60 * 1000),
