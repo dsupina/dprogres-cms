@@ -697,12 +697,19 @@ DProgres CMS Monitoring Alert
    */
   async getPaymentMetrics(days: number = 30): Promise<ServiceResponse<PaymentMetrics>> {
     try {
+      // Only count invoices where a payment was actually attempted:
+      // - 'paid' = successful payment attempt
+      // - 'uncollectible' = failed payment attempts (all retries exhausted)
+      // Exclude:
+      // - 'draft' = no payment attempt yet
+      // - 'open' = finalized but may not have been attempted (ambiguous)
+      // - 'void' = canceled, not a payment failure
       const { rows } = await pool.query(
         `
         SELECT
-          COUNT(*) as total,
+          COUNT(*) FILTER (WHERE status IN ('paid', 'uncollectible')) as total_attempts,
           COUNT(*) FILTER (WHERE status = 'paid') as successful,
-          COUNT(*) FILTER (WHERE status IN ('open', 'void', 'uncollectible')) as failed,
+          COUNT(*) FILTER (WHERE status = 'uncollectible') as failed,
           SUM(CASE WHEN status = 'paid' THEN amount_paid_cents ELSE 0 END) as revenue,
           AVG(CASE WHEN status = 'paid' THEN amount_paid_cents ELSE NULL END) as avg_amount
         FROM invoices
@@ -711,17 +718,17 @@ DProgres CMS Monitoring Alert
       );
 
       const data = rows[0];
-      const total = parseInt(data.total) || 0;
+      const totalAttempts = parseInt(data.total_attempts) || 0;
       const successful = parseInt(data.successful) || 0;
 
       return {
         success: true,
         data: {
-          totalPayments: total,
+          totalPayments: totalAttempts,
           successfulPayments: successful,
           failedPayments: parseInt(data.failed) || 0,
-          // Return 0 when no payments - don't misrepresent "no data" as 100% success
-          successRate: total > 0 ? (successful / total) * 100 : 0,
+          // Return 0 when no payment attempts - don't misrepresent "no data" as 100% success
+          successRate: totalAttempts > 0 ? (successful / totalAttempts) * 100 : 0,
           totalRevenue: parseInt(data.revenue) || 0,
           avgPaymentAmount: Math.round(parseFloat(data.avg_amount) || 0),
           periodStart: new Date(Date.now() - days * 24 * 60 * 60 * 1000),
