@@ -1054,6 +1054,12 @@ async function handleInvoiceFailed(
 
     const { id: dbSubscriptionId, organization_id: organizationId } = subRows[0];
 
+    // SF-026: Record payment failure for monitoring alerts
+    const failureReason = (invoice as any).last_finalization_error?.message ||
+                          (invoice as any).last_payment_error?.message ||
+                          'Payment failed';
+    monitoringService.recordError('payment', `Invoice ${invoice.id}: ${failureReason}`);
+
     // Validate amounts don't exceed PostgreSQL INTEGER max
     const amountPaid = invoice.amount_paid || 0;
     if (invoice.amount_due > MAX_INT || amountPaid > MAX_INT) {

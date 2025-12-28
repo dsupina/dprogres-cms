@@ -57,8 +57,8 @@ import type {
   ComponentHealth,
   SlackAlertPayload,
   MonitoringConfig,
-  DEFAULT_ALERTS,
 } from '../types/monitoring';
+import { DEFAULT_ALERTS } from '../types/monitoring';
 
 /**
  * ServiceResponse pattern for consistency
@@ -137,7 +137,6 @@ export class MonitoringService extends EventEmitter {
     this.config.alertEmail = this.config.alertEmail || process.env.ALERT_EMAIL || process.env.SENDGRID_FROM_EMAIL;
 
     // Load default alerts
-    const { DEFAULT_ALERTS } = require('../types/monitoring');
     for (const alert of DEFAULT_ALERTS) {
       this.alerts.set(alert.id, alert);
     }
