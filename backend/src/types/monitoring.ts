@@ -161,14 +161,25 @@ export interface BillingMetrics {
 
 /**
  * Payment metrics
+ *
+ * Separates finalized results from active failures to avoid double-counting:
+ * - Finalized metrics come from database (invoice status: paid/uncollectible)
+ * - Active failures come from in-memory tracking (recent invoice.payment_failed events)
  */
 export interface PaymentMetrics {
-  totalPayments: number;
-  successfulPayments: number;
-  failedPayments: number;
-  successRate: number;
+  // Finalized payment results (from database - authoritative)
+  totalPayments: number; // Finalized attempts: paid + uncollectible
+  successfulPayments: number; // status = 'paid'
+  failedPayments: number; // status = 'uncollectible'
+  successRate: number; // Based on finalized results only
   totalRevenue: number; // In cents
   avgPaymentAmount: number; // In cents
+
+  // Active failure tracking (from in-memory - operational awareness)
+  // These may overlap with failedPayments once invoices finalize
+  activeFailuresInWindow: number; // Recent failures still potentially in retry
+  activeFailureWindowMinutes: number; // Window size for active tracking
+
   periodStart: Date;
   periodEnd: Date;
 }

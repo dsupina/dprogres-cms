@@ -695,18 +695,19 @@ DProgres CMS Monitoring Alert
   /**
    * Get payment metrics for dashboard
    *
-   * Combines two data sources:
-   * 1. Database: Finalized invoice statuses (paid, uncollectible)
-   * 2. In-memory: Recent payment failures still in retry (invoice.payment_failed events)
+   * Returns two separate data sets to avoid double-counting:
+   * 1. Finalized metrics (from database): Authoritative counts from invoice status
+   * 2. Active failures (from in-memory): Recent failures for operational awareness
    *
-   * This ensures we capture in-progress failures during Stripe's retry window,
-   * not just final outcomes after all retries are exhausted.
+   * The finalized metrics are the source of truth for success rates and totals.
+   * Active failures show real-time issues but may overlap with finalized failures
+   * once invoices complete their retry cycle.
    */
   async getPaymentMetrics(days: number = 30): Promise<ServiceResponse<PaymentMetrics>> {
     try {
-      // Get finalized payment results from database
+      // Get finalized payment results from database (authoritative source)
       // - 'paid' = successful payment
-      // - 'uncollectible' = all retries exhausted, payment failed
+      // - 'uncollectible' = all retries exhausted, payment permanently failed
       const { rows } = await pool.query(
         `
         SELECT
@@ -721,34 +722,31 @@ DProgres CMS Monitoring Alert
       );
 
       const data = rows[0];
-      const finalizedAttempts = parseInt(data.finalized_attempts) || 0;
+      const totalPayments = parseInt(data.finalized_attempts) || 0;
       const successful = parseInt(data.successful) || 0;
-      const finalizedFailed = parseInt(data.finalized_failed) || 0;
+      const failed = parseInt(data.finalized_failed) || 0;
 
-      // Get in-progress payment failures from in-memory tracking
-      // These are invoice.payment_failed events where invoice is still 'open' (in retry)
-      // Convert days to minutes for the in-memory query
-      const windowMinutes = days * 24 * 60;
-      const inProgressFailures = this.getErrorCount('payment', windowMinutes);
-
-      // Combine metrics:
-      // - Total attempts = finalized (paid + uncollectible) + in-progress failures
-      // - Failed = finalized failures + in-progress failures
-      // Note: Some in-progress failures may eventually succeed, so this is a
-      // point-in-time snapshot that captures active issues
-      const totalAttempts = finalizedAttempts + inProgressFailures;
-      const totalFailed = finalizedFailed + inProgressFailures;
+      // Get active failures from in-memory tracking (for operational awareness)
+      // This uses a shorter window (60 min) to show recent activity
+      // These may overlap with finalized failures once invoices complete retry cycle
+      const activeFailureWindowMinutes = 60;
+      const activeFailuresInWindow = this.getErrorCount('payment', activeFailureWindowMinutes);
 
       return {
         success: true,
         data: {
-          totalPayments: totalAttempts,
+          // Finalized metrics (from database - no double-counting)
+          totalPayments,
           successfulPayments: successful,
-          failedPayments: totalFailed,
-          // Success rate accounts for both finalized and in-progress failures
-          successRate: totalAttempts > 0 ? (successful / totalAttempts) * 100 : 0,
+          failedPayments: failed,
+          successRate: totalPayments > 0 ? (successful / totalPayments) * 100 : 0,
           totalRevenue: parseInt(data.revenue) || 0,
           avgPaymentAmount: Math.round(parseFloat(data.avg_amount) || 0),
+
+          // Active failure tracking (from in-memory - operational indicator)
+          activeFailuresInWindow,
+          activeFailureWindowMinutes,
+
           periodStart: new Date(Date.now() - days * 24 * 60 * 60 * 1000),
           periodEnd: new Date(),
         },
