@@ -648,3 +648,159 @@ This project is developed on Windows. Be aware:
 - **Test failures**: Check `__tests__/` for test-specific .env requirements
 
 See `docs/TROUBLESHOOTING.md` for detailed solutions.
+
+## Common Pitfalls & Lessons Learned
+
+This section documents mistakes made during development and how to avoid them. These patterns emerged from code review feedback and should be checked during implementation.
+
+### TypeScript Import Pitfalls
+
+**Type-only imports vs value imports (SF-026)**
+```typescript
+// ❌ WRONG: Importing a value (array/object) as type-only
+import type { AlertConfig, DEFAULT_ALERTS } from '../types/monitoring';
+
+// ✅ CORRECT: Separate type imports from value imports
+import type { AlertConfig } from '../types/monitoring';
+import { DEFAULT_ALERTS } from '../types/monitoring';
+```
+**Rule**: If you're importing something you'll use at runtime (not just for type annotations), it cannot be in an `import type` block.
+
+**Missing package.json dependencies (SF-026)**
+```typescript
+// ❌ WRONG: Using require() without adding to package.json
+Sentry = require('@sentry/node'); // Will fail at runtime!
+
+// ✅ CORRECT: Add dependency first
+// package.json: "@sentry/node": "^8.42.0"
+// Then use the import
+```
+**Rule**: When adding code that uses a new package (even optionally), always add it to package.json dependencies.
+
+### SQL & Database Pitfalls
+
+**Integer division truncation (SF-026)**
+```sql
+-- ❌ WRONG: Integer division truncates decimals
+SELECT amount_cents / 12 as monthly_amount  -- 1150 / 12 = 95 (loses $0.83)
+
+-- ✅ CORRECT: Use decimal division
+SELECT amount_cents / 12.0 as monthly_amount  -- 1150 / 12.0 = 95.83
+SELECT (amount_cents / 12.0)::integer as monthly_amount  -- Cast after division
+```
+**Rule**: For monetary calculations, always use decimal division (`/ 12.0`) and cast to integer only at the final step if needed.
+
+**Wrong status filtering in aggregations (SF-026)**
+```sql
+-- ❌ WRONG: Including wrong statuses in MRR calculation
+SELECT SUM(amount) FROM subscriptions
+WHERE status IN ('active', 'trialing', 'past_due')  -- trialing hasn't paid, past_due may not pay
+
+-- ✅ CORRECT: Only count confirmed revenue
+SELECT SUM(amount) FROM subscriptions
+WHERE status = 'active'  -- Only subscriptions that have actually paid
+```
+**Rule**: Understand the business meaning of each status. For revenue metrics, only count confirmed payments.
+
+**Counting wrong invoice statuses as payment attempts (SF-026)**
+```sql
+-- ❌ WRONG: Counting all invoices as payment attempts
+SELECT COUNT(*) as total_attempts,
+       COUNT(*) FILTER (WHERE status = 'paid') as successful,
+       COUNT(*) FILTER (WHERE status IN ('open', 'void', 'uncollectible')) as failed
+FROM invoices
+
+-- ✅ CORRECT: Only count invoices where payment was actually attempted
+SELECT COUNT(*) FILTER (WHERE status IN ('paid', 'uncollectible')) as total_attempts,
+       COUNT(*) FILTER (WHERE status = 'paid') as successful,
+       COUNT(*) FILTER (WHERE status = 'uncollectible') as failed
+FROM invoices
+-- 'draft' = no attempt, 'open' = may not be attempted yet, 'void' = canceled
+```
+**Rule**: Understand the domain-specific lifecycle (e.g., Stripe invoice states) before writing metrics queries.
+
+### Algorithm & Logic Pitfalls
+
+**P95 percentile calculation (SF-026)**
+```typescript
+// ❌ WRONG: Using floor gives the maximum value in the array
+const p95Index = Math.floor(sortedTimes.length * 0.95);
+
+// ✅ CORRECT: Use nearest-rank method (ceil - 1, clamped)
+const p95Index = sortedTimes.length > 0
+  ? Math.min(Math.ceil(sortedTimes.length * 0.95) - 1, sortedTimes.length - 1)
+  : 0;
+```
+**Rule**: For percentile calculations, use the nearest-rank method: `ceil(n * percentile) - 1`, clamped to valid array bounds.
+
+**Alert thresholds not wired to all metric types (SF-026)**
+```typescript
+// ❌ WRONG: Generic alert check only handles error counts
+checkAlertThreshold(alertId: string): void {
+  const errorCount = this.getErrorCount(alert.category, alert.windowMinutes);
+  if (errorCount > alert.threshold) this.triggerAlert(alertId, errorCount);
+}
+
+// ✅ CORRECT: Handle each metric type appropriately
+checkAlertThreshold(alertId: string): void {
+  const alert = this.alerts.get(alertId);
+  let currentValue: number;
+
+  if (alertId === 'api_response_time') {
+    currentValue = this.getApiP95ResponseTime(alert.windowMinutes);
+  } else {
+    currentValue = this.getErrorCount(alert.category, alert.windowMinutes);
+  }
+
+  if (currentValue > alert.threshold) this.triggerAlert(alertId, currentValue);
+}
+```
+**Rule**: When building alert systems, ensure each alert type is wired to its appropriate metric source.
+
+**Missing event hooks for monitoring (SF-026)**
+```typescript
+// ❌ WRONG: Alert defined but never triggered because no code records the metric
+// DEFAULT_ALERTS has 'payment_failure_rate' but handleInvoiceFailed() doesn't call recordError()
+
+// ✅ CORRECT: Wire up the event source to the monitoring system
+async handleInvoiceFailed(invoice: Stripe.Invoice): Promise<void> {
+  // ... handle the failure ...
+
+  // Record the failure for monitoring/alerting
+  monitoringService.recordError('payment', `Invoice ${invoice.id}: ${failureReason}`);
+}
+```
+**Rule**: When adding alerts, verify the corresponding metrics are actually being recorded somewhere.
+
+### Edge Case Pitfalls
+
+**Zero-data edge cases (SF-026)**
+```typescript
+// ❌ WRONG: Division fallback inflates metrics
+const arpu = totalRevenue / (activeCount || 1);  // With 0 subscribers, shows full revenue as ARPU
+
+// ✅ CORRECT: Handle zero explicitly
+const arpu = activeCount > 0 ? totalRevenue / activeCount : 0;
+
+// ❌ WRONG: 100% success rate with no data is misleading
+const successRate = total > 0 ? (successful / total) * 100 : 100;
+
+// ✅ CORRECT: Return 0 when no data to avoid misleading metrics
+const successRate = total > 0 ? (successful / total) * 100 : 0;
+```
+**Rule**: Always test with empty/zero data sets. Metrics should return 0 or indicate "no data" rather than misleading values.
+
+### Pre-Implementation Checklist
+
+Before implementing features involving metrics, billing, or monitoring:
+
+1. **Domain Understanding**: Do you understand the lifecycle states? (e.g., Stripe invoice: draft → open → paid/void/uncollectible)
+2. **Type Imports**: Are you separating `import type` from value imports?
+3. **Dependencies**: Have you added all required packages to package.json?
+4. **SQL Division**: Are monetary calculations using decimal division (`/ 12.0`)?
+5. **Status Filtering**: Are you only counting the statuses that match the business meaning?
+6. **Edge Cases**: What happens with zero/empty data?
+7. **Metric Wiring**: If adding alerts, is there code that records the corresponding metrics?
+8. **Algorithm Correctness**: For statistical calculations, are you using the correct formula?
+
+See `docs/PATTERNS.md` for detailed code patterns and anti-patterns.
