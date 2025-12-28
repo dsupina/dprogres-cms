@@ -231,7 +231,10 @@ export class MonitoringService extends EventEmitter {
       processingTimes.length > 0
         ? processingTimes.reduce((sum, t) => sum + t, 0) / processingTimes.length
         : 0;
-    const p95Index = Math.floor(processingTimes.length * 0.95);
+    // Use nearest-rank method for p95: ceil(n * 0.95) - 1, clamped to valid range
+    const p95Index = processingTimes.length > 0
+      ? Math.min(Math.ceil(processingTimes.length * 0.95) - 1, processingTimes.length - 1)
+      : 0;
     const p95ProcessingTimeMs = processingTimes[p95Index] || 0;
 
     // Event type breakdown
@@ -338,7 +341,8 @@ export class MonitoringService extends EventEmitter {
 
     if (times.length === 0) return 0;
 
-    const p95Index = Math.floor(times.length * 0.95);
+    // Use nearest-rank method for p95: ceil(n * 0.95) - 1, clamped to valid range
+    const p95Index = Math.min(Math.ceil(times.length * 0.95) - 1, times.length - 1);
     return times[p95Index] || times[times.length - 1];
   }
 
@@ -578,11 +582,13 @@ DProgres CMS Monitoring Alert
       // MRR calculation: Sum of monthly amount for ACTIVE subscriptions only
       // For annual subscriptions, divide by 12
       // Status counts include ALL subscriptions for accurate dashboard reporting
+      // MRR only includes ACTIVE paid subscriptions (not trialing or past_due)
+      // trialing = hasn't paid yet, past_due = payment failed
       const { rows: mrrRows } = await pool.query(`
         SELECT
           SUM(CASE
-            WHEN status IN ('active', 'trialing', 'past_due') AND billing_cycle = 'annual' THEN amount_cents / 12.0
-            WHEN status IN ('active', 'trialing', 'past_due') THEN amount_cents
+            WHEN status = 'active' AND billing_cycle = 'annual' THEN amount_cents / 12.0
+            WHEN status = 'active' THEN amount_cents
             ELSE 0
           END)::integer as mrr,
           COUNT(*) as total_subscriptions,
