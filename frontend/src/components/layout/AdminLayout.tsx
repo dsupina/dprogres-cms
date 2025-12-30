@@ -15,9 +15,11 @@ import {
   Menu as MenuIcon,
   Share2,
   CreditCard,
-  Building2
+  Building2,
+  Shield,
+  Users
 } from 'lucide-react';
-import { useAuthStore } from '../../lib/auth';
+import { useAuthStore, isSuperAdmin } from '../../lib/auth';
 import Button from '../ui/Button';
 
 const navigation = [
@@ -34,6 +36,12 @@ const navigation = [
   { name: 'Billing', href: '/admin/billing', icon: CreditCard },
   { name: 'Organization', href: '/admin/organization', icon: Building2 },
   { name: 'Settings', href: '/admin/settings', icon: Settings },
+];
+
+const superAdminNavigation = [
+  { name: 'Platform Dashboard', href: '/admin/super-admin', icon: Shield },
+  { name: 'All Organizations', href: '/admin/super-admin/organizations', icon: Building2 },
+  { name: 'All Users', href: '/admin/super-admin/users', icon: Users },
 ];
 
 export default function AdminLayout() {
@@ -70,7 +78,7 @@ export default function AdminLayout() {
           </button>
         </div>
         
-        <nav className="mt-8">
+        <nav className="mt-8 flex-1 overflow-y-auto">
           <div className="px-2 space-y-1">
             {navigation.map((item) => {
               const Icon = item.icon;
@@ -91,6 +99,37 @@ export default function AdminLayout() {
               );
             })}
           </div>
+
+          {/* Super Admin Section */}
+          {isSuperAdmin(user) && (
+            <div className="mt-6 pt-6 border-t border-gray-200">
+              <div className="px-3 mb-2">
+                <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wider">
+                  Super Admin
+                </span>
+              </div>
+              <div className="px-2 space-y-1">
+                {superAdminNavigation.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <Link
+                      key={item.name}
+                      to={item.href}
+                      className={`group flex items-center px-2 py-2 text-sm font-medium rounded-md ${
+                        isActive(item.href)
+                          ? 'bg-indigo-100 text-indigo-700'
+                          : 'text-gray-600 hover:bg-indigo-50 hover:text-indigo-700'
+                      }`}
+                      onClick={() => setSidebarOpen(false)}
+                    >
+                      <Icon className="mr-3 h-5 w-5" />
+                      {item.name}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </nav>
 
         {/* View Site Link */}
@@ -121,7 +160,9 @@ export default function AdminLayout() {
                 <Menu className="h-6 w-6" />
               </button>
               <h2 className="ml-2 text-xl font-semibold text-gray-900 lg:ml-0">
-                {navigation.find(item => isActive(item.href))?.name || 'Admin'}
+                {navigation.find(item => isActive(item.href))?.name ||
+                 superAdminNavigation.find(item => isActive(item.href))?.name ||
+                 'Admin'}
               </h2>
             </div>
             

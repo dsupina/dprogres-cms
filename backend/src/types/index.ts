@@ -8,6 +8,7 @@ export interface User {
   first_name?: string;
   last_name?: string;
   current_organization_id?: number;
+  is_super_admin?: boolean;
   email_verified?: boolean;
   email_verification_token?: string;
   email_verification_sent_at?: Date;
@@ -164,4 +165,25 @@ export interface QueryParams {
   featured?: boolean;
   sort?: string;
   order?: 'asc' | 'desc';
+}
+
+export type OrganizationStatus = 'active' | 'suspended' | 'pending_deletion';
+
+export interface Organization {
+  id: number;
+  name: string;
+  slug: string;
+  owner_id: number;
+  plan_tier: 'free' | 'starter' | 'pro' | 'enterprise';
+  logo_url?: string;
+  stripe_customer_id?: string;
+  stripe_subscription_id?: string;
+  status: OrganizationStatus;
+  suspended_at?: Date;
+  suspended_reason?: string;
+  suspension_warning_sent_at?: Date;
+  grace_period_ends_at?: Date;
+  deleted_at?: Date;
+  created_at: Date;
+  updated_at: Date;
 } 
