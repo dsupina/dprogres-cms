@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { query, pool } from '../utils/database';
 import { hashPassword } from '../utils/password';
 import crypto from 'crypto';
+import { organizationStatusCache } from '../middleware/organizationStatus';
 
 export interface ServiceResponse<T> {
   success: boolean;
@@ -563,6 +564,9 @@ class SuperAdminService extends EventEmitter {
         [orgId, reason]
       );
 
+      // Invalidate organization status cache to immediately block access
+      organizationStatusCache.invalidate(orgId);
+
       this.emit('organization:suspended', {
         orgId,
         orgName: orgResult.rows[0].name,
@@ -608,6 +612,9 @@ class SuperAdminService extends EventEmitter {
          WHERE id = $1`,
         [orgId]
       );
+
+      // Invalidate organization status cache to immediately allow access
+      organizationStatusCache.invalidate(orgId);
 
       this.emit('organization:unsuspended', {
         orgId,
@@ -661,6 +668,9 @@ class SuperAdminService extends EventEmitter {
         [orgId, `Deletion initiated. Confirmation word: ${confirmationWord}`, gracePeriodEnds]
       );
 
+      // Invalidate organization status cache to immediately block access
+      organizationStatusCache.invalidate(orgId);
+
       this.emit('organization:deletion_initiated', {
         orgId,
         orgName: orgResult.rows[0].name,
@@ -710,6 +720,9 @@ class SuperAdminService extends EventEmitter {
          WHERE id = $1`,
         [orgId]
       );
+
+      // Invalidate organization status cache to immediately allow access
+      organizationStatusCache.invalidate(orgId);
 
       this.emit('organization:deletion_cancelled', {
         orgId,
