@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeEach } from 'vitest';
 /**
  * AutoSave API Service Unit Tests
  *
@@ -13,17 +14,19 @@ import { autoSaveApi, AutoSaveRequest, AutoSaveResponse, LatestAutoSaveResponse,
 import api from '../../lib/api';
 
 // Mock the API module
-jest.mock('../../lib/api', () => ({
-  post: jest.fn(),
-  get: jest.fn(),
-  delete: jest.fn(),
+vi.mock('../../lib/api', () => ({
+  default: {
+    post: vi.fn(),
+    get: vi.fn(),
+    delete: vi.fn(),
+  },
 }));
 
-const mockApi = api as jest.Mocked<typeof api>;
+const mockApi = api as vi.Mocked<typeof api>;
 
 describe('autoSaveApi Service', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('createAutoSave', () => {
