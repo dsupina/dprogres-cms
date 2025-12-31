@@ -141,7 +141,8 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
       const statusCheck = await checkOrganizationStatus(decoded.organizationId);
       if (!statusCheck.allowed) {
         // Allow certain routes for suspended orgs (billing, auth, org settings)
-        if (!isAllowedForSuspendedOrg(req.path)) {
+        // Use originalUrl to get the full path including mount point
+        if (!isAllowedForSuspendedOrg(req.originalUrl)) {
           return res.status(403).json({
             error: statusCheck.error,
             code: statusCheck.code,
