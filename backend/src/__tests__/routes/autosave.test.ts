@@ -21,6 +21,24 @@ const mockDatabasePool = {
 
 jest.mock('../../utils/database', () => mockDatabasePool);
 
+// Create mock functions that persist across imports
+const mockCreateAutoSave = jest.fn();
+const mockGetLatestAutoSave = jest.fn();
+const mockHasUnsavedChanges = jest.fn();
+const mockPruneOldAutoSaves = jest.fn();
+
+// Mock VersionService with factory function (hoisted before imports)
+jest.mock('../../services/VersionService', () => {
+  return {
+    VersionService: jest.fn().mockImplementation(() => ({
+      createAutoSave: mockCreateAutoSave,
+      getLatestAutoSave: mockGetLatestAutoSave,
+      hasUnsavedChanges: mockHasUnsavedChanges,
+      pruneOldAutoSaves: mockPruneOldAutoSaves,
+    }))
+  };
+});
+
 import request from 'supertest';
 import express from 'express';
 import { Pool } from 'pg';
@@ -31,20 +49,16 @@ import { VersionService } from '../../services/VersionService';
 import { ContentVersion } from '../../types/versioning/core';
 import { ContentType, VersionType } from '../../types/versioning/enums';
 
-jest.mock('../../services/VersionService');
 jest.mock('../../middleware/auth');
 jest.mock('../../middleware/versionAuth');
 
-
+// Create a reference to the mock service for tests
 const mockVersionService = {
-  createAutoSave: jest.fn(),
-  getLatestAutoSave: jest.fn(),
-  hasUnsavedChanges: jest.fn(),
-  pruneOldAutoSaves: jest.fn(),
+  createAutoSave: mockCreateAutoSave,
+  getLatestAutoSave: mockGetLatestAutoSave,
+  hasUnsavedChanges: mockHasUnsavedChanges,
+  pruneOldAutoSaves: mockPruneOldAutoSaves,
 } as unknown as jest.Mocked<VersionService>;
-
-// Mock the VersionService constructor to return our mock instance
-(VersionService as jest.MockedClass<typeof VersionService>).mockImplementation(() => mockVersionService);
 
 // Mock middleware
 const mockAuthenticateToken = authenticateToken as jest.MockedFunction<typeof authenticateToken>;
@@ -91,8 +105,8 @@ describe('Auto-Save API Routes', () => {
     app = express();
     app.use(express.json());
 
-    // Mock authentication to add user to request
-    mockAuthenticateToken.mockImplementation((req: any, res, next) => {
+    // Mock authentication to add user to request (async to match real middleware)
+    mockAuthenticateToken.mockImplementation(async (req: any, res, next) => {
       req.user = mockUser;
       next();
       return undefined;
@@ -148,7 +162,11 @@ describe('Auto-Save API Routes', () => {
         .expect(200);
 
       expect(response.body.success).toBe(true);
-      expect(response.body.data.version).toEqual(mockAutoSaveResult.data);
+      // Compare without strict date equality (JSON serializes dates to ISO strings)
+      expect(response.body.data.version.id).toBe(mockAutoSaveResult.data!.id);
+      expect(response.body.data.version.version_number).toBe(mockAutoSaveResult.data!.version_number);
+      expect(response.body.data.version.version_type).toBe(mockAutoSaveResult.data!.version_type);
+      expect(response.body.data.version.content_hash).toBe(mockAutoSaveResult.data!.content_hash);
       expect(response.body.data.content_hash).toBeDefined();
 
       expect(mockVersionService.createAutoSave).toHaveBeenCalledWith(
@@ -306,7 +324,11 @@ describe('Auto-Save API Routes', () => {
         .expect(200);
 
       expect(response.body.success).toBe(true);
-      expect(response.body.data.version).toEqual(mockAutoSave);
+      // Compare without strict date equality (JSON serializes dates to ISO strings)
+      expect(response.body.data.version.id).toBe(mockAutoSave.id);
+      expect(response.body.data.version.version_number).toBe(mockAutoSave.version_number);
+      expect(response.body.data.version.version_type).toBe(mockAutoSave.version_type);
+      expect(response.body.data.version.content_hash).toBe(mockAutoSave.content_hash);
       expect(response.body.data.has_newer_manual_save).toBe(false);
 
       expect(mockVersionService.getLatestAutoSave).toHaveBeenCalledWith(
@@ -577,8 +599,8 @@ describe('Auto-Save API Routes', () => {
 
   describe('Authentication and Authorization', () => {
     it('should require authentication for all endpoints', async () => {
-      // Reset mock to simulate unauthenticated request
-      mockAuthenticateToken.mockImplementation((req, res, next) => {
+      // Reset mock to simulate unauthenticated request (async to match real middleware)
+      mockAuthenticateToken.mockImplementation(async (req, res, next) => {
         return res.status(401).json({ error: 'Unauthorized' });
       });
 

@@ -131,6 +131,18 @@ export function SaveStatusIndicatorCompact({
   onManualSave,
   className
 }: SaveStatusIndicatorProps) {
+  // Calculate timeAgo first since it's used in statusDisplay
+  const timeAgo = useMemo(() => {
+    if (!lastSaved) return null;
+
+    const now = new Date();
+    const diff = now.getTime() - lastSaved.getTime();
+    const minutes = Math.floor(diff / 1000 / 60);
+
+    if (minutes < 1) return null;
+    return `${minutes}m`;
+  }, [lastSaved]);
+
   const statusDisplay = useMemo(() => {
     switch (status) {
       case 'saving':
@@ -141,7 +153,7 @@ export function SaveStatusIndicatorCompact({
       case 'saved':
         return {
           icon: <Check className="h-5 w-5 text-green-600" />,
-          ariaLabel: `Saved${lastSaved ? ` ${timeAgo}` : ''}`
+          ariaLabel: 'All changes saved'
         };
       case 'error':
         return {
@@ -165,18 +177,7 @@ export function SaveStatusIndicatorCompact({
           ariaLabel: 'All changes saved'
         };
     }
-  }, [status, hasUnsavedChanges, lastSaved]);
-
-  const timeAgo = useMemo(() => {
-    if (!lastSaved) return null;
-
-    const now = new Date();
-    const diff = now.getTime() - lastSaved.getTime();
-    const minutes = Math.floor(diff / 1000 / 60);
-
-    if (minutes < 1) return null;
-    return `${minutes}m`;
-  }, [lastSaved]);
+  }, [status, hasUnsavedChanges]);
 
   return (
     <button

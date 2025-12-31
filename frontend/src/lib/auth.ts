@@ -135,6 +135,10 @@ export const useAuthStore = create<AuthState>()(
 );
 
 // Auth helper functions
+export const isSuperAdmin = (user: User | null): boolean => {
+  return user?.is_super_admin === true;
+};
+
 export const isAdmin = (user: User | null): boolean => {
   return user?.role === 'admin';
 };

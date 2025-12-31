@@ -2,6 +2,7 @@ export interface User {
   id: number;
   email: string;
   role: string;
+  is_super_admin?: boolean;
   first_name?: string;
   last_name?: string;
   created_at: string;

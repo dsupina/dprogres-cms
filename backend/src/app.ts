@@ -31,6 +31,7 @@ import quotasRoutes from './routes/quotas';
 import billingRoutes from './routes/billing';
 import organizationsRoutes from './routes/organizations';
 import metricsRoutes from './routes/metrics';
+import superAdminRoutes from './routes/super-admin';
 
 // Import domain middleware
 import { validateDomain, resolveDomain } from './middleware/domainValidation';
@@ -132,6 +133,10 @@ if (DOMAINS_SITES_ENABLED !== 'off') {
 // Serve uploads directory
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
+// Organization status is now enforced inside authenticateToken middleware
+// This ensures the check happens AFTER authentication populates req.user
+// See middleware/auth.ts for implementation
+
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/posts', postsRoutes);
@@ -152,6 +157,7 @@ app.use('/api/quotas', quotasRoutes); // Quota management endpoints
 app.use('/api/billing', billingRoutes); // Billing and subscription endpoints
 app.use('/api/organizations', organizationsRoutes); // Organization settings and member management
 app.use('/api/metrics', metricsRoutes); // SF-026: Monitoring metrics and alerts
+app.use('/api/super-admin', superAdminRoutes); // Super admin platform management
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

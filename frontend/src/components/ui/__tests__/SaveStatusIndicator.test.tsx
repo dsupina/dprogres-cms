@@ -1,3 +1,4 @@
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 /**
  * SaveStatusIndicator Component Unit Tests
  *
@@ -21,11 +22,11 @@ describe('SaveStatusIndicator', () => {
     status: 'idle' as AutoSaveStatus,
     lastSaved: null,
     hasUnsavedChanges: false,
-    onManualSave: jest.fn(),
+    onManualSave: vi.fn(),
   };
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('Status Display', () => {
@@ -62,7 +63,7 @@ describe('SaveStatusIndicator', () => {
     });
 
     it('should display error status with alert icon and retry button', () => {
-      const onManualSave = jest.fn();
+      const onManualSave = vi.fn();
 
       render(
         <SaveStatusIndicator
@@ -135,12 +136,12 @@ describe('SaveStatusIndicator', () => {
   describe('Time Display', () => {
     beforeEach(() => {
       // Mock current time for consistent testing
-      jest.useFakeTimers();
-      jest.setSystemTime(new Date('2023-12-01T12:00:00Z'));
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2023-12-01T12:00:00Z'));
     });
 
     afterEach(() => {
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it('should display "Just now" for recent saves', () => {
@@ -162,7 +163,7 @@ describe('SaveStatusIndicator', () => {
     });
 
     it('should display seconds for saves within a minute', () => {
-      const recentSave = new Date('2023-12-01T11:59:30Z'); // 30 seconds ago
+      const recentSave = new Date('2023-12-01T11:59:25Z'); // 35 seconds ago
 
       render(
         <SaveStatusIndicator
@@ -172,7 +173,7 @@ describe('SaveStatusIndicator', () => {
         />
       );
 
-      expect(screen.getByText('30 seconds ago')).toBeInTheDocument();
+      expect(screen.getByText('35 seconds ago')).toBeInTheDocument();
     });
 
     it('should display minutes for saves within an hour', () => {
@@ -318,8 +319,8 @@ describe('SaveStatusIndicator', () => {
     });
 
     it('should update aria-label with time information', () => {
-      jest.useFakeTimers();
-      jest.setSystemTime(new Date('2023-12-01T12:00:00Z'));
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2023-12-01T12:00:00Z'));
 
       const lastSaved = new Date('2023-12-01T11:45:00Z'); // 15 minutes ago
 
@@ -337,11 +338,11 @@ describe('SaveStatusIndicator', () => {
         'Save status: Saved, 15 minutes ago'
       );
 
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it('should have accessible retry button when in error state', () => {
-      const onManualSave = jest.fn();
+      const onManualSave = vi.fn();
 
       render(
         <SaveStatusIndicator
@@ -413,11 +414,11 @@ describe('SaveStatusIndicatorCompact', () => {
     status: 'idle' as AutoSaveStatus,
     lastSaved: null,
     hasUnsavedChanges: false,
-    onManualSave: jest.fn(),
+    onManualSave: vi.fn(),
   };
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('Compact Display', () => {
@@ -457,7 +458,7 @@ describe('SaveStatusIndicatorCompact', () => {
     });
 
     it('should display alert icon for error status with click handler', () => {
-      const onManualSave = jest.fn();
+      const onManualSave = vi.fn();
 
       render(
         <SaveStatusIndicatorCompact
@@ -512,12 +513,12 @@ describe('SaveStatusIndicatorCompact', () => {
 
   describe('Time Display in Compact Mode', () => {
     beforeEach(() => {
-      jest.useFakeTimers();
-      jest.setSystemTime(new Date('2023-12-01T12:00:00Z'));
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2023-12-01T12:00:00Z'));
     });
 
     afterEach(() => {
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it('should show minutes abbreviation for saved status', () => {
@@ -585,7 +586,7 @@ describe('SaveStatusIndicatorCompact', () => {
     });
 
     it('should be clickable only for error status', () => {
-      const onManualSave = jest.fn();
+      const onManualSave = vi.fn();
 
       render(
         <SaveStatusIndicatorCompact

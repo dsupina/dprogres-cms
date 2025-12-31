@@ -31,10 +31,16 @@ import BillingPage from './pages/admin/BillingPage';
 import BillingSuccessPage from './pages/admin/BillingSuccessPage';
 import OrganizationSettingsPage from './pages/admin/OrganizationSettingsPage';
 
+// Super Admin pages
+import SuperAdminDashboardPage from './pages/admin/SuperAdminDashboardPage';
+import SuperAdminOrganizationsPage from './pages/admin/SuperAdminOrganizationsPage';
+import SuperAdminUsersPage from './pages/admin/SuperAdminUsersPage';
+
 // Import existing components
 import PublicLayout from './components/layout/PublicLayout';
 import AdminLayout from './components/layout/AdminLayout';
 import ProtectedRoute from './components/auth/ProtectedRoute';
+import SuperAdminRoute from './components/auth/SuperAdminRoute';
 
 // Import auth store
 import { useAuthStore } from './lib/auth';
@@ -90,6 +96,11 @@ function App() {
         <Route path="billing" element={<BillingPage />} />
         <Route path="billing/success" element={<BillingSuccessPage />} />
         <Route path="organization" element={<OrganizationSettingsPage />} />
+
+        {/* Super Admin Routes - Protected by SuperAdminRoute */}
+        <Route path="super-admin" element={<SuperAdminRoute><SuperAdminDashboardPage /></SuperAdminRoute>} />
+        <Route path="super-admin/organizations" element={<SuperAdminRoute><SuperAdminOrganizationsPage /></SuperAdminRoute>} />
+        <Route path="super-admin/users" element={<SuperAdminRoute><SuperAdminUsersPage /></SuperAdminRoute>} />
       </Route>
 
       {/* 404 Route */}

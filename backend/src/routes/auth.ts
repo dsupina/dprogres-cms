@@ -47,11 +47,13 @@ router.post('/login', validate(loginSchema), async (req: Request, res: Response)
     }
 
     // Generate JWT token with organizationId for quota enforcement (SF-010)
+    // Include isSuperAdmin for platform-level access control
     const token = generateToken({
       userId: user.id,
       email: user.email,
       role: user.role,
-      organizationId: user.current_organization_id
+      organizationId: user.current_organization_id,
+      isSuperAdmin: user.is_super_admin || false
     });
 
     // Remove password from response
@@ -288,7 +290,7 @@ router.get('/me', authenticateToken, async (req: Request, res: Response) => {
     const userId = req.user?.userId;
 
     const result = await query(
-      'SELECT id, email, first_name, last_name, role, created_at FROM users WHERE id = $1',
+      'SELECT id, email, first_name, last_name, role, is_super_admin, created_at FROM users WHERE id = $1',
       [userId]
     );
 

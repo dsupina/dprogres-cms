@@ -12,6 +12,7 @@ export interface JWTPayload {
   email: string;
   role: string;
   organizationId?: number;
+  isSuperAdmin?: boolean;
 }
 
 export const generateToken = (payload: JWTPayload): string => {
