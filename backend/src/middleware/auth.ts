@@ -84,6 +84,23 @@ async function verifySuperAdminStatus(userId: number): Promise<boolean> {
 }
 
 /**
+ * Routes that suspended organizations can still access.
+ * These are essential for account recovery (billing, auth).
+ */
+const SUSPENDED_ORG_ALLOWED_ROUTES = [
+  '/api/billing',      // Billing routes for payment recovery
+  '/api/auth',         // Auth routes (logout, token refresh)
+  '/api/organizations', // Org settings (to see status, update billing info)
+];
+
+/**
+ * Check if the request path is allowed for suspended organizations.
+ */
+function isAllowedForSuspendedOrg(path: string): boolean {
+  return SUSPENDED_ORG_ALLOWED_ROUTES.some(route => path.startsWith(route));
+}
+
+/**
  * Authenticate token and check organization status.
  * This middleware:
  * 1. Validates the JWT token
@@ -92,6 +109,7 @@ async function verifySuperAdminStatus(userId: number): Promise<boolean> {
  * 4. Checks if user's organization is suspended/pending_deletion
  *
  * Super admins bypass org status checks.
+ * Suspended orgs can still access billing/auth routes to resolve their suspension.
  */
 export const authenticateToken = async (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
@@ -118,13 +136,17 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
 
     // Check organization status for authenticated users
     // Super admins (verified against DB) bypass this check
+    // Suspended orgs can still access billing/auth routes to resolve their suspension
     if (!decoded.isSuperAdmin && decoded.organizationId) {
       const statusCheck = await checkOrganizationStatus(decoded.organizationId);
       if (!statusCheck.allowed) {
-        return res.status(403).json({
-          error: statusCheck.error,
-          code: statusCheck.code,
-        });
+        // Allow certain routes for suspended orgs (billing, auth, org settings)
+        if (!isAllowedForSuspendedOrg(req.path)) {
+          return res.status(403).json({
+            error: statusCheck.error,
+            code: statusCheck.code,
+          });
+        }
       }
     }
 
