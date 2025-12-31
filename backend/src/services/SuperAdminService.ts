@@ -481,6 +481,9 @@ class SuperAdminService extends EventEmitter {
         [userId]
       );
 
+      // Invalidate super admin cache to immediately grant elevated access
+      superAdminCache.invalidate(userId);
+
       this.emit('super_admin:promoted', {
         userId,
         email: userResult.rows[0].email,
