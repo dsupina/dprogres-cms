@@ -16,6 +16,9 @@ jest.mock('../../middleware/auth', () => ({
 jest.mock('../../middleware/validation', () => ({
   validateRequest: jest.fn(() => (req: any, res: any, next: any) => next())
 }));
+jest.mock('../../middleware/quota', () => ({
+  enforceQuota: jest.fn(() => (req: any, res: any, next: any) => next())
+}));
 
 const mockSiteService = siteService as jest.Mocked<typeof siteService>;
 
