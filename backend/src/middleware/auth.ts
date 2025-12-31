@@ -137,12 +137,14 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
     // Check organization status for authenticated users
     // Super admins (verified against DB) bypass this check
     // Suspended orgs can still access billing/auth routes to resolve their suspension
+    // Pending deletion orgs are fully blocked (no recovery path)
     if (!decoded.isSuperAdmin && decoded.organizationId) {
       const statusCheck = await checkOrganizationStatus(decoded.organizationId);
       if (!statusCheck.allowed) {
-        // Allow certain routes for suspended orgs (billing, auth, org settings)
-        // Use originalUrl to get the full path including mount point
-        if (!isAllowedForSuspendedOrg(req.originalUrl)) {
+        // Pending deletion orgs are fully blocked - no route exceptions
+        // Only suspended orgs can access billing/auth for recovery
+        const isSuspended = statusCheck.code === 'ORG_SUSPENDED';
+        if (!isSuspended || !isAllowedForSuspendedOrg(req.originalUrl)) {
           return res.status(403).json({
             error: statusCheck.error,
             code: statusCheck.code,
