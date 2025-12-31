@@ -146,9 +146,10 @@ export const enforceOrganizationStatus = async (
   next: NextFunction
 ) => {
   try {
-    // Must be authenticated
+    // If not authenticated, let the route's own auth middleware handle it
+    // This middleware only checks organization status for authenticated users
     if (!req.user) {
-      return res.status(401).json({ error: 'Authentication required' });
+      return next();
     }
 
     // Super admins bypass organization status checks
@@ -216,8 +217,9 @@ export const enforceOrganizationStatus = async (
 export function enforceOrganizationStatusExcept(allowedStatuses: OrganizationStatus[]) {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
+      // If not authenticated, let the route's own auth middleware handle it
       if (!req.user) {
-        return res.status(401).json({ error: 'Authentication required' });
+        return next();
       }
 
       if (req.user.isSuperAdmin) {

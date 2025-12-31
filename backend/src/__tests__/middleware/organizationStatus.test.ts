@@ -35,7 +35,7 @@ describe('Organization Status Middleware', () => {
   });
 
   describe('enforceOrganizationStatus', () => {
-    it('should return 401 if user is not authenticated', async () => {
+    it('should pass through if user is not authenticated (let route auth handle it)', async () => {
       mockRequest.user = undefined;
 
       await enforceOrganizationStatus(
@@ -44,9 +44,9 @@ describe('Organization Status Middleware', () => {
         nextFunction
       );
 
-      expect(mockResponse.status).toHaveBeenCalledWith(401);
-      expect(mockResponse.json).toHaveBeenCalledWith({ error: 'Authentication required' });
-      expect(nextFunction).not.toHaveBeenCalled();
+      // Should pass through - route's own auth middleware will handle authentication
+      expect(nextFunction).toHaveBeenCalled();
+      expect(mockResponse.status).not.toHaveBeenCalled();
     });
 
     it('should allow super admins regardless of organization status', async () => {
