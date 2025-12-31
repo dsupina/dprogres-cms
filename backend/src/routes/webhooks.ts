@@ -948,13 +948,17 @@ async function handleInvoicePaid(
     );
 
     // Create invoice record
+    // Calculate due_date: use Stripe's due_date if available, otherwise period_end + 30 days
+    const periodEnd = fromUnixTimestamp(invoice.period_end) || nowUtc();
+    const dueDate = fromUnixTimestamp(invoice.due_date) || new Date(new Date(periodEnd).getTime() + 30 * 24 * 60 * 60 * 1000);
+
     await client.query(
       `INSERT INTO invoices (
         organization_id, subscription_id, stripe_invoice_id,
         amount_cents, amount_paid_cents, currency, status,
         invoice_pdf_url, hosted_invoice_url, billing_reason,
-        period_start, period_end, paid_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        period_start, period_end, due_date, paid_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       ON CONFLICT (stripe_invoice_id) DO UPDATE
       SET status = EXCLUDED.status,
           amount_cents = EXCLUDED.amount_cents,
@@ -965,6 +969,7 @@ async function handleInvoicePaid(
           billing_reason = EXCLUDED.billing_reason,
           period_start = EXCLUDED.period_start,
           period_end = EXCLUDED.period_end,
+          due_date = EXCLUDED.due_date,
           paid_at = EXCLUDED.paid_at`,
       [
         organizationId,
@@ -978,7 +983,8 @@ async function handleInvoicePaid(
         invoice.hosted_invoice_url,
         billingReason,
         fromUnixTimestamp(invoice.period_start) || nowUtc(),
-        fromUnixTimestamp(invoice.period_end) || nowUtc(),
+        periodEnd,
+        dueDate,
         nowUtc(),
       ]
     );
@@ -1128,13 +1134,17 @@ async function handleInvoiceFailed(
     }
 
     // Create/update invoice record
+    // Calculate due_date: use Stripe's due_date if available, otherwise period_end + 30 days
+    const failedPeriodEnd = fromUnixTimestamp(invoice.period_end) || nowUtc();
+    const failedDueDate = fromUnixTimestamp(invoice.due_date) || new Date(new Date(failedPeriodEnd).getTime() + 30 * 24 * 60 * 60 * 1000);
+
     await client.query(
       `INSERT INTO invoices (
         organization_id, subscription_id, stripe_invoice_id,
         amount_cents, amount_paid_cents, currency, status,
         invoice_pdf_url, hosted_invoice_url, billing_reason,
-        period_start, period_end
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        period_start, period_end, due_date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (stripe_invoice_id) DO UPDATE
       SET status = EXCLUDED.status,
           amount_cents = EXCLUDED.amount_cents,
@@ -1144,7 +1154,8 @@ async function handleInvoiceFailed(
           hosted_invoice_url = EXCLUDED.hosted_invoice_url,
           billing_reason = EXCLUDED.billing_reason,
           period_start = EXCLUDED.period_start,
-          period_end = EXCLUDED.period_end`,
+          period_end = EXCLUDED.period_end,
+          due_date = EXCLUDED.due_date`,
       [
         organizationId,
         dbSubscriptionId,
@@ -1157,7 +1168,8 @@ async function handleInvoiceFailed(
         invoice.hosted_invoice_url,
         billingReason,
         fromUnixTimestamp(invoice.period_start) || nowUtc(),
-        fromUnixTimestamp(invoice.period_end) || nowUtc(),
+        failedPeriodEnd,
+        failedDueDate,
       ]
     );
 
