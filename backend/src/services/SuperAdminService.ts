@@ -46,6 +46,7 @@ export interface OrganizationSummary {
   suspended_at?: Date;
   suspended_reason?: string;
   grace_period_ends_at?: Date;
+  suspension_warning_sent_at?: Date;
   created_at: Date;
 }
 
@@ -196,6 +197,7 @@ class SuperAdminService extends EventEmitter {
           o.suspended_at,
           o.suspended_reason,
           o.grace_period_ends_at,
+          o.suspension_warning_sent_at,
           o.created_at,
           u.email as owner_email,
           COALESCE(u.first_name || ' ' || u.last_name, u.email) as owner_name,
@@ -219,7 +221,7 @@ class SuperAdminService extends EventEmitter {
    */
   async getOrganizationDetails(orgId: number): Promise<ServiceResponse<OrganizationDetails>> {
     try {
-      // Get organization with owner info
+      // Get organization with owner info and status fields
       const orgResult = await query(
         `SELECT
           o.id,
@@ -228,6 +230,11 @@ class SuperAdminService extends EventEmitter {
           o.plan_tier,
           o.owner_id,
           o.created_at,
+          o.status,
+          o.suspended_at,
+          o.suspended_reason,
+          o.grace_period_ends_at,
+          o.suspension_warning_sent_at,
           u.email as owner_email,
           COALESCE(u.first_name || ' ' || u.last_name, u.email) as owner_name,
           (SELECT COUNT(*) FROM organization_members om
@@ -626,6 +633,7 @@ class SuperAdminService extends EventEmitter {
              suspended_at = NULL,
              suspended_reason = NULL,
              grace_period_ends_at = NULL,
+             suspension_warning_sent_at = NULL,
              updated_at = NOW()
          WHERE id = $1`,
         [orgId]
