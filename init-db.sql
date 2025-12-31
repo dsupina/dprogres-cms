@@ -16,6 +16,8 @@ CREATE TABLE users (
     email_verification_token VARCHAR(255),
     email_verification_sent_at TIMESTAMP,
     current_organization_id INTEGER,
+    is_super_admin BOOLEAN DEFAULT FALSE NOT NULL,
+    deleted_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -138,16 +140,26 @@ CREATE TABLE IF NOT EXISTS organizations (
   logo_url TEXT,
   stripe_customer_id VARCHAR(255),
   stripe_subscription_id VARCHAR(255),
+  status VARCHAR(50) DEFAULT 'active' NOT NULL,
+  suspended_at TIMESTAMP,
+  suspended_reason TEXT,
+  grace_period_ends_at TIMESTAMP,
+  suspension_warning_sent_at TIMESTAMP,
   deleted_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
-  CONSTRAINT valid_plan_tier CHECK (plan_tier IN ('free', 'starter', 'pro', 'enterprise'))
+  CONSTRAINT valid_plan_tier CHECK (plan_tier IN ('free', 'starter', 'pro', 'enterprise')),
+  CONSTRAINT valid_org_status CHECK (status IN ('active', 'suspended', 'pending_deletion'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_organizations_owner ON organizations(owner_id);
 CREATE INDEX IF NOT EXISTS idx_organizations_slug ON organizations(slug);
 CREATE INDEX IF NOT EXISTS idx_organizations_plan_tier ON organizations(plan_tier);
+CREATE INDEX IF NOT EXISTS idx_organizations_status ON organizations(status);
+CREATE INDEX IF NOT EXISTS idx_organizations_grace_period ON organizations(grace_period_ends_at) WHERE grace_period_ends_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_current_org ON users(current_organization_id);
+CREATE INDEX IF NOT EXISTS idx_users_super_admin ON users(is_super_admin) WHERE is_super_admin = TRUE;
+CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at) WHERE deleted_at IS NULL;
 
 -- Organization members table
 CREATE TABLE IF NOT EXISTS organization_members (

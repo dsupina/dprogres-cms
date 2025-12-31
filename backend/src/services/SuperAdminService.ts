@@ -134,7 +134,7 @@ class SuperAdminService extends EventEmitter {
           `SELECT COUNT(*) as count,
                   COALESCE(SUM(
                     CASE
-                      WHEN billing_interval = 'year' THEN amount_cents / 12.0
+                      WHEN billing_cycle = 'annual' THEN amount_cents / 12.0
                       ELSE amount_cents
                     END
                   ), 0)::integer as mrr_cents
