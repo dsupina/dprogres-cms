@@ -797,6 +797,9 @@ class SuperAdminService extends EventEmitter {
 
       await client.query('COMMIT');
 
+      // Invalidate organization status cache to immediately block access
+      organizationStatusCache.invalidate(orgId);
+
       this.emit('organization:deleted', {
         orgId,
         orgName: org.name,
@@ -879,6 +882,9 @@ class SuperAdminService extends EventEmitter {
            WHERE id = $1`,
           [row.id]
         );
+
+        // Invalidate organization status cache to immediately block access
+        organizationStatusCache.invalidate(row.id);
 
         this.emit('organization:auto_suspended', {
           orgId: row.id,

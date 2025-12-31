@@ -36,7 +36,6 @@ import superAdminRoutes from './routes/super-admin';
 // Import domain middleware
 import { validateDomain, resolveDomain } from './middleware/domainValidation';
 import { siteResolver } from './middleware/siteResolver';
-import { enforceOrganizationStatus, enforceOrganizationStatusExcept } from './middleware/organizationStatus';
 
 // Import database pool
 import pool from './utils/database';
@@ -134,35 +133,9 @@ if (DOMAINS_SITES_ENABLED !== 'off') {
 // Serve uploads directory
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// Organization status enforcement middleware
-// Blocks access for users from suspended/pending_deletion organizations
-// Skip for:
-// - Health check (unauthenticated)
-// - Auth routes (need to login to see suspension message)
-// - Webhooks (external system callbacks)
-// - Super admin routes (need to manage suspended orgs)
-// - Billing routes (suspended orgs need to reactivate subscriptions)
-app.use((req, res, next) => {
-  const skipPaths = [
-    '/api/health',
-    '/api/auth',
-    '/api/webhooks',
-    '/api/super-admin',
-  ];
-
-  // Skip if path starts with any of the skip paths
-  if (skipPaths.some(p => req.path.startsWith(p))) {
-    return next();
-  }
-
-  // For billing, allow suspended orgs (they need to pay to reactivate)
-  if (req.path.startsWith('/api/billing')) {
-    return enforceOrganizationStatusExcept(['suspended'])(req, res, next);
-  }
-
-  // For all other paths, enforce organization status
-  enforceOrganizationStatus(req, res, next);
-});
+// Organization status is now enforced inside authenticateToken middleware
+// This ensures the check happens AFTER authentication populates req.user
+// See middleware/auth.ts for implementation
 
 // API Routes
 app.use('/api/auth', authRoutes);

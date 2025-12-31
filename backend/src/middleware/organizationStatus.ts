@@ -125,6 +125,52 @@ async function getOrganizationStatus(organizationId: number): Promise<Organizati
 }
 
 /**
+ * Result of organization status check
+ */
+interface OrgStatusCheckResult {
+  allowed: boolean;
+  error?: string;
+  code?: string;
+}
+
+/**
+ * Check organization status and return result.
+ * Used by authenticateToken middleware to check org status after authentication.
+ *
+ * @param organizationId - The organization ID to check
+ * @returns Object with allowed boolean and optional error/code
+ */
+export async function checkOrganizationStatus(organizationId: number): Promise<OrgStatusCheckResult> {
+  const status = await getOrganizationStatus(organizationId);
+
+  if (!status) {
+    return {
+      allowed: false,
+      error: 'Organization not found or has been deleted',
+      code: 'ORG_NOT_FOUND',
+    };
+  }
+
+  if (status === 'suspended') {
+    return {
+      allowed: false,
+      error: 'Organization is suspended. Please contact support.',
+      code: 'ORG_SUSPENDED',
+    };
+  }
+
+  if (status === 'pending_deletion') {
+    return {
+      allowed: false,
+      error: 'Organization is pending deletion and access is restricted.',
+      code: 'ORG_PENDING_DELETION',
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
  * Middleware to enforce organization status
  *
  * Blocks access if organization is 'suspended' or 'pending_deletion'.
