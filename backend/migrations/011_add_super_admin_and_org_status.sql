@@ -47,6 +47,21 @@ CREATE INDEX IF NOT EXISTS idx_organizations_suspended ON organizations(status, 
 CREATE INDEX IF NOT EXISTS idx_organizations_grace_period ON organizations(grace_period_ends_at) WHERE grace_period_ends_at IS NOT NULL;
 
 -- ==============================================
+-- INVOICES TABLE: Add due_date for overdue tracking
+-- ==============================================
+
+-- Add due_date column for tracking when payment is due
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS due_date TIMESTAMP;
+
+-- Backfill due_date from period_end + 30 days for existing invoices
+UPDATE invoices
+SET due_date = period_end + INTERVAL '30 days'
+WHERE due_date IS NULL;
+
+-- Create index for overdue invoice queries
+CREATE INDEX IF NOT EXISTS idx_invoices_due_date ON invoices(due_date) WHERE status = 'open';
+
+-- ==============================================
 -- VALIDATION
 -- ==============================================
 

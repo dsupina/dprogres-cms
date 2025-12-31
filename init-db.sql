@@ -295,6 +295,7 @@ CREATE TABLE IF NOT EXISTS invoices (
   billing_reason VARCHAR(100),
   period_start TIMESTAMP NOT NULL,
   period_end TIMESTAMP NOT NULL,
+  due_date TIMESTAMP,
   created_at TIMESTAMP DEFAULT NOW(),
   paid_at TIMESTAMP,
   CONSTRAINT valid_invoice_status CHECK (status IN ('draft', 'open', 'paid', 'void', 'uncollectible')),
@@ -306,6 +307,7 @@ CREATE INDEX IF NOT EXISTS idx_invoices_subscription ON invoices(subscription_id
 CREATE INDEX IF NOT EXISTS idx_invoices_stripe ON invoices(stripe_invoice_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
 CREATE INDEX IF NOT EXISTS idx_invoices_created ON invoices(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_invoices_due_date ON invoices(due_date) WHERE status = 'open';
 
 -- Payment methods table
 CREATE TABLE IF NOT EXISTS payment_methods (
