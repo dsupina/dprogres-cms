@@ -40,6 +40,7 @@ import SuperAdminUsersPage from './pages/admin/SuperAdminUsersPage';
 import PublicLayout from './components/layout/PublicLayout';
 import AdminLayout from './components/layout/AdminLayout';
 import ProtectedRoute from './components/auth/ProtectedRoute';
+import SuperAdminRoute from './components/auth/SuperAdminRoute';
 
 // Import auth store
 import { useAuthStore } from './lib/auth';
@@ -96,10 +97,10 @@ function App() {
         <Route path="billing/success" element={<BillingSuccessPage />} />
         <Route path="organization" element={<OrganizationSettingsPage />} />
 
-        {/* Super Admin Routes */}
-        <Route path="super-admin" element={<SuperAdminDashboardPage />} />
-        <Route path="super-admin/organizations" element={<SuperAdminOrganizationsPage />} />
-        <Route path="super-admin/users" element={<SuperAdminUsersPage />} />
+        {/* Super Admin Routes - Protected by SuperAdminRoute */}
+        <Route path="super-admin" element={<SuperAdminRoute><SuperAdminDashboardPage /></SuperAdminRoute>} />
+        <Route path="super-admin/organizations" element={<SuperAdminRoute><SuperAdminOrganizationsPage /></SuperAdminRoute>} />
+        <Route path="super-admin/users" element={<SuperAdminRoute><SuperAdminUsersPage /></SuperAdminRoute>} />
       </Route>
 
       {/* 404 Route */}
