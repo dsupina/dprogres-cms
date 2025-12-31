@@ -405,7 +405,7 @@ class SuperAdminService extends EventEmitter {
         await client.query(
           `UPDATE users
            SET role = 'admin',
-               organization_id = COALESCE(organization_id, $1),
+               current_organization_id = COALESCE(current_organization_id, $1),
                updated_at = NOW()
            WHERE id = $2`,
           [orgId, userId]
