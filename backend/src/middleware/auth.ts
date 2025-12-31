@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken, JWTPayload } from '../utils/jwt';
 import { checkOrganizationStatus } from './organizationStatus';
+import { query } from '../utils/database';
 
 // Extend Express Request type to include user
 declare global {
@@ -12,11 +13,83 @@ declare global {
 }
 
 /**
+ * Cache for super admin status verification
+ * Key: userId, Value: { isSuperAdmin, timestamp }
+ */
+interface SuperAdminCacheEntry {
+  isSuperAdmin: boolean;
+  timestamp: number;
+}
+
+class SuperAdminCache {
+  private cache: Map<number, SuperAdminCacheEntry>;
+  private readonly TTL_MS = 60 * 1000; // 60 seconds - short for security-critical checks
+
+  constructor() {
+    this.cache = new Map();
+  }
+
+  get(userId: number): boolean | null {
+    const entry = this.cache.get(userId);
+    if (!entry) return null;
+
+    if (Date.now() - entry.timestamp > this.TTL_MS) {
+      this.cache.delete(userId);
+      return null;
+    }
+
+    return entry.isSuperAdmin;
+  }
+
+  set(userId: number, isSuperAdmin: boolean): void {
+    this.cache.set(userId, { isSuperAdmin, timestamp: Date.now() });
+  }
+
+  invalidate(userId: number): void {
+    this.cache.delete(userId);
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+}
+
+export const superAdminCache = new SuperAdminCache();
+
+/**
+ * Verify super admin status against database
+ * Used to prevent demoted super admins from retaining elevated access
+ */
+async function verifySuperAdminStatus(userId: number): Promise<boolean> {
+  // Check cache first
+  const cached = superAdminCache.get(userId);
+  if (cached !== null) {
+    return cached;
+  }
+
+  try {
+    const result = await query(
+      'SELECT is_super_admin FROM users WHERE id = $1 AND deleted_at IS NULL',
+      [userId]
+    );
+
+    const isSuperAdmin = result.rows.length > 0 && result.rows[0].is_super_admin === true;
+    superAdminCache.set(userId, isSuperAdmin);
+    return isSuperAdmin;
+  } catch (error) {
+    console.error('[Auth] Error verifying super admin status:', error);
+    // Fail closed - if we can't verify, don't grant super admin access
+    return false;
+  }
+}
+
+/**
  * Authenticate token and check organization status.
  * This middleware:
  * 1. Validates the JWT token
  * 2. Populates req.user
- * 3. Checks if user's organization is suspended/pending_deletion
+ * 3. Revalidates super admin status against DB (prevents demoted users from retaining access)
+ * 4. Checks if user's organization is suspended/pending_deletion
  *
  * Super admins bypass org status checks.
  */
@@ -30,10 +103,21 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
 
   try {
     const decoded = verifyToken(token);
+
+    // Revalidate super admin status against database
+    // This prevents demoted super admins from retaining elevated access
+    if (decoded.isSuperAdmin) {
+      const isStillSuperAdmin = await verifySuperAdminStatus(decoded.userId);
+      if (!isStillSuperAdmin) {
+        // Update the decoded payload to reflect current status
+        decoded.isSuperAdmin = false;
+      }
+    }
+
     req.user = decoded;
 
     // Check organization status for authenticated users
-    // Super admins bypass this check
+    // Super admins (verified against DB) bypass this check
     if (!decoded.isSuperAdmin && decoded.organizationId) {
       const statusCheck = await checkOrganizationStatus(decoded.organizationId);
       if (!statusCheck.allowed) {

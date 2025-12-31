@@ -3,6 +3,7 @@ import { query, pool } from '../utils/database';
 import { hashPassword } from '../utils/password';
 import crypto from 'crypto';
 import { organizationStatusCache } from '../middleware/organizationStatus';
+import { superAdminCache } from '../middleware/auth';
 
 export interface ServiceResponse<T> {
   success: boolean;
@@ -399,6 +400,17 @@ class SuperAdminService extends EventEmitter {
           [orgId, userId, createdBy]
         );
 
+        // Update user's role to admin and set organization context
+        // This ensures their JWTs will have the correct role for admin access
+        await client.query(
+          `UPDATE users
+           SET role = 'admin',
+               organization_id = COALESCE(organization_id, $1),
+               updated_at = NOW()
+           WHERE id = $2`,
+          [orgId, userId]
+        );
+
         await client.query('COMMIT');
 
         this.emit('org_admin:added', { orgId, userId, addedBy: createdBy });
@@ -518,6 +530,9 @@ class SuperAdminService extends EventEmitter {
         'UPDATE users SET is_super_admin = false, updated_at = NOW() WHERE id = $1',
         [userId]
       );
+
+      // Invalidate super admin cache to immediately revoke elevated access
+      superAdminCache.invalidate(userId);
 
       this.emit('super_admin:demoted', {
         userId,
