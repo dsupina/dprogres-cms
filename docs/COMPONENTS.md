@@ -1517,6 +1517,192 @@ ALERT_EMAIL=alerts@example.com                # Optional: Email alerts
 
 ---
 
+#### Super Admin Service
+**Purpose**: Platform-wide administration for super admins including organization management, user management, and billing operations
+**Location**: `backend/src/services/SuperAdminService.ts`
+**Status**: ✅ Completed (December 2025)
+
+```typescript
+// Usage Example
+import { superAdminService } from '../services/SuperAdminService';
+
+// Get platform-wide metrics for dashboard
+const metrics = await superAdminService.getDashboardMetrics();
+// Returns: { organizations, users, content, revenue }
+
+// List all organizations with status info
+const orgs = await superAdminService.listAllOrganizations();
+
+// Get detailed organization info
+const orgDetails = await superAdminService.getOrganizationDetails(orgId);
+
+// Suspend an organization
+await superAdminService.suspendOrganization(orgId, 'Payment overdue', actorId);
+
+// Unsuspend an organization
+await superAdminService.unsuspendOrganization(orgId, actorId);
+
+// Initiate organization deletion (7-day grace period, returns confirmation word)
+const { data } = await superAdminService.initiateOrganizationDeletion(orgId, actorId);
+console.log(`Confirmation word: ${data.confirmationWord}, Grace period ends: ${data.gracePeriodEnds}`);
+
+// Confirm deletion (requires confirmation word from initiate step)
+await superAdminService.confirmOrganizationDeletion(orgId, data.confirmationWord, actorId);
+
+// Promote a user to super admin
+await superAdminService.promoteToSuperAdmin(userId, actorId);
+
+// Demote a user from super admin
+await superAdminService.demoteSuperAdmin(userId, actorId);
+
+// Process overdue invoices (scheduled job)
+await superAdminService.processOverdueInvoices();
+```
+
+**Key Features**:
+- **Platform Metrics**: MRR, subscription counts, user/content statistics
+- **Organization Management**: List, suspend, unsuspend, schedule deletion
+- **User Management**: List users, promote/demote super admins
+- **Billing Operations**: Create organizations with admin users, process overdue invoices
+- **Audit Logging**: All actions logged with actor ID and timestamps
+- **Event-Driven**: Emits lifecycle events for integrations
+- **Cache Invalidation**: Automatic cache invalidation on status changes
+
+**Service Methods**:
+1. `getDashboardMetrics()` - Platform-wide statistics
+2. `listAllOrganizations()` - All orgs with owner info and status
+3. `getOrganizationDetails(orgId)` - Detailed org info with members and stats
+4. `listAllUsers()` - All users with organization memberships
+5. `promoteToSuperAdmin(userId, actorId)` - Grant super admin privileges
+6. `demoteSuperAdmin(userId, actorId)` - Revoke super admin privileges
+7. `suspendOrganization(orgId, reason, actorId)` - Suspend org with reason
+8. `unsuspendOrganization(orgId, actorId)` - Reactivate suspended org
+9. `initiateOrganizationDeletion(orgId, initiatedBy)` - 7-day grace period, returns confirmation word
+10. `cancelOrganizationDeletion(orgId, cancelledBy)` - Cancel pending deletion
+11. `confirmOrganizationDeletion(orgId, confirmationWord, deletedBy)` - Permanent deletion (requires confirmation word)
+12. `createOrgAdmin(orgId, email, firstName, lastName, createdBy)` - Add admin user to existing org
+13. `processOverdueInvoices()` - Automated suspension for unpaid invoices
+
+**Organization Status Lifecycle**:
+```
+active → suspended (manual or overdue invoice)
+suspended → active (unsuspended)
+active → pending_deletion (initiated with confirmation word)
+pending_deletion → active (cancelled)
+pending_deletion → soft-deleted (confirmed with confirmation word)
+```
+
+**Note**: Deletion is a soft-delete - `deleted_at` is set while `status` remains `suspended`.
+Queries filter out orgs where `deleted_at IS NOT NULL`. There is no `deleted` status value.
+
+**Lifecycle Events**:
+- `organization:suspended` - Organization suspended (manual)
+- `organization:unsuspended` - Organization reactivated
+- `organization:deletion_initiated` - Deletion initiated with confirmation word
+- `organization:deletion_cancelled` - Deletion cancelled
+- `organization:deleted` - Organization permanently deleted
+- `organization:payment_warning` - Overdue payment warning sent
+- `organization:auto_suspended` - Auto-suspended due to overdue invoice
+- `super_admin:promoted` - User promoted to super admin
+- `super_admin:demoted` - User demoted from super admin
+- `org_admin:created` - New admin user created for org
+- `org_admin:added` - Existing user added as org admin
+
+**API Endpoints** (`/api/super-admin/*`):
+- `GET /dashboard` - Platform dashboard metrics
+- `GET /organizations` - List all organizations
+- `GET /organizations/:id` - Organization details
+- `GET /organizations/:id/status` - Organization status info
+- `POST /organizations/:id/admins` - Add admin user to organization
+- `POST /organizations/:id/suspend` - Suspend organization
+- `POST /organizations/:id/unsuspend` - Unsuspend organization
+- `POST /organizations/:id/initiate-deletion` - Initiate deletion (returns confirmation word)
+- `POST /organizations/:id/confirm-deletion` - Confirm deletion (requires confirmation word)
+- `POST /organizations/:id/cancel-deletion` - Cancel pending deletion
+- `GET /users` - List all users
+- `PUT /users/:id/super-admin` - Toggle super admin status (body: { isSuperAdmin: boolean })
+
+**Middleware**:
+- `requireSuperAdmin` - Validates super admin status against database
+- Automatic revalidation in `authenticateToken` to prevent demoted users from retaining access
+
+**Tests**:
+- `backend/src/__tests__/services/SuperAdminService.test.ts` (40+ tests)
+- `backend/src/__tests__/routes/super-admin.test.ts` (25+ tests)
+- `backend/src/__tests__/middleware/organizationStatus.test.ts` (20+ tests)
+
+---
+
+#### Organization Status Middleware
+**Purpose**: Block suspended/pending_deletion organizations from API access
+**Location**: `backend/src/middleware/organizationStatus.ts`
+**Status**: ✅ Completed (December 2025)
+
+```typescript
+// The bypass is INTEGRATED into authenticateToken middleware
+// No additional middleware needed - authenticateToken handles it automatically
+
+// Programmatic status check (for custom logic)
+import { checkOrganizationStatus, organizationStatusCache } from '../middleware/organizationStatus';
+
+const status = await checkOrganizationStatus(organizationId);
+if (!status.allowed) {
+  // Handle blocked access based on status.code
+}
+```
+
+**Key Features**:
+- **Integrated with Auth**: Bypass logic runs inside `authenticateToken` after JWT validation
+- **Billing Route Bypass**: Suspended orgs can access `/api/billing`, `/api/auth`, `/api/organizations` for recovery (checked via `req.originalUrl`)
+- **Pending Deletion Block**: No route exceptions for `pending_deletion` status - fully blocked
+- **Super Admin Bypass**: Super admins skip all org status checks
+- **In-Memory Cache**: 60-second TTL with automatic cleanup
+- **Cache Invalidation**: Exported methods for immediate cache clearing on status changes
+
+**Status Codes**:
+- `ORG_NOT_FOUND` - Organization deleted or doesn't exist
+- `ORG_SUSPENDED` - Organization suspended (billing routes allowed)
+- `ORG_PENDING_DELETION` - Organization scheduled for deletion (fully blocked)
+
+**Cache Methods**:
+```typescript
+import { organizationStatusCache } from '../middleware/organizationStatus';
+
+// Invalidate specific org (call on status change)
+organizationStatusCache.invalidate(organizationId);
+
+// Clear all cache (for testing)
+organizationStatusCache.clear();
+
+// Stop cleanup timer (for testing)
+organizationStatusCache.destroy();
+```
+
+---
+
+#### Super Admin Cache
+**Purpose**: Cache super admin status verification to minimize database queries
+**Location**: `backend/src/middleware/auth.ts`
+**Status**: ✅ Completed (December 2025)
+
+```typescript
+import { superAdminCache } from '../middleware/auth';
+
+// Invalidate when promoting/demoting (automatic in SuperAdminService)
+superAdminCache.invalidate(userId);
+
+// Clear all cache
+superAdminCache.clear();
+```
+
+**Key Features**:
+- **60-second TTL**: Short TTL for security-critical checks
+- **Revalidation on Each Request**: JWT super admin claim verified against database
+- **Fail Closed**: Database errors result in denied super admin access
+- **Automatic Invalidation**: Called automatically by `promoteToSuperAdmin` and `demoteSuperAdmin`
+
+---
+
 #### Organization Service (SF-005)
 **Purpose**: Organization management with ownership, membership, and access control
 **Location**: `backend/src/services/OrganizationService.ts`
